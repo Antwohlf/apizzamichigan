@@ -1,38 +1,86 @@
-.App {
+/* src/App.css */
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background-color: #333;
+  color: #fff;
+}
+
+.app-container {
   text-align: center;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+.app-heading {
+  margin: 20px 0;
+  font-size: 3em;
+  text-align: center;
+  position: relative;
+  display: inline-block;
+  padding: 10px;
+
+  /* Gradient text with animation */
+  background: linear-gradient(45deg, #ff0000, #ffff00, #ff0000);
+  background-size: 200%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: gradient-animation 5s infinite linear;
+
+  /* Text stroke for outline */
+  -webkit-text-stroke: 1px black;
+
+  /* Custom font */
+  font-family: 'Chewy';
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
+@keyframes gradient-animation {
+  0% {
+    background-position: 0%;
+  }
+  100% {
+    background-position: 200%;
   }
 }
 
-.App-header {
-  background-color: #282c34;
+/* Remove the background-color from body */
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  color: #fff;
+}
+
+/* Apply gradient background to .app-container */
+.app-container {
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  background: linear-gradient(135deg, #000000, #4F4F4F);
 }
 
-.App-link {
-  color: #61dafb;
+/* Map container adjustments */
+.leaflet-container {
+  margin: 0 auto;
+  width: 80%;
+  max-width: 1000px;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+
+/* Zoom Button Styling */
+.zoom-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+}
+
+.zoom-button button {
+  background-color: #ffffffcc;
+  border: none;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: 4px;
+}
+
+.zoom-button button:hover {
+  background-color: #ffffff;
 }
