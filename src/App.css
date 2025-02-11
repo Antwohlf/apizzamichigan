@@ -63,6 +63,36 @@ body {
   max-width: 1000px;
 }
 
+.suggestion-form h2 {
+  font-size: 1.5em;
+  margin-bottom: 10px;
+}
+
+.suggestion-form form {
+  display: flex;
+  flex-direction: column;
+}
+
+.suggestion-form input,
+.suggestion-form textarea {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid #fff;
+  background: #333;
+  color: white;
+}
+
+.suggestion-form button {
+  background: #ff9000;
+  color: black;
+  border: none;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.suggestion-form button:hover {
+  background: #ff7700;
+}
 
 /* Zoom Button Styling */
 .zoom-button {
