@@ -1,0 +1,191 @@
+/* Sidebar container (applies to both left and right sidebars) */
+.sidebar-container {
+  background-color: #222;
+  color: #fff;
+  width: 250px;
+  padding: 20px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100vh; /* Ensures full height */
+}
+
+/* Left Sidebar: Style and Price Filter Buttons */
+.sidebar-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.sidebar-btn {
+  background: #333;
+  border: none;
+  color: #fff;
+  padding: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s;
+}
+
+.sidebar-btn:hover {
+  background: #444;
+}
+
+.sidebar-btn.active {
+  background: #ff9000; /* Highlight selected button */
+  color: #000;
+  font-weight: bold;
+}
+
+/* Right Sidebar (Suggestion Form) */
+.suggestion-form {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 20px; /* Increased spacing between form elements */
+  padding-right: 25px; /* Prevents text from touching the right edge */
+}
+
+.suggestion-form h2 {
+  font-size: 1.4em;
+  margin-bottom: 15px;
+}
+
+.suggestion-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 1.1em;
+  margin-bottom: 10px;
+}
+
+.suggestion-form input,
+.suggestion-form textarea {
+  padding: 12px;
+  font-size: 1em;
+  border: 1px solid #aaa;
+  background: #333;
+  color: white;
+  border-radius: 5px;
+}
+
+.suggestion-form textarea {
+  min-height: 120px; /* Taller text area */
+  resize: vertical;
+}
+
+.suggestion-form button {
+  background: #ff9000;
+  color: black;
+  font-weight: bold;
+  padding: 12px;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.suggestion-form button:hover {
+  background: #ff7700;
+}
+
+.admin-form-container,
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding-right: 25px;
+}
+
+.admin-form h2 {
+  font-size: 1.4em;
+  margin-bottom: 15px;
+}
+
+.admin-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 1.1em;
+  margin-bottom: 10px;
+}
+
+.admin-form input,
+.admin-form textarea {
+  padding: 10px;
+  font-size: 1em;
+  border: 1px solid #aaa;
+  background: #333;
+  color: white;
+  border-radius: 5px;
+}
+
+.admin-form textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.admin-form button {
+  background: #ff9000;
+  color: black;
+  font-weight: bold;
+  padding: 12px;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.admin-form button:hover {
+  background: #ff7700;
+}
+
+.admin-form-container,
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding-right: 25px;
+}
+
+.admin-form h2 {
+  font-size: 1.4em;
+  margin-bottom: 15px;
+}
+
+.admin-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 1.1em;
+  margin-bottom: 10px;
+}
+
+.admin-form input,
+.admin-form textarea {
+  padding: 10px;
+  font-size: 1em;
+  border: 1px solid #aaa;
+  background: #333;
+  color: white;
+  border-radius: 5px;
+}
+
+.admin-form textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.admin-form button {
+  background: #ff9000;
+  color: black;
+  font-weight: bold;
+  padding: 12px;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.admin-form button:hover {
+  background: #ff7700;
+}
