@@ -1,0 +1,11 @@
+<!-- public/pizza-icon.svg -->
+<svg width="35" height="35" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Crust -->
+  <path d="M50 5 L95 95 H5 Z" fill="#D2691E" />
+  <!-- Cheese Base -->
+  <path d="M50 15 L85 90 H15 Z" fill="#FFA500" />
+  <!-- Pepperoni Toppings -->
+  <circle cx="50" cy="50" r="5" fill="#FF0000" />
+  <circle cx="65" cy="65" r="5" fill="#FF0000" />
+  <circle cx="35" cy="65" r="5" fill="#FF0000" />
+</svg>
