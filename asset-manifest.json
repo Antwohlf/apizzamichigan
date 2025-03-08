@@ -1,17 +1,17 @@
 {
   "files": {
-    "main.css": "/apizzamichigan/static/css/main.138f0379.css",
-    "main.js": "/apizzamichigan/static/js/main.3738e76b.js",
-    "static/js/952.4e1b0442.chunk.js": "/apizzamichigan/static/js/952.4e1b0442.chunk.js",
-    "static/js/453.a12737c8.chunk.js": "/apizzamichigan/static/js/453.a12737c8.chunk.js",
-    "index.html": "/apizzamichigan/index.html",
-    "main.138f0379.css.map": "/apizzamichigan/static/css/main.138f0379.css.map",
-    "main.3738e76b.js.map": "/apizzamichigan/static/js/main.3738e76b.js.map",
-    "952.4e1b0442.chunk.js.map": "/apizzamichigan/static/js/952.4e1b0442.chunk.js.map",
-    "453.a12737c8.chunk.js.map": "/apizzamichigan/static/js/453.a12737c8.chunk.js.map"
+    "main.css": "/static/css/main.138f0379.css",
+    "main.js": "/static/js/main.314e13c0.js",
+    "static/js/952.4e1b0442.chunk.js": "/static/js/952.4e1b0442.chunk.js",
+    "static/js/453.a12737c8.chunk.js": "/static/js/453.a12737c8.chunk.js",
+    "index.html": "/index.html",
+    "main.138f0379.css.map": "/static/css/main.138f0379.css.map",
+    "main.314e13c0.js.map": "/static/js/main.314e13c0.js.map",
+    "952.4e1b0442.chunk.js.map": "/static/js/952.4e1b0442.chunk.js.map",
+    "453.a12737c8.chunk.js.map": "/static/js/453.a12737c8.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.138f0379.css",
-    "static/js/main.3738e76b.js"
+    "static/js/main.314e13c0.js"
   ]
 }
