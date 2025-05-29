@@ -1,63 +1,102 @@
 // src/SuggestionForm.js
-import React, { useState } from 'react';
+import React, { useState } from 'react'
+import { supabase } from './supabaseClient'
 
-const SuggestionForm = () => {
-  const [name, setName] = useState('');
-  const [location, setLocation] = useState('');
-  const [message, setMessage] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+// simple strip-tags sanitizer
+const stripTags = str => str.replace(/<\/?[^>]+(>|$)/g, '').trim()
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    console.log("Submit button clicked!"); // Debugging log
-  
-    const formData = { name, location, message };
-    console.log("Form Data:", formData); // Check what is being sent
-  
-    const response = await fetch("https://formsubmit.co/anthonywohlfeil@gmail.com", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
-    });
-  
-    console.log("Response status:", response.status); // Log response
-  
-    if (response.ok) {
-      setSubmitted(true);
-      setName("");
-      setLocation("");
-      setMessage("");
-    } else {
-      alert("Error sending submission.");
+export default function SuggestionForm() {
+  const [name,     setName]     = useState('')
+  const [location, setLocation] = useState('')
+  const [order,    setOrder]    = useState('')
+  const [status,   setStatus]   = useState('idle') // 'idle' | 'submitting' | 'success' | 'error'
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const handleSubmit = async e => {
+    e.preventDefault()
+    // client-side validation
+    if (!name || !location || !order) {
+      setErrorMsg('All fields are required.')
+      setStatus('error')
+      return
     }
-  };
+
+    setStatus('submitting')
+    setErrorMsg('')
+
+    // sanitize
+    const clean = {
+      name:     stripTags(name),
+      location: stripTags(location),
+      order:    stripTags(order),
+    }
+
+    // insert into Supabase
+    const { error } = await supabase
+      .from('suggestions')
+      .insert([ clean ])
+
+    if (error) {
+      console.error('Insert error', error)
+      setErrorMsg(error.message)
+      setStatus('error')
+    } else {
+      setStatus('success')
+      // reset form
+      setName(''); setLocation(''); setOrder('')
+    }
+  }
 
   return (
-<div className="sidebar-container suggestion-form">
-    <h2>Recommendations?</h2>
-      {submitted ? (
-        <p>Thanks for the recommendation! 🍕</p>
+    <div className="sidebar-container suggestion-form">
+      <h2>Recommendations?</h2>
+
+      {status === 'success' ? (
+        <p>Thanks! Your suggestion has been received. 🍕</p>
       ) : (
         <form onSubmit={handleSubmit}>
+          {status === 'error' && (
+            <p style={{ color: 'salmon' }}>{errorMsg}</p>
+          )}
+
           <label>
             Your Name:
-            <input value={name} onChange={(e) => setName(e.target.value)} required />
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+            />
           </label>
-          <br></br>
+          <br/>
+
           <label>
             Location:
-            <input value={location} onChange={(e) => setLocation(e.target.value)} required />
+            <input
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              required
+            />
           </label>
-          <br></br>
+          <br/>
+
           <label>
             What should I order?
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} required />
+            <textarea
+              value={order}
+              onChange={e => setOrder(e.target.value)}
+              required
+            />
           </label>
-          <button type="submit">Submit Suggestion</button>
+          <br/>
+
+          <button
+            type="submit"
+            disabled={status === 'submitting'}
+          >
+            {status === 'submitting' ? 'Submitting…' : 'Submit Suggestion'}
+          </button>
         </form>
       )}
     </div>
-  );
-};
-
-export default SuggestionForm;
+  )
+}

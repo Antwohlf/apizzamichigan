@@ -13,7 +13,8 @@ body {
 
 .app-heading {
   margin: 20px 0;
-  font-size: 3em;
+  font-size: 3.2em;
+  font-weight: 700;
   text-align: center;
   position: relative;
   display: inline-block;
@@ -31,7 +32,7 @@ body {
   -webkit-text-stroke: 1px black;
 
   /* Custom font */
-  font-family: 'Chewy';
+  font-family: "Outfit";
 }
 
 @keyframes gradient-animation {
@@ -113,4 +114,12 @@ body {
 
 .zoom-button button:hover {
   background-color: #ffffff;
+}
+
+/* override your old 80% rule */
+.leaflet-container {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  height: 100% !important;
 }

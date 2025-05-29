@@ -1,163 +1,227 @@
-import React, { useState } from "react";
-import { supabase } from "./supabaseClient"; // Ensure Supabase is properly set up
+// src/AdminForm.js
+import React, { useState } from 'react'
+import { supabase } from './supabaseClient'
 
-const AdminForm = () => {
-  const [authed, setAuthed] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [name, setName] = useState("");
-  const [style, setStyle] = useState("");
-  const [price, setPrice] = useState("$");
-  const [address, setAddress] = useState("");
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-  const [review, setReview] = useState("");
-  const [rating, setRating] = useState("");
+// strip out any HTML tags
+const stripTags = str => str.replace(/<[^>]*>/g, '').trim()
 
-  const ADMIN_PASS = "mypizza123";
+export default function AdminForm() {
+  const [authed, setAuthed] = useState(false)
+  const [passwordInput, setPasswordInput] = useState('')
+  const ADMIN_PASS = 'mypizza123'
 
+  // toggle mode between map and frozen pizza
+  const [mode, setMode] = useState('map')
+
+  // common fields
+  const [name, setName]     = useState('')
+  const [style, setStyle]   = useState('')
+  const [price, setPrice]   = useState('$')
+  const [review, setReview] = useState('')
+  const [rating, setRating] = useState('')
+
+  // map-specific fields
+  const [address, setAddress]   = useState('')
+  const [lat, setLat]           = useState('')
+  const [lng, setLng]           = useState('')
+  const [geoError, setGeoError] = useState('')
+
+  // handler to check admin password
   const handlePasswordSubmit = () => {
-    if (passwordInput === ADMIN_PASS) {
-      setAuthed(true);
-    } else {
-      alert("Incorrect password");
-    }
-  };
+    if (passwordInput === ADMIN_PASS) setAuthed(true)
+    else alert('Incorrect password')
+  }
 
+  // geocode address via Google Geocode API
   const handleGeocode = async () => {
-    if (!address) {
-      alert("Please enter an address first");
-      return;
-    }
-
+    if (!address) return
     try {
-      const encodedAddress = encodeURIComponent(address);
-      const apiKey = process.env.REACT_APP_GOOGLE_GEOCODE_KEY;
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`;
-
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === "OK") {
-        const location = data.results[0].geometry.location;
-        setLat(location.lat);
-        setLng(location.lng);
+      const encoded = encodeURIComponent(address)
+      const key = process.env.REACT_APP_GOOGLE_GEOCODE_KEY
+      const res = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encoded}&key=${key}`
+      )
+      const js = await res.json()
+      if (js.status === 'OK') {
+        setLat(js.results[0].geometry.location.lat)
+        setLng(js.results[0].geometry.location.lng)
+        setGeoError('')
       } else {
-        alert("Geocoding failed. Status: " + data.status);
+        setGeoError('Geocode failed: ' + js.status)
       }
-    } catch (error) {
-      console.error("Geocoding error:", error);
-      alert("Error fetching coordinates");
+    } catch {
+      setGeoError('Error fetching geo')
     }
-  };
+  }
 
+  // save handler for inserting into Supabase
   const handleSave = async () => {
-    if (!name || !style || !price || !lat || !lng || !rating) {
-      alert("Please fill in all required fields.");
-      return;
+    // validate required common fields
+    if (!name || !style || !price || !rating) {
+      alert('Please fill in all required fields.')
+      return
+    }
+    if (mode === 'map' && (!address || !lat || !lng)) {
+      alert('Please generate valid coordinates for the address.')
+      return
     }
 
-    const latNum = parseFloat(lat);
-    const lngNum = parseFloat(lng);
-    const ratingNum = parseInt(rating);
+    // sanitize input
+    const clean = {
+      name: stripTags(name),
+      style: stripTags(style),
+      price,
+      review: stripTags(review),
+      rating: parseInt(rating, 10)
+    }
 
-    const { data, error } = await supabase
-      .from("pizzaPlaces")
-      .insert([
-        {
-          name,
-          style,
-          price,
-          address,
-          lat: latNum,
-          lng: lngNum,
-          review,
-          rating: ratingNum,
-        },
-      ]);
-
-    if (error) {
-      console.error(error);
-      alert("Error saving data");
+    let table, payload
+    if (mode === 'map') {
+      table = 'pizza_places'
+      payload = {
+        ...clean,
+        address: stripTags(address),
+        lat: parseFloat(lat),
+        lng: parseFloat(lng)
+      }
     } else {
-      alert("Pizza place added successfully!");
-      setName("");
-      setStyle("");
-      setPrice("$");
-      setAddress("");
-      setLat("");
-      setLng("");
-      setReview("");
-      setRating("");
+      table = 'frozen_pizzas'
+      payload = {
+        Brand: clean.name,
+        Type: clean.style,
+        Price: clean.price,
+        Rating: clean.rating,
+        Notes: clean.review
+      }
     }
-  };
 
+    const { error } = await supabase.from(table).insert([payload])
+    if (error) {
+      console.error(error)
+      alert('Save failed: ' + error.message)
+    } else {
+      alert((mode === 'map' ? 'Place' : 'Frozen pizza') + ' added!')
+      // reset all fields
+      setName('')
+      setStyle('')
+      setPrice('$')
+      setReview('')
+      setRating('')
+      setAddress('')
+      setLat('')
+      setLng('')
+    }
+  }
+
+  // not authenticated view
   if (!authed) {
     return (
       <div className="admin-form-container">
         <h2>Admin Login</h2>
         <input
           type="password"
-          placeholder="Enter password"
+          placeholder="Password"
           value={passwordInput}
-          onChange={(e) => setPasswordInput(e.target.value)}
+          onChange={e => setPasswordInput(e.target.value)}
         />
         <button onClick={handlePasswordSubmit}>Login</button>
       </div>
-    );
+    )
   }
 
+  // authenticated form view
   return (
     <div className="admin-form">
-      <h2>Add a New Pizza Place</h2>
+      <h2>Add New {mode === 'map' ? 'Pizza Place' : 'Frozen Pizza'}</h2>
 
+      {/* mode toggle buttons */}
+      <div
+        style={{
+          display: 'inline-flex',
+          margin: '1rem 0',
+          background: '#222',
+          borderRadius: 4,
+          overflow: 'hidden'
+        }}
+      >
+        {['map', 'frozen'].map(m => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            style={{
+              padding: '0.5rem 1rem',
+              border: 'none',
+              cursor: 'pointer',
+              background: mode === m ? '#FFA500' : 'transparent',
+              color: mode === m ? '#FFF' : '#888',
+              fontWeight: mode === m ? 700 : 400
+            }}
+          >
+            {m === 'map' ? 'Map Pizza' : 'Frozen Pizza'}
+          </button>
+        ))}
+      </div>
+
+      {/* common inputs */}
       <label>
         Name:
-        <input value={name} onChange={(e) => setName(e.target.value)} />
+        <input value={name} onChange={e => setName(e.target.value)} />
       </label>
-
       <label>
         Style:
-        <input value={style} onChange={(e) => setStyle(e.target.value)} />
+        <input value={style} onChange={e => setStyle(e.target.value)} />
       </label>
-
       <label>
         Price:
-        <select value={price} onChange={(e) => setPrice(e.target.value)}>
+        <select value={price} onChange={e => setPrice(e.target.value)}>
           <option>$</option>
           <option>$$</option>
           <option>$$$</option>
         </select>
       </label>
 
-      <label>
-        Address:
-        <input value={address} onChange={(e) => setAddress(e.target.value)} />
-      </label>
-      <button onClick={handleGeocode}>Get Coordinates</button>
+      {/* map-specific address & coords */}
+      {mode === 'map' && (
+        <>
+          <label>
+            Address:
+            <input
+              value={address}
+              onChange={e => setAddress(e.target.value)}
+            />
+          </label>
+          <button type="button" onClick={handleGeocode}>
+            Generate Coordinates
+          </button>
+          {geoError && <small style={{ color: 'salmon' }}>{geoError}</small>}
 
-      <label>
-        Lat:
-        <input value={lat} onChange={(e) => setLat(e.target.value)} />
-      </label>
+          <label>
+            Lat:
+            <input value={lat} readOnly />
+          </label>
+          <label>
+            Lng:
+            <input value={lng} readOnly />
+          </label>
+        </>
+      )}
 
+      {/* review/notes & rating */}
       <label>
-        Lng:
-        <input value={lng} onChange={(e) => setLng(e.target.value)} />
+        Review / Notes:
+        <textarea value={review} onChange={e => setReview(e.target.value)} />
       </label>
-
-      <label>
-        Review:
-        <textarea value={review} onChange={(e) => setReview(e.target.value)} />
-      </label>
-
       <label>
         Rating:
-        <input value={rating} onChange={(e) => setRating(e.target.value)} />
+        <input
+          type="number"
+          min="1" max="10"
+          value={rating}
+          onChange={e => setRating(e.target.value)}
+        />
       </label>
 
-      <button onClick={handleSave}>Save to Database</button>
+      <button onClick={handleSave}>Save</button>
     </div>
-  );
-};
-
-export default AdminForm;
+  )
+}
