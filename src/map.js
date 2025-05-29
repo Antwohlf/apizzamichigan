@@ -120,6 +120,8 @@ const Map = ({ pizzaPlaces }) => {
               {place.review}
               <br />
               Rating: {place.rating}/10
+              <br />
+              Notes: {place.notes}
             </Popup>
           </Marker>
         );

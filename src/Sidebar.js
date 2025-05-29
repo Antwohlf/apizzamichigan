@@ -26,10 +26,8 @@ const Sidebar = ({ onFilterChange }) => {
 
   // Send updated filters to parent component (App.js)
   React.useEffect(() => {
-    if (onFilterChange) {
-      onFilterChange({ styles: selectedStyles, prices: selectedPrices });
-    }
-  }, [selectedStyles, selectedPrices]);
+    onFilterChange(filter);
+  }, [filter, onFilterChange]);
 
   return (
     <div className="sidebar-container">

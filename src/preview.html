@@ -1,0 +1,47 @@
+from IPython.display import HTML, display
+
+html_preview = """
+<div style="font-family: sans-serif; display:flex; height:100vh; background:#333; color:#EEE;">
+  <aside style="width:200px; background:#222; padding:1rem;">
+    <nav>
+      <a href="/" style="display:block; color:#FFF; padding:.5rem; text-decoration:none;">Local Pizza</a>
+      <a href="/frozen" style="display:block; color:#FFA500; padding:.5rem; text-decoration:none;">Frozen Directory</a>
+    </nav>
+  </aside>
+  <main style="flex:1; padding:2rem; overflow:auto;">
+    <h2 style="color:#FFA500; margin-bottom:1rem;">Frozen Pizza Directory</h2>
+    <table style="width:100%; border-collapse:collapse; background:#1f1f1f;">
+      <thead>
+        <tr>
+          <th style="text-align:left; padding:.5rem; border-bottom:1px solid #444;">Brand</th>
+          <th style="text-align:center; padding:.5rem; border-bottom:1px solid #444;">Rating</th>
+          <th style="text-align:left; padding:.5rem; border-bottom:1px solid #444;">Comment</th>
+          <th style="text-align:right; padding:.5rem; border-bottom:1px solid #444;">Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:.5rem;">Tombstone</td>
+          <td style="padding:.5rem; text-align:center;">6/10</td>
+          <td style="padding:.5rem;">Meh crust</td>
+          <td style="padding:.5rem; text-align:right;">5/7/2025</td>
+        </tr>
+        <tr>
+          <td style="padding:.5rem;">DiGiorno</td>
+          <td style="padding:.5rem; text-align:center;">8/10</td>
+          <td style="padding:.5rem;">Crispy edge</td>
+          <td style="padding:.5rem; text-align:right;">5/6/2025</td>
+        </tr>
+        <tr>
+          <td style="padding:.5rem;">Red Baron</td>
+          <td style="padding:.5rem; text-align:center;">7/10</td>
+          <td style="padding:.5rem;">Good value</td>
+          <td style="padding:.5rem; text-align:right;">5/5/2025</td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+</div>
+"""
+
+display(HTML(html_preview))
