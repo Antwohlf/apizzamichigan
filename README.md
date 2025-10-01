@@ -1,71 +1,64 @@
-# Getting Started with Create React App
+# APizzaMichigan & TacoBoutMichigan
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Dual-brand React app that surfaces Michigan pizza and taco recommendations on top of a shared map + directory experience. APizzaMichigan remains the default route while TacoBoutMichigan reuses the layout with distinct theming, copy, and data.
 
-## Available Scripts
+## Quick Start
 
-In the project directory, you can run:
+```bash
+npm install
+npm start
+```
 
-### `npm start`
+The dev server lives at http://localhost:3000.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- `http://localhost:3000/` → APizzaMichigan (original experience)
+- `http://localhost:3000/tacos` → TacoBoutMichigan (alt theme)
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+Each page footer includes a “Check out …” call-to-action that hops between the twins.
 
-### `npm test`
+## Theme System
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Themes live in `src/themes/` and provide palette, copy, icon, and map tile settings. Use `ThemeKeys.PIZZA` or `ThemeKeys.TACO` when wiring components. The `ThemeProvider` drops CSS variables and metadata for the active theme; new surfaces should read theme tokens instead of hard-coding pizza colors.
 
-### `npm run build`
+Key files:
+- `src/themes/pizzaTheme.js`
+- `src/themes/tacoTheme.js`
+- `src/themes/ThemeProvider.js`
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Data Sources
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Supabase tables remain unchanged for pizza (`pizza_places`, `frozen_pizzas`). Taco views look for parallel tables (`taco_places`, `frozen_tacos`). While those are provisioned, Taco routes fall back to local sample data located in `src/data/`.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Filters pull style/type options from:
+- `src/data/pizzaStyles.js`
+- `src/data/tacoTypes.js`
+- `src/data/latinMarkets.placeholder.js` (temporary static list rendered on the Taco route while we stand up Supabase data)
 
-### `npm run eject`
+## Admin Submit Portal
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Authenticated submissions live at `/admin/submit`. To enable the secure flow locally:
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```bash
+# in one terminal
+ADMIN_PORTAL_PASSWORD=your-password \
+SUPABASE_URL=... \
+SUPABASE_SERVICE_ROLE_KEY=... \
+npm run start:server
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+# in another terminal
+npm start
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+The server route sets an `admin_auth` HttpOnly cookie after validating `ADMIN_PORTAL_PASSWORD`. Use the submit form to geocode addresses (Mapbox token required when `VITE_GEOCODER=mapbox`) and post to the appropriate Supabase table with the service role key. The public anon key never sees write access.
 
-## Learn More
+## Testing
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```bash
+npm test
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+The suite includes smoke coverage that ensures both routes render with the expected CTA labels and Supabase queries per brand.
 
-### Code Splitting
+## Deployment
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
-# apizzamichigan
+`npm run build` continues to emit the CRA production bundle. No pizza assets or copy were altered; Taco assets and favicons live alongside them in `public/` for easy hosting.

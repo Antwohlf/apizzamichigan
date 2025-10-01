@@ -1,0 +1,12 @@
+<!-- public/taco-icon.svg -->
+<svg width="35" height="35" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Taco icon">
+  <title>Taco icon</title>
+  <!-- Shell -->
+  <path d="M10 60 Q50 10 90 60 Q80 85 50 85 Q20 85 10 60 Z" fill="#d89c46" stroke="#8f642f" stroke-width="4" />
+  <!-- Lettuce -->
+  <path d="M18 58 Q50 25 82 58" fill="#4a9d3f" />
+  <!-- Tomato -->
+  <path d="M22 60 Q50 35 78 60" fill="#d73928" opacity="0.85" />
+  <!-- Meat -->
+  <path d="M18 62 Q50 45 82 62 Q73 72 50 72 Q27 72 18 62 Z" fill="#5a3a28" />
+</svg>
