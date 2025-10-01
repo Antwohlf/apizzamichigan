@@ -1,15 +1,8 @@
-// src/Map.js
-import React, { useRef, useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
-import 'leaflet-rotatedmarker';
-import L from 'leaflet';
-
-const pizzaIcon = L.icon({
-  iconUrl: process.env.PUBLIC_URL + '/pizza-icon.svg',
-  iconSize: [35, 35],
-  iconAnchor: [17, 35],
-  popupAnchor: [0, -35],
-});
+// src/map.js
+import React, { createRef, useEffect, useMemo, useRef, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
+import 'leaflet-rotatedmarker'
+import L from 'leaflet'
 
 const ZoomButton = () => {
   const map = useMapEvents({
@@ -32,8 +25,12 @@ const ZoomButton = () => {
   };
 
   const checkView = () => {
-    const currentCenter = map.getCenter();
-    const currentZoom = map.getZoom();
+    if (!map || typeof map.getCenter !== 'function' || typeof map.getZoom !== 'function') {
+      return
+    }
+
+    const currentCenter = map.getCenter()
+    const currentZoom = map.getZoom()
 
     // Check if the map is within Michigan boundaries
     const isInMichigan =
@@ -48,7 +45,7 @@ const ZoomButton = () => {
 
     // Update state based on current view
     if (isAtDefaultMichiganView) {
-      setIsDefaultMichiganView(true);
+      setIsDefaultMichiganView(true)
     } else if (isInMichigan) {
       setIsDefaultMichiganView(false);
     } else {
@@ -71,48 +68,61 @@ const ZoomButton = () => {
   );
 };
 
-const Map = ({ pizzaPlaces }) => {
-  const markerRefs = useRef([]);
+const Map = ({ places, theme }) => {
+  const markerRefs = useRef([])
+
+  const mapMarkerIcon = useMemo(() => {
+    const baseUrl = process.env.PUBLIC_URL || ''
+    const iconUrl = theme?.icons?.mapMarker ? `${baseUrl}${theme.icons.mapMarker}` : `${baseUrl}/assets/icons/pizza-marker.svg`
+    const iconSize = theme?.icons?.iconSize || [35, 35]
+    const iconAnchor = theme?.icons?.iconAnchor || [iconSize[0] / 2, iconSize[1]]
+    const popupAnchor = theme?.icons?.popupAnchor || [0, -Math.max(iconSize[1] - 4, 24)]
+
+    return L.icon({
+      iconUrl,
+      iconSize,
+      iconAnchor,
+      popupAnchor,
+    })
+  }, [theme])
+
+  const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
 
   return (
     <MapContainer
       center={[44.3148, -85.6024]} // Centered on Michigan
       zoom={6}
-      style={{ height: '600px', width: '100%', position: 'relative' }}
+      style={{ height: '100%', width: '100%', position: 'relative' }}
     >
-      <TileLayer
-        attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
-        url='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-      />
-      {pizzaPlaces.map((place, idx) => {
+      <TileLayer attribution={attribution} url={tileUrl} />
+      {places.map((place, idx) => {
         if (!markerRefs.current[idx]) {
-          markerRefs.current[idx] = React.createRef();
+          markerRefs.current[idx] = createRef()
         }
 
         const eventHandlers = {
           mouseover: () => {
-            const marker = markerRefs.current[idx].current;
+            const marker = markerRefs.current[idx].current
             if (marker) {
-              marker.openPopup();
+              marker.openPopup()
             }
           },
           mouseout: () => {
-            const marker = markerRefs.current[idx].current;
+            const marker = markerRefs.current[idx].current
             if (marker) {
-              marker.closePopup();
+              marker.closePopup()
             }
           },
-        };
+        }
 
         return (
           <Marker
             key={idx}
             position={[place.lat, place.lng]}
-            icon={pizzaIcon}
+            icon={mapMarkerIcon}
             eventHandlers={eventHandlers}
             ref={markerRefs.current[idx]}
-            rotationAngle={180}
-            rotationOrigin="center"
           >
             <Popup>
               <strong>{place.name}</strong>
@@ -124,13 +134,13 @@ const Map = ({ pizzaPlaces }) => {
               Notes: {place.notes}
             </Popup>
           </Marker>
-        );
+        )
       })}
 
       {/* Render ZoomButton directly inside MapContainer */}
       <ZoomButton />
     </MapContainer>
-  );
-};
+  )
+}
 
-export default Map;
+export default Map

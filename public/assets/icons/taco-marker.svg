@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Taco marker">
+  <title>Taco Marker</title>
+  <!-- Shell base -->
+  <path d="M10 36 C14 18 30 8 48 14 C58 18 62 28 58 40 C54 52 44 58 32 60 C20 58 12 50 10 36 Z"
+        fill="#D6A65D" stroke="#B7894A" stroke-width="2" stroke-linejoin="round" />
+  <!-- Inner shell lip -->
+  <path d="M12 35 C16 20 31 12 47 18 C55 21 59 29 55 39 C51 48 43 53 32 55 C22 53 14 47 12 35 Z"
+        fill="#B7894A" opacity="0.55" />
+  <!-- Shell texture -->
+  <path d="M20 42 L23 44" stroke="#B7894A" stroke-width="2" stroke-linecap="round" />
+  <path d="M28 46 L31 48" stroke="#B7894A" stroke-width="2" stroke-linecap="round" />
+  <path d="M36 44 L39 46" stroke="#B7894A" stroke-width="2" stroke-linecap="round" />
+  <!-- Lettuce -->
+  <path d="M14 34 C20 24 34 22 48 28 C54 30 58 34 56 38 C50 44 26 46 16 40 Z"
+        fill="#3F8F3D" />
+  <!-- Meat -->
+  <path d="M18 40 C26 33 38 34 48 38 C54 40 55 44 50 48 C40 54 24 52 18 46 Z"
+        fill="#7A4A2E" opacity="0.9" />
+  <!-- Cheese triangles -->
+  <path d="M22 36 L26 34 L26 38 Z" fill="#F1C232" />
+  <path d="M34 38 L38 36 L38 40 Z" fill="#F1C232" />
+  <path d="M28 42 L32 40 L32 44 Z" fill="#F1C232" />
+  <!-- Tomato pieces -->
+  <circle cx="22" cy="32" r="2.5" fill="#D9473E" />
+  <circle cx="30" cy="30" r="2.2" fill="#D9473E" />
+  <circle cx="40" cy="32" r="2.4" fill="#D9473E" />
+</svg>

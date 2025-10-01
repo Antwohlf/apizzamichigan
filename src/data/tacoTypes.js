@@ -1,0 +1,11 @@
+export const TACO_TYPES = [
+  'Al Pastor',
+  'Carne Asada',
+  'Carnitas',
+  'Chorizo',
+  'Pollo',
+  'Barbacoa',
+  'Birria',
+  'Lengua',
+  'Fish',
+]

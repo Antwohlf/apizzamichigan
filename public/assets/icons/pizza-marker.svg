@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pizza marker">
+  <title>Pizza Marker</title>
+  <defs>
+    <linearGradient id="crust" x1="0%" x2="0%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#f5ce8a" />
+      <stop offset="100%" stop-color="#c47c3a" />
+    </linearGradient>
+    <linearGradient id="cheese" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe08f" />
+      <stop offset="100%" stop-color="#f7b247" />
+    </linearGradient>
+  </defs>
+  <path d="M12 18 Q32 6 52 18 L32 60 Z" fill="url(#crust)" stroke="#a56628" stroke-width="2" stroke-linejoin="round" />
+  <path d="M16 22 Q32 12 48 22 L32 55 Z" fill="url(#cheese)" stroke="#f2a93b" stroke-width="1.5" stroke-linejoin="round" />
+  <circle cx="24" cy="30" r="4" fill="#d9382b" />
+  <circle cx="38" cy="26" r="3.5" fill="#d9382b" />
+  <circle cx="34" cy="40" r="4.5" fill="#d9382b" />
+</svg>

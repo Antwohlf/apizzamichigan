@@ -5,7 +5,7 @@ import { supabase } from './supabaseClient'
 // simple strip-tags sanitizer
 const stripTags = str => str.replace(/<\/?[^>]+(>|$)/g, '').trim()
 
-export default function SuggestionForm() {
+export default function SuggestionForm({ theme, isPizza }) {
   const [name,     setName]     = useState('')
   const [location, setLocation] = useState('')
   const [order,    setOrder]    = useState('')
@@ -47,16 +47,19 @@ export default function SuggestionForm() {
     }
   }
 
+  const submitLabel = 'Submit Suggestion'
+  const questionLabel = isPizza ? 'What should I order?' : 'What should I try?'
+
   return (
     <div className="sidebar-container suggestion-form">
       <h2>Recommendations?</h2>
 
       {status === 'success' ? (
-        <p>Thanks! Your suggestion has been received. 🍕</p>
+        <p>Thanks! Your suggestion has been received. {isPizza ? '🍕' : '🌮'}</p>
       ) : (
         <form onSubmit={handleSubmit}>
           {status === 'error' && (
-            <p style={{ color: 'salmon' }}>{errorMsg}</p>
+            <p style={{ color: theme?.palette?.accent || 'salmon' }}>{errorMsg}</p>
           )}
 
           <label>
@@ -80,7 +83,7 @@ export default function SuggestionForm() {
           <br/>
 
           <label>
-            What should I order?
+            {questionLabel}
             <textarea
               value={order}
               onChange={e => setOrder(e.target.value)}
@@ -89,11 +92,8 @@ export default function SuggestionForm() {
           </label>
           <br/>
 
-          <button
-            type="submit"
-            disabled={status === 'submitting'}
-          >
-            {status === 'submitting' ? 'Submitting…' : 'Submit Suggestion'}
+          <button type="submit" disabled={status === 'submitting'}>
+            {status === 'submitting' ? 'Submitting…' : submitLabel}
           </button>
         </form>
       )}
