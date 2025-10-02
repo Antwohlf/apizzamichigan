@@ -31,9 +31,11 @@ export default function SuggestionForm({ theme, isPizza }) {
       order:    stripTags(order),
     }
 
+    const table = isPizza ? 'pizza_suggestions' : 'taco_suggestions'
+
     // insert into Supabase
     const { error } = await supabase
-      .from('suggestions')
+      .from(table)
       .insert([ clean ])
 
     if (error) {
