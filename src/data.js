@@ -4,6 +4,7 @@ const pizzaPlaces = [{'name': 'Dominos', 'style': 'Standard', 'price': '$', 'lat
 const normalizedPizzaPlaces = pizzaPlaces.map(p => ({
   ...p,
   style: p.style === 'Standard' ? 'Traditional' : p.style,
+  status: p.status || 'visited',
 }));
 
 export default normalizedPizzaPlaces;

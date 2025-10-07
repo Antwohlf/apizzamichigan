@@ -1,8 +1,9 @@
 // src/map.js
-import React, { createRef, useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
+import React, { useEffect, useState } from 'react'
+import { MapContainer, TileLayer, useMapEvents } from 'react-leaflet'
 import 'leaflet-rotatedmarker'
-import L from 'leaflet'
+
+import { PlacesLayer } from './map/PlacesLayer'
 
 const ZoomButton = () => {
   const map = useMapEvents({
@@ -68,24 +69,7 @@ const ZoomButton = () => {
   );
 };
 
-const Map = ({ places, theme }) => {
-  const markerRefs = useRef([])
-
-  const mapMarkerIcon = useMemo(() => {
-    const baseUrl = process.env.PUBLIC_URL || ''
-    const iconUrl = theme?.icons?.mapMarker ? `${baseUrl}${theme.icons.mapMarker}` : `${baseUrl}/assets/icons/pizza-marker.svg`
-    const iconSize = theme?.icons?.iconSize || [35, 35]
-    const iconAnchor = theme?.icons?.iconAnchor || [iconSize[0] / 2, iconSize[1]]
-    const popupAnchor = theme?.icons?.popupAnchor || [0, -Math.max(iconSize[1] - 4, 24)]
-
-    return L.icon({
-      iconUrl,
-      iconSize,
-      iconAnchor,
-      popupAnchor,
-    })
-  }, [theme])
-
+const Map = ({ places, theme, site = 'pizza' }) => {
   const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
 
@@ -96,46 +80,7 @@ const Map = ({ places, theme }) => {
       style={{ height: '100%', width: '100%', position: 'relative' }}
     >
       <TileLayer attribution={attribution} url={tileUrl} />
-      {places.map((place, idx) => {
-        if (!markerRefs.current[idx]) {
-          markerRefs.current[idx] = createRef()
-        }
-
-        const eventHandlers = {
-          mouseover: () => {
-            const marker = markerRefs.current[idx].current
-            if (marker) {
-              marker.openPopup()
-            }
-          },
-          mouseout: () => {
-            const marker = markerRefs.current[idx].current
-            if (marker) {
-              marker.closePopup()
-            }
-          },
-        }
-
-        return (
-          <Marker
-            key={idx}
-            position={[place.lat, place.lng]}
-            icon={mapMarkerIcon}
-            eventHandlers={eventHandlers}
-            ref={markerRefs.current[idx]}
-          >
-            <Popup>
-              <strong>{place.name}</strong>
-              <br />
-              {place.review}
-              <br />
-              Rating: {place.rating}/10
-              <br />
-              Notes: {place.notes}
-            </Popup>
-          </Marker>
-        )
-      })}
+      <PlacesLayer site={site} places={places} />
 
       {/* Render ZoomButton directly inside MapContainer */}
       <ZoomButton />

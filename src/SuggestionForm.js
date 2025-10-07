@@ -1,5 +1,5 @@
 // src/SuggestionForm.js
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 
 // simple strip-tags sanitizer
@@ -11,6 +11,14 @@ export default function SuggestionForm({ theme, isPizza }) {
   const [order,    setOrder]    = useState('')
   const [status,   setStatus]   = useState('idle') // 'idle' | 'submitting' | 'success' | 'error'
   const [errorMsg, setErrorMsg] = useState('')
+
+  useEffect(() => {
+    setStatus('idle')
+    setErrorMsg('')
+    setName('')
+    setLocation('')
+    setOrder('')
+  }, [isPizza])
 
   const handleSubmit = async e => {
     e.preventDefault()

@@ -7,6 +7,45 @@ body {
   color: var(--app-text, #fff);
 }
 
+.site-title {
+  text-align: center;
+}
+
+.site-title__heading {
+  margin: 1rem 0 0.25rem;
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.site-title__byline {
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--app-text-muted);
+}
+
+.title-gradient {
+  background-image: linear-gradient(120deg, var(--title-color-1), var(--title-color-2), var(--title-color-3), var(--title-color-1));
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: title-gradient-shift 8s ease-in-out infinite;
+}
+
+@keyframes title-gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
 .app-shell {
   min-height: 100vh;
   background-color: var(--app-bg);
@@ -45,28 +84,10 @@ body {
 .app-heading {
   margin: 1.5rem 0 0.5rem;
   font-size: 3.2em;
-  font-weight: 700;
+  font-weight: 800;
   text-align: center;
-  position: relative;
-  display: inline-block;
-  padding: 10px;
-  background: linear-gradient(45deg, var(--title-color-1), var(--title-color-2), var(--title-color-3));
-  background-size: 200%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  animation: gradient-animation 5s infinite linear;
-  -webkit-text-stroke: 1px rgba(0, 0, 0, 0.4);
-  font-family: "Outfit", Arial, sans-serif;
-}
-
-@keyframes gradient-animation {
-  0% {
-    background-position: 0%;
-  }
-  100% {
-    background-position: 200%;
-  }
+  color: var(--app-text);
+  letter-spacing: -0.02em;
 }
 
 .view-toggle {
