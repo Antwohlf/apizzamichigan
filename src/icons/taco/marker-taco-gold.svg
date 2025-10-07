@@ -1,16 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" version="1.2" viewBox="0 0 800 800" width="800" height="800" role="img" aria-label="Taco icon">
-  <title>Taco Icon</title>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.2" viewBox="0 0 800 800" width="800" height="800" role="img" aria-label="Taco icon gold">
+  <title>Gold Taco Icon</title>
   <style>
-    .a{fill:#ffb803}
-    .b{fill:#ffa000}
-    .c{fill:#ffe265}
-    .d{fill:#da8119}
-    .e{fill:#714c40}
-    .f{fill:#ac5832}
-    .g{fill:#4e8f34}
-    .h{fill:#fcecc8}
-    .i{fill:#ffb700}
+    .a{fill:#fef08a}
+    .b{fill:#f59e0b}
+    .c{fill:#fde68a}
+    .d{fill:#b45309}
+    .e{fill:#92400e}
+    .f{fill:#7c2d12}
+    .g{fill:#fbbf24}
+    .h{fill:#fef3c7}
+    .i{fill:#facc15}
   </style>
+  <defs>
+    <radialGradient id="tacoGoldGlow" cx="400" cy="520" r="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fef08a" stop-opacity="0.65"/>
+      <stop offset="65%" stop-color="#facc15" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#facc15" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="400" cy="520" r="340" fill="url(#tacoGoldGlow)" opacity="0.75"/>
   <path class="a" d="m278.5 662.6l-25.2 44.8c0 0 42.6-11 84.6-38.9 42-27.9 77-71.1 156.2-122.4 87.5-56.6 198.2-67.5 255.3-130.5 44.9-49.5 42.6-118.7 19.8-176-25.1-62.8-61.9-86.2-61.9-86.2z"/>
   <path class="b" d="m601.3 203.4c4.7-3.5-65.2-76.9-65.2-76.9 0 0-113.1-83.9-273.9-15.1-160.8 68.7-256.4 263.4-237.8 419.5 16.6 138.5 79.8 185.9 146.7 182.9 103.7-4.7 155.6-73.5 155.6-73.5z"/>
   <path class="c" d="m525.4 132.9c0 0-66.3-60-215.5-19.2-149.1 40.8-278.5 228.4-269.1 393.9 9 161 80.4 145.7 80.4 145.7 0 0 202.7-318.1 208.6-322.8 5.8-4.7 195.6-197.6 195.6-197.6z"/>

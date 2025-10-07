@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { pizzaStyles } from './data/pizzaStyles'
 import { TACO_TYPES } from './data/tacoTypes'
 import { geocodeAddress } from './lib/geocode'
+import ReviewPhotoUploader from './components/ReviewPhotoUploader'
 
 const initialForm = {
   entity: 'pizza',
@@ -25,6 +26,7 @@ export default function AdminSubmit() {
   const [submitting, setSubmitting] = useState(false)
   const [geocoding, setGeocoding] = useState(false)
   const [message, setMessage] = useState('')
+  const [photoPreviews, setPhotoPreviews] = useState([])
 
   useEffect(() => {
     async function checkAuth() {
@@ -133,6 +135,7 @@ export default function AdminSubmit() {
       }
       setMessage('Success! The place will appear on the map after the next refresh.')
       setForm(initialForm)
+      setPhotoPreviews([])
     } catch (err) {
       setMessage(err.message || 'Submission failed')
     } finally {
@@ -244,6 +247,16 @@ export default function AdminSubmit() {
           rows={3}
           style={{ ...inputStyle, minHeight: '120px', resize: 'vertical' }}
         />
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <label style={{ color: '#fff', fontWeight: 600 }}>Optional Place Photos</label>
+          <ReviewPhotoUploader onUploaded={setPhotoPreviews} />
+          {photoPreviews.length > 0 && (
+            <p style={{ fontSize: '0.85rem', color: '#fbbf24', margin: 0 }}>
+              Photos are stored locally for preview. Upload support can be wired to Supabase when ready.
+            </p>
+          )}
+        </div>
 
         <div style={{ display: 'flex', gap: '1rem' }}>
           <input

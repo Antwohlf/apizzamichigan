@@ -1,14 +1,15 @@
 // src/App.js
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react'
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
 
-import Map from './map'
 import Sidebar from './Sidebar'
 import SuggestionForm from './SuggestionForm'
 import AdminForm from './AdminForm'
 import FrozenPizzaDirectory from './FrozenPizzaDirectory'
 import LatinMarkets from './LatinMarkets'
 import AdminSubmit from './AdminSubmit'
+import { SiteTitle } from './header/SiteTitle'
+import { StatsPanel } from './sidebar/StatsPanel'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
 import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
@@ -19,13 +20,27 @@ import { tacoPlacesFallback } from './data/tacoPlaces'
 import { fetchTacoPlaces } from './lib/supabase-tacos'
 import './App.css'
 
+const MapView = lazy(() => import('./map'))
+
 const PLACE_TABLE_BY_THEME = {
   [ThemeKeys.PIZZA]: 'pizza_places',
   [ThemeKeys.TACO]: 'taco_places',
 }
 
+const DEFAULT_STATUSES = ['visited', 'unvisited', 'golden']
+
+const normalizeStatus = (status) => {
+  if (typeof status === 'string') {
+    const lower = status.toLowerCase()
+    if (DEFAULT_STATUSES.includes(lower)) {
+      return lower
+    }
+  }
+  return 'visited'
+}
+
 function SiteContainer({ themeKey }) {
-  const [filters, setFilters] = useState({ styles: [], prices: [] })
+  const [filters, setFilters] = useState({ styles: [], prices: [], statuses: [] })
   const [view, setView] = useState('map')
   const [places, setPlaces] = useState([])
   const [mapLoading, setMapLoading] = useState(true)
@@ -37,9 +52,36 @@ function SiteContainer({ themeKey }) {
   const handleFilterChange = useCallback(next => setFilters(next), [])
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const statusParam = params.get('status')
+    if (statusParam) {
+      const next = statusParam
+        .split(',')
+        .map(v => v.trim())
+        .filter(v => DEFAULT_STATUSES.includes(v))
+      if (next.length) {
+        setFilters(prev => ({ ...prev, statuses: next }))
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     document.body.style.backgroundColor = theme.palette.bg
     document.body.style.color = theme.palette.text
   }, [theme])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const currentStatuses = filters.statuses || []
+    if (currentStatuses.length && currentStatuses.length !== DEFAULT_STATUSES.length) {
+      params.set('status', currentStatuses.join(','))
+    } else {
+      params.delete('status')
+    }
+    const next = params.toString()
+    const newUrl = next ? `${window.location.pathname}?${next}` : window.location.pathname
+    window.history.replaceState({}, '', newUrl)
+  }, [filters.statuses])
 
   useEffect(() => {
     const pageTitle = isPizza
@@ -109,7 +151,12 @@ function SiteContainer({ themeKey }) {
       if (!isMounted) return
 
       if (error) {
-        setPlaces(fallbackPlaces)
+        const normalizedFallback = (fallbackPlaces || []).map(place => ({
+          ...place,
+          status: normalizeStatus(place?.status),
+          photos: Array.isArray(place?.photos) ? place.photos : [],
+        }))
+        setPlaces(normalizedFallback)
         setMapError(error)
       } else {
         const normalized = (data || []).map(place => ({
@@ -121,6 +168,8 @@ function SiteContainer({ themeKey }) {
                 ? 'Traditional'
                 : place.style,
           price: place.price || place.Price || '',
+          status: normalizeStatus(place.status),
+          photos: Array.isArray(place.photos) ? place.photos : [],
         }))
 
         setPlaces(normalized)
@@ -136,14 +185,17 @@ function SiteContainer({ themeKey }) {
     }
   }, [themeKey])
 
-  const filteredPlaces = useMemo(
-    () =>
-      places.filter(place =>
+  const filteredPlaces = useMemo(() => {
+    const statusSet = new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
+    return places.filter(place => {
+      const placeStatus = place.status || 'visited'
+      return (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
-        (filters.prices.length === 0 || filters.prices.includes(place.price))
-      ),
-    [places, filters]
-  )
+        (filters.prices.length === 0 || filters.prices.includes(place.price)) &&
+        statusSet.has(placeStatus)
+      )
+    })
+  }, [places, filters])
 
   const themeStyles = useMemo(
     () => ({
@@ -175,11 +227,11 @@ function SiteContainer({ themeKey }) {
     <div className="app-shell" style={themeStyles}>
       <div className="app-layout">
         <div className="sidebar-wrapper">
-          <Sidebar onFilterChange={handleFilterChange} themeKey={themeKey} />
+          <Sidebar onFilterChange={handleFilterChange} themeKey={themeKey} filters={filters} />
         </div>
 
         <div className="main-content">
-          <h1 className="app-heading">{theme.brandName}</h1>
+          <SiteTitle title={theme.brandName} />
 
           <div className="view-toggle">
             {['map', 'frozen'].map(mode => {
@@ -197,7 +249,10 @@ function SiteContainer({ themeKey }) {
             })}
           </div>
 
-          <div className="map-or-directory">
+          <div
+            className="map-or-directory"
+            style={{ contentVisibility: 'auto', containIntrinsicSize: '600px' }}
+          >
             {view === 'map' ? (
               mapLoading ? (
                 <div className="map-status" data-status="loading">
@@ -208,7 +263,9 @@ function SiteContainer({ themeKey }) {
                   {theme.copy.errorPrefix}: {mapError.message}
                 </div>
               ) : (
-                <Map places={filteredPlaces} theme={theme} />
+                <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
+                  <MapView places={filteredPlaces} theme={theme} site={isPizza ? 'pizza' : 'taco'} />
+                </Suspense>
               )
             ) : (
               themeKey === ThemeKeys.TACO ? (
@@ -227,7 +284,10 @@ function SiteContainer({ themeKey }) {
         </div>
 
         <div className="sidebar-wrapper">
-          <SuggestionForm theme={theme} isPizza={isPizza} />
+          <div className="sidebar-inner sidebar-inner--sticky">
+            <StatsPanel places={filteredPlaces} />
+            <SuggestionForm key={themeKey} theme={theme} isPizza={isPizza} />
+          </div>
         </div>
       </div>
     </div>

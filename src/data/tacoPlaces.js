@@ -10,6 +10,7 @@ export const tacoPlacesFallback = [
     rating: 9.0,
     review: 'Handmade tortillas and late-night hours keep this a Southwest Detroit staple.',
     notes: 'Try the lengua with green salsa.',
+    status: 'visited',
   },
   {
     name: 'La Jalisciense',
@@ -20,6 +21,7 @@ export const tacoPlacesFallback = [
     rating: 8.5,
     review: 'Spit-roasted pastor carved to order with charred pineapple.',
     notes: 'Cash only, limited seating.',
+    status: 'visited',
   },
   {
     name: 'Birria Tacos El Gordo',
@@ -30,5 +32,6 @@ export const tacoPlacesFallback = [
     rating: 8.0,
     review: 'Rich consomé and cheesy quesabirria with a modern truck vibe.',
     notes: 'Weekend pop-up in Wyandotte—check socials for schedule.',
+    status: 'visited',
   },
 ]
