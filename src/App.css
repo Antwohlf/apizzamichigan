@@ -5,6 +5,7 @@ body {
   font-family: Arial, sans-serif;
   background-color: var(--app-bg, #333);
   color: var(--app-text, #fff);
+  overflow-x: hidden;
 }
 
 .site-title {
@@ -22,6 +23,23 @@ body {
   margin-top: 0.25rem;
   font-size: 0.9rem;
   color: var(--app-text-muted);
+}
+
+.site-title__link {
+  color: inherit;
+  text-decoration: underline;
+  transition: color 0.2s ease;
+}
+
+.site-title__link:hover,
+.site-title__link:focus {
+  color: var(--app-accent);
+  outline: none;
+}
+
+.site-title__link:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
 }
 
 .title-gradient {
@@ -51,12 +69,13 @@ body {
   background-color: var(--app-bg);
   color: var(--app-text);
   transition: background-color 0.3s ease, color 0.3s ease;
+  overflow-x: hidden;
 }
 
 .app-layout {
   display: flex;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow: visible;
 }
 
 .sidebar-wrapper {
@@ -64,6 +83,15 @@ body {
   overflow-y: auto;
   background: var(--app-card);
   border-right: 1px solid var(--app-border);
+}
+
+.sidebar-inner {
+  padding: 1.25rem;
+}
+
+.sidebar-inner--sticky {
+  position: sticky;
+  top: 24px;
 }
 
 .sidebar-wrapper:last-child {
@@ -128,6 +156,8 @@ body {
   overflow: hidden;
   background: var(--app-card);
   border: 1px solid var(--app-border);
+  content-visibility: auto;
+  contain-intrinsic-size: 600px;
 }
 
 .site-footer {
@@ -240,3 +270,26 @@ body {
   background-color: #222;
   color: #fff;
 }
+
+@media (max-width: 1024px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .sidebar-wrapper {
+    width: 100%;
+    border-right: none;
+    border-left: none;
+  }
+
+  .sidebar-wrapper:last-child {
+    border-top: 1px solid var(--app-border);
+    border-left: none;
+  }
+
+  .main-content {
+    width: 100%;
+    padding: 1rem;
+  }
+}
+

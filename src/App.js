@@ -1,8 +1,7 @@
 // src/App.js
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react'
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
 
-import Map from './map'
 import Sidebar from './Sidebar'
 import SuggestionForm from './SuggestionForm'
 import AdminForm from './AdminForm'
@@ -20,6 +19,8 @@ import { trackSiteSwitch } from './analytics'
 import { tacoPlacesFallback } from './data/tacoPlaces'
 import { fetchTacoPlaces } from './lib/supabase-tacos'
 import './App.css'
+
+const MapView = lazy(() => import('./map'))
 
 const PLACE_TABLE_BY_THEME = {
   [ThemeKeys.PIZZA]: 'pizza_places',
@@ -153,6 +154,7 @@ function SiteContainer({ themeKey }) {
         const normalizedFallback = (fallbackPlaces || []).map(place => ({
           ...place,
           status: normalizeStatus(place?.status),
+          photos: Array.isArray(place?.photos) ? place.photos : [],
         }))
         setPlaces(normalizedFallback)
         setMapError(error)
@@ -167,6 +169,7 @@ function SiteContainer({ themeKey }) {
                 : place.style,
           price: place.price || place.Price || '',
           status: normalizeStatus(place.status),
+          photos: Array.isArray(place.photos) ? place.photos : [],
         }))
 
         setPlaces(normalized)
@@ -246,7 +249,10 @@ function SiteContainer({ themeKey }) {
             })}
           </div>
 
-          <div className="map-or-directory">
+          <div
+            className="map-or-directory"
+            style={{ contentVisibility: 'auto', containIntrinsicSize: '600px' }}
+          >
             {view === 'map' ? (
               mapLoading ? (
                 <div className="map-status" data-status="loading">
@@ -257,7 +263,9 @@ function SiteContainer({ themeKey }) {
                   {theme.copy.errorPrefix}: {mapError.message}
                 </div>
               ) : (
-                <Map places={filteredPlaces} theme={theme} site={isPizza ? 'pizza' : 'taco'} />
+                <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
+                  <MapView places={filteredPlaces} theme={theme} site={isPizza ? 'pizza' : 'taco'} />
+                </Suspense>
               )
             ) : (
               themeKey === ThemeKeys.TACO ? (
@@ -276,7 +284,7 @@ function SiteContainer({ themeKey }) {
         </div>
 
         <div className="sidebar-wrapper">
-          <div style={{ padding: '1.25rem' }}>
+          <div className="sidebar-inner sidebar-inner--sticky">
             <StatsPanel places={filteredPlaces} />
             <SuggestionForm key={themeKey} theme={theme} isPizza={isPizza} />
           </div>

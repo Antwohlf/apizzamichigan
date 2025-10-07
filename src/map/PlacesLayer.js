@@ -1,6 +1,7 @@
 import React, { createRef } from 'react'
 import { Marker, Popup } from 'react-leaflet'
 import { getMarkerIcon } from './getMarkerIcon'
+import ReviewGallery from '../components/ReviewGallery'
 
 export function PlacesLayer({ site, places }) {
   return (
@@ -29,13 +30,17 @@ export function PlacesLayer({ site, places }) {
             eventHandlers={eventHandlers}
           >
             <Popup>
-              <strong>{place.name}</strong>
-              <br />
-              {place.review}
-              <br />
-              Rating: {place.rating ?? '—'}/10
-              <br />
-              {place.notes ? `Notes: ${place.notes}` : null}
+              <div style={{ maxWidth: 240 }}>
+                <strong>{place.name}</strong>
+                {place.review ? (
+                  <p style={{ margin: '0.35rem 0' }}>{place.review}</p>
+                ) : null}
+                <p style={{ margin: '0.35rem 0' }}>Rating: {place.rating ?? '—'}/10</p>
+                {place.notes ? (
+                  <p style={{ margin: '0.35rem 0' }}>Notes: {place.notes}</p>
+                ) : null}
+                <ReviewGallery photos={Array.isArray(place.photos) ? place.photos : []} />
+              </div>
             </Popup>
           </Marker>
         )

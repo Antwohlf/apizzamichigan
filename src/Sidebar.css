@@ -12,6 +12,77 @@
   height: 100%;
 }
 
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-section__title {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--app-text-muted);
+}
+
+.filter-section__options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--app-border);
+  background: var(--app-card);
+  color: var(--app-text);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  text-align: left;
+}
+
+.filter-option:hover,
+.filter-option:focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  outline: none;
+}
+
+.filter-option.is-selected {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.12);
+}
+
+.filter-option.is-selected .filter-option__swatch {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.filter-option__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+.filter-option__label {
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.filter-option__subtitle {
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+
 /* Left Sidebar: Style and Price Filter Buttons */
 .sidebar-options {
   display: flex;

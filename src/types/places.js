@@ -12,6 +12,7 @@
  * @property {number} lng
  * @property {string} [review]
  * @property {string} [notes]
+ * @property {string[]} [photos]
  *
  * @typedef {Object} TacoPlace
  * @property {string} id
@@ -24,5 +25,6 @@
  * @property {number} lng
  * @property {string} [review]
  * @property {string} [notes]
+ * @property {string[]} [photos]
  */
 export {}

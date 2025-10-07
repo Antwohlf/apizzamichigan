@@ -14,7 +14,6 @@ const arraysEqual = (a = [], b = []) =>
 const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
   const { theme } = useTheme()
 
-  // Allow multiple selections
   const [selectedStyles, setSelectedStyles] = useState([])
   const [selectedPrices, setSelectedPrices] = useState([])
   const [selectedStatuses, setSelectedStatuses] = useState(new Set(DEFAULT_STATUS_VALUES))
@@ -38,16 +37,14 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
     })
   }, [filters])
 
-  // Toggle selection for styles
   const handleStyleSelect = style => {
     setSelectedStyles(prevStyles =>
       prevStyles.includes(style)
-        ? prevStyles.filter(s => s !== style) // Deselect if clicked again
-        : [...prevStyles, style] // Select multiple
+        ? prevStyles.filter(s => s !== style)
+        : [...prevStyles, style]
     )
   }
 
-  // Toggle selection for prices
   const handlePriceSelect = price => {
     setSelectedPrices(prevPrices =>
       prevPrices.includes(price)
@@ -56,7 +53,6 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
     )
   }
 
-  // Combine both style and price filters into a single object, then send to parent
   useEffect(() => {
     const filter = {
       styles: selectedStyles,
@@ -73,32 +69,46 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
   }, [themeKey])
 
   return (
-    <div className="sidebar-container">
-      <h2>{theme.copy.styleLabel}</h2>
-      <div className="sidebar-options">
-        {stylesForTheme.map(style => (
-          <button
-            key={style}
-            className={`sidebar-btn ${selectedStyles.includes(style) ? 'active' : ''}`}
-            onClick={() => handleStyleSelect(style)}
-          >
-            {style}
-          </button>
-        ))}
-      </div>
+    <div className="sidebar-container" role="complementary">
+      <section className="filter-section" aria-label={theme.copy.styleLabel}>
+        <h3 className="filter-section__title">{theme.copy.styleLabel}</h3>
+        <div className="filter-section__options">
+          {stylesForTheme.map(style => {
+            const isSelected = selectedStyles.includes(style)
+            return (
+              <button
+                key={style}
+                type="button"
+                className={`filter-option${isSelected ? ' is-selected' : ''}`}
+                onClick={() => handleStyleSelect(style)}
+                aria-pressed={isSelected}
+              >
+                <span className="filter-option__label">{style}</span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
 
-      <h2>Price</h2>
-      <div className="sidebar-options">
-        {['$', '$$', '$$$'].map(price => (
-          <button
-            key={price}
-            className={`sidebar-btn ${selectedPrices.includes(price) ? 'active' : ''}`}
-            onClick={() => handlePriceSelect(price)}
-          >
-            {price}
-          </button>
-        ))}
-      </div>
+      <section className="filter-section" aria-label="Price">
+        <h3 className="filter-section__title">Price</h3>
+        <div className="filter-section__options">
+          {['$', '$$', '$$$'].map(price => {
+            const isSelected = selectedPrices.includes(price)
+            return (
+              <button
+                key={price}
+                type="button"
+                className={`filter-option${isSelected ? ' is-selected' : ''}`}
+                onClick={() => handlePriceSelect(price)}
+                aria-pressed={isSelected}
+              >
+                <span className="filter-option__label">{price}</span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
 
       <StatusFilter value={selectedStatuses} onChange={setSelectedStatuses} />
     </div>
