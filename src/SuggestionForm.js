@@ -233,19 +233,24 @@ export default function SuggestionForm({ theme, isPizza }) {
             <p className="suggestion-form__error" style={{ color: theme?.palette?.accent || 'salmon' }}>{errorMsg}</p>
           )}
 
-          <label className="suggestion-form__label">
+          <label className="suggestion-form__label" htmlFor="suggestion-name">
             <span>Your Name</span>
             <input
+              id="suggestion-name"
+              name="name"
+              autoComplete="name"
               value={name}
               onChange={event => setName(event.target.value)}
               required
             />
           </label>
 
-          <label className="suggestion-form__label">
+          <label className="suggestion-form__label" htmlFor="suggestion-location">
             <span>Location</span>
             <div className="suggestion-form__autocomplete">
               <input
+                id="suggestion-location"
+                name="location"
                 ref={inputRef}
                 value={location}
                 onChange={handleLocationChange}
@@ -253,7 +258,7 @@ export default function SuggestionForm({ theme, isPizza }) {
                 onBlur={scheduleHide}
                 onKeyDown={handleLocationKeyDown}
                 placeholder="City, neighborhood, or full address"
-                autoComplete="off"
+                autoComplete="street-address"
                 required
               />
               {showSuggestions && suggestions.length > 0 && (
@@ -274,9 +279,11 @@ export default function SuggestionForm({ theme, isPizza }) {
             </div>
           </label>
 
-          <label className="suggestion-form__label">
+          <label className="suggestion-form__label" htmlFor="suggestion-order">
             <span>{questionLabel}</span>
             <textarea
+              id="suggestion-order"
+              name="order"
               value={order}
               onChange={event => setOrder(event.target.value)}
               required

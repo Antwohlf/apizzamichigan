@@ -167,30 +167,48 @@ export default function AdminForm() {
       </div>
 
       {/* common inputs */}
-      <label>
+      <label htmlFor="admin-name">
         Name:
-        <input value={name} onChange={e => setName(e.target.value)} />
+        <input
+          id="admin-name"
+          name="name"
+          autoComplete="organization"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
       </label>
-      <label>
+      <label htmlFor="admin-style">
         Style:
-        <input value={style} onChange={e => setStyle(e.target.value)} />
+        <input
+          id="admin-style"
+          name="style"
+          value={style}
+          onChange={e => setStyle(e.target.value)}
+        />
       </label>
-      <label>
+      <label htmlFor="admin-price">
         Price:
-        <select value={price} onChange={e => setPrice(e.target.value)}>
-          <option>$</option>
-          <option>$$</option>
-          <option>$$$</option>
-          <option>$$$$</option>
+        <select
+          id="admin-price"
+          name="price"
+          value={price}
+          onChange={e => setPrice(e.target.value)}
+        >
+          <option value="$">$</option>
+          <option value="$$">$$</option>
+          <option value="$$$">$$$</option>
+          <option value="$$$$">$$$$</option>
         </select>
       </label>
 
       {/* map-specific address & coords */}
       {mode === 'map' && (
         <>
-          <label>
+          <label htmlFor="admin-status">
             Status:
             <select
+              id="admin-status"
+              name="status"
               value={status}
               onChange={e => setStatus(e.target.value)}
             >
@@ -199,9 +217,12 @@ export default function AdminForm() {
               <option value="golden">Favorites</option>
             </select>
           </label>
-          <label>
+          <label htmlFor="admin-address">
             Address:
             <input
+              id="admin-address"
+              name="address"
+              autoComplete="street-address"
               value={address}
               onChange={e => setAddress(e.target.value)}
             />
@@ -211,25 +232,32 @@ export default function AdminForm() {
           </button>
           {geoError && <small style={{ color: 'salmon' }}>{geoError}</small>}
 
-          <label>
+          <label htmlFor="admin-lat">
             Lat:
-            <input value={lat} readOnly />
+            <input id="admin-lat" name="lat" value={lat} readOnly />
           </label>
-          <label>
+          <label htmlFor="admin-lng">
             Lng:
-            <input value={lng} readOnly />
+            <input id="admin-lng" name="lng" value={lng} readOnly />
           </label>
         </>
       )}
 
       {/* review/notes & rating */}
-      <label>
+      <label htmlFor="admin-notes">
         Review / Notes:
-        <textarea value={review} onChange={e => setReview(e.target.value)} />
+        <textarea
+          id="admin-notes"
+          name="review"
+          value={review}
+          onChange={e => setReview(e.target.value)}
+        />
       </label>
-      <label>
+      <label htmlFor="admin-rating">
         Rating:
         <input
+          id="admin-rating"
+          name="rating"
           type="number"
           min="1" max="10"
           value={rating}
