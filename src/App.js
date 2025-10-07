@@ -40,7 +40,7 @@ const normalizeStatus = (status) => {
 }
 
 function SiteContainer({ themeKey }) {
-  const [filters, setFilters] = useState({ styles: [], prices: [], statuses: [...DEFAULT_STATUSES] })
+  const [filters, setFilters] = useState({ styles: [], prices: [], statuses: [] })
   const [view, setView] = useState('map')
   const [places, setPlaces] = useState([])
   const [mapLoading, setMapLoading] = useState(true)

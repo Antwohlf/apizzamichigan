@@ -6,7 +6,7 @@ import { TACO_TYPES } from './data/tacoTypes'
 import { StatusFilter } from './sidebar/StatusFilter'
 import './Sidebar.css'
 
-const DEFAULT_STATUS_VALUES = ['visited', 'unvisited', 'golden']
+const ALL_STATUS_VALUES = ['visited', 'unvisited', 'golden']
 
 const arraysEqual = (a = [], b = []) =>
   a.length === b.length && a.every((value, index) => value === b[index])
@@ -16,7 +16,7 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
 
   const [selectedStyles, setSelectedStyles] = useState([])
   const [selectedPrices, setSelectedPrices] = useState([])
-  const [selectedStatuses, setSelectedStatuses] = useState(new Set(DEFAULT_STATUS_VALUES))
+  const [selectedStatuses, setSelectedStatuses] = useState(new Set())
 
   const stylesForTheme = themeKey === ThemeKeys.TACO ? TACO_TYPES : pizzaStyles
 
@@ -25,9 +25,9 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
 
     const nextStyles = Array.isArray(filters.styles) ? filters.styles : []
     const nextPrices = Array.isArray(filters.prices) ? filters.prices : []
-    const nextStatuses = Array.isArray(filters.statuses) && filters.statuses.length
+    const nextStatuses = Array.isArray(filters.statuses)
       ? filters.statuses
-      : DEFAULT_STATUS_VALUES
+      : ALL_STATUS_VALUES
 
     setSelectedStyles(prev => (arraysEqual(prev, nextStyles) ? prev : [...nextStyles]))
     setSelectedPrices(prev => (arraysEqual(prev, nextPrices) ? prev : [...nextPrices]))
@@ -65,7 +65,7 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
   useEffect(() => {
     setSelectedStyles([])
     setSelectedPrices([])
-    setSelectedStatuses(new Set(DEFAULT_STATUS_VALUES))
+    setSelectedStatuses(new Set())
   }, [themeKey])
 
   return (
@@ -93,7 +93,7 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
       <section className="filter-section" aria-label="Price">
         <h3 className="filter-section__title">Price</h3>
         <div className="filter-section__options">
-          {['$', '$$', '$$$'].map(price => {
+          {['$', '$$', '$$$', '$$$$'].map(price => {
             const isSelected = selectedPrices.includes(price)
             return (
               <button

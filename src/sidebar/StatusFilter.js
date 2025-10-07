@@ -3,16 +3,18 @@ import React from 'react'
 const STATUS_OPTIONS = [
   { value: 'visited', label: 'Visited', color: '#f97316' },
   { value: 'unvisited', label: 'Unvisited', color: '#9ca3af' },
-  { value: 'golden', label: 'Golden', color: '#facc15' },
+  { value: 'golden', label: 'Favorites', color: '#facc15' },
 ]
 
 export function StatusFilter({ value, onChange }) {
+  const currentValue = value instanceof Set ? value : new Set()
+
   return (
     <section className="filter-section" aria-label="Status">
       <h3 className="filter-section__title">Status</h3>
       <div className="filter-section__options">
         {STATUS_OPTIONS.map(option => {
-          const selected = value.has(option.value)
+          const selected = currentValue.has(option.value)
           return (
             <button
               key={option.value}
@@ -21,10 +23,10 @@ export function StatusFilter({ value, onChange }) {
               aria-current={selected ? 'true' : undefined}
               className={`filter-option${selected ? ' is-selected' : ''}`}
               onClick={() => {
-                const next = new Set(value)
-                if (selected && next.size > 1) {
+                const next = new Set(currentValue)
+                if (selected) {
                   next.delete(option.value)
-                } else if (!selected) {
+                } else {
                   next.add(option.value)
                 }
                 onChange(next)

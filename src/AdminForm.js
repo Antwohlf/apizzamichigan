@@ -25,6 +25,7 @@ export default function AdminForm() {
   const [lat, setLat]           = useState('')
   const [lng, setLng]           = useState('')
   const [geoError, setGeoError] = useState('')
+  const [status, setStatus]     = useState('unvisited')
 
   // handler to check admin password
   const handlePasswordSubmit = () => {
@@ -67,12 +68,14 @@ export default function AdminForm() {
     }
 
     // sanitize input
+    const allowedStatuses = ['visited', 'unvisited', 'golden']
     const clean = {
       name: stripTags(name),
       style: stripTags(style),
       price,
       review: stripTags(review),
-      rating: parseInt(rating, 10)
+      rating: parseInt(rating, 10),
+      status: allowedStatuses.includes(status) ? status : 'unvisited'
     }
 
     let table, payload
@@ -110,6 +113,7 @@ export default function AdminForm() {
       setAddress('')
       setLat('')
       setLng('')
+      setStatus('unvisited')
     }
   }
 
@@ -177,12 +181,24 @@ export default function AdminForm() {
           <option>$</option>
           <option>$$</option>
           <option>$$$</option>
+          <option>$$$$</option>
         </select>
       </label>
 
       {/* map-specific address & coords */}
       {mode === 'map' && (
         <>
+          <label>
+            Status:
+            <select
+              value={status}
+              onChange={e => setStatus(e.target.value)}
+            >
+              <option value="visited">Visited</option>
+              <option value="unvisited">Unvisited</option>
+              <option value="golden">Favorites</option>
+            </select>
+          </label>
           <label>
             Address:
             <input

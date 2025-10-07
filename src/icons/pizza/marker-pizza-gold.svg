@@ -1,4 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pizza marker gold">
+  <title>Pizza Marker Gold</title>
+  <defs>
+    <radialGradient id="pizzaGoldGlow" cx="32" cy="44" r="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fef08a" stop-opacity="0.7"/>
+      <stop offset="65%" stop-color="#facc15" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#facc15" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="44" r="24" fill="url(#pizzaGoldGlow)" opacity="0.7"/>
   <path d="M12 18 Q32 6 52 18 L32 60 Z" fill="#fef08a" stroke="#b45309" stroke-width="3" stroke-linejoin="round"/>
   <path d="M16 22 Q32 12 48 22 L32 55 Z" fill="#fde68a" stroke="#f59e0b" stroke-width="2" stroke-linejoin="round"/>
   <circle cx="24" cy="30" r="5" fill="#facc15"/>

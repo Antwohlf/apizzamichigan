@@ -81,6 +81,7 @@ body {
 .sidebar-wrapper {
   width: 250px;
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--app-card);
   border-right: 1px solid var(--app-border);
 }
