@@ -27,29 +27,22 @@ export function StatsPanel({ places = [] }) {
   }, [places])
 
   return (
-    <section
-      style={{
-        marginBottom: '1rem',
-        border: '1px solid var(--app-border)',
-        borderRadius: '16px',
-        padding: '0.75rem 1rem',
-        background: 'var(--app-card)',
-      }}
-    >
-      <h3
-        style={{
-          marginBottom: '0.5rem',
-          fontSize: '0.8rem',
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-          color: 'var(--app-text-muted)',
-        }}
-      >
+    <div style={{ marginBottom: '1rem' }}>
+      <h3 className="filter-section__title" style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
         Stats
       </h3>
-      <StatRow label="Number of places tried" value={stats.tried} />
-      <StatRow label="Number of unvisited suggestions" value={stats.unvisited} />
-      <StatRow label="Average rating" value={stats.average} />
-    </section>
+      <section
+        style={{
+          border: '1px solid var(--app-border)',
+          borderRadius: '16px',
+          padding: '0.75rem 1rem',
+          background: 'var(--app-card)',
+        }}
+      >
+        <StatRow label="Number of places tried" value={stats.tried} />
+        <StatRow label="Number of unvisited suggestions" value={stats.unvisited} />
+        <StatRow label="Average rating" value={stats.average} />
+      </section>
+    </div>
   )
 }

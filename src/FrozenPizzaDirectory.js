@@ -118,16 +118,17 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
       style={{
         width: '100%',
         height: '100%',
-        padding: '1rem 2rem',
+        padding: '1rem 2rem 2.5rem',
         background: theme.palette.card,
         color: theme.palette.text,
         overflowY: 'auto',
+        boxSizing: 'border-box',
       }}
     >
       <h2 style={{ color: theme.palette.accent, margin: '0 auto 1rem', textAlign: 'center' }}>
         {themeKey === ThemeKeys.TACO ? 'Frozen Taco Directory' : 'Frozen Pizza Directory'}
       </h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
         <thead>
           <tr>
             {headers.map(h => {

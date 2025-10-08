@@ -79,7 +79,7 @@ body {
 }
 
 .sidebar-wrapper {
-  width: 250px;
+  width: 260px;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--app-card);

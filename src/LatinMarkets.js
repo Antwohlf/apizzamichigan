@@ -13,8 +13,9 @@ const containerStyle = {
 
 const gridStyle = {
   display: 'grid',
-  gap: '0.75rem',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+  gap: '1rem',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+  alignItems: 'stretch',
 }
 
 const cardStyle = {
@@ -24,8 +25,10 @@ const cardStyle = {
   background: 'rgba(0,0,0,0.04)',
   display: 'flex',
   flexDirection: 'column',
-  gap: '0.5rem',
+  gap: '0.75rem',
   minWidth: 0,
+  height: '100%',
+  boxSizing: 'border-box',
 }
 
 const headingStyle = {
