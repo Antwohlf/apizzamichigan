@@ -22,16 +22,20 @@
 }
 
 .filter-section__title {
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   color: var(--app-text-muted);
+  text-align: center;
 }
-
 .filter-section__options {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.filter-section__options--status {
+  justify-content: flex-start;
 }
 
 .filter-section__options .filter-option {

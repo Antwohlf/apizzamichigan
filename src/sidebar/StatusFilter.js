@@ -12,7 +12,7 @@ export function StatusFilter({ value, onChange }) {
   return (
     <section className="filter-section" aria-label="Status">
       <h3 className="filter-section__title">Status</h3>
-      <div className="filter-section__options">
+      <div className="filter-section__options filter-section__options--status">
         {STATUS_OPTIONS.map(option => {
           const selected = currentValue.has(option.value)
           return (
