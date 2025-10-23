@@ -68,7 +68,13 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
 export function teardownPopup(node: HTMLElement) {
   const root = roots.get(node)
   if (root) {
-    root.unmount()
-    roots.delete(node)
+    try {
+      root.render(null)
+    } catch (err) {
+      // swallow errors triggered if React is already committing unmount
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[renderPopup] failed to render null during teardown', err)
+      }
+    }
   }
 }

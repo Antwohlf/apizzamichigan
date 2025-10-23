@@ -129,6 +129,11 @@ export function PlacesLayer({ site, places }) {
               },
               mouseout: event => {
                 if (!placeId) return
+                const markerInstance = markerRefs.current.get(markerKey)
+                const markerNode = markerInstance?.getElement?.()
+                if (markerNode && markerNode.matches(':hover')) {
+                  return
+                }
                 const related = event?.originalEvent?.relatedTarget
                 if (related && typeof related.closest === 'function') {
                   const stillOnMarker = related.closest('.leaflet-marker-icon')
@@ -138,7 +143,7 @@ export function PlacesLayer({ site, places }) {
                   }
                 }
                 if (popup.isExpanded(placeId)) return
-                popup.hide(120)
+                popup.hide(200)
               },
               focus: () => {
                 if (!placeId || lat === null || lng === null) return

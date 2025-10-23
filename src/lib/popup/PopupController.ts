@@ -49,10 +49,10 @@ export class PopupController {
     if (isLeafletMap(this.map)) {
       this.popup = L.popup({
         closeButton: false,
-        autoPan: true,
+        autoPan: false,
         autoPanPaddingTopLeft: [20, 40],
         autoPanPaddingBottomRight: [20, 20],
-        offset: [0, -10],
+        offset: [0, -32],
         className: 'marker-popup-shell',
       })
     } else if (isMapboxMap(this.map)) {
@@ -116,13 +116,13 @@ export class PopupController {
     // Provide a slight upward offset so expanded popups stay centered within the viewport.
     if (isLeafletMap(this.map)) {
       const mapRef = this.map as unknown as L.Map
-      const zoom = typeof mapRef.getZoom === 'function' ? mapRef.getZoom() : undefined
-      mapRef.flyTo([target.lat, target.lng], zoom, { animate: true, duration: 0.5 })
-      if (typeof mapRef.panBy === 'function') {
-        mapRef.once('moveend', () => {
-          mapRef.panBy([0, -80], { animate: true })
-        })
-      }
+      const zoom = mapRef.getZoom()
+      const focus = L.latLng(target.lat, target.lng)
+      const point = mapRef.project(focus, zoom)
+      const verticalOffsetPx = 120
+      const adjustedPoint = point.subtract([0, verticalOffsetPx])
+      const adjustedLatLng = mapRef.unproject(adjustedPoint, zoom)
+      mapRef.flyTo(adjustedLatLng, zoom, { animate: true, duration: 0.5 })
     } else if (isMapboxMap(this.map)) {
       ;(this.map as any).easeTo({ center: [target.lng, target.lat], duration: 500, offset: [0, -100] })
     }
