@@ -1,0 +1,129 @@
+import { supabase } from '../supabaseClient'
+
+const REVIEW_PHOTO_BUCKET = 'review-photos'
+const MAX_DIMENSION = 2560
+const DEFAULT_QUALITY = 0.82
+
+const hasCanvasSupport = () => typeof document !== 'undefined' && typeof document.createElement === 'function'
+
+const toBlob = (canvas, type, quality) =>
+  new Promise((resolve, reject) => {
+    if (typeof canvas.convertToBlob === 'function') {
+      canvas
+        .convertToBlob({ type, quality })
+        .then(resolve)
+        .catch(reject)
+      return
+    }
+
+    if (typeof canvas.toBlob === 'function') {
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob)
+        else reject(new Error('Failed to convert canvas to blob'))
+      }, type, quality)
+      return
+    }
+
+    reject(new Error('Canvas toBlob is not supported in this environment'))
+  })
+
+async function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || typeof URL === 'undefined') {
+      reject(new Error('window is not available'))
+      return
+    }
+
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(image)
+    }
+    image.onerror = error => {
+      URL.revokeObjectURL(url)
+      reject(error)
+    }
+    image.src = url
+  })
+}
+
+async function downscaleToWebP(file, maxDimension = MAX_DIMENSION, quality = DEFAULT_QUALITY) {
+  if (!hasCanvasSupport()) {
+    throw new Error('Canvas support is required to process review photos')
+  }
+
+  const image = await loadImage(file)
+  const maxSide = Math.max(image.width, image.height)
+  const scale = maxSide > maxDimension ? maxDimension / maxSide : 1
+
+  const targetWidth = Math.max(1, Math.round(image.width * scale))
+  const targetHeight = Math.max(1, Math.round(image.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('Unable to acquire 2D context')
+  }
+
+  ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
+  const blob = await toBlob(canvas, 'image/webp', quality)
+
+  const nextName = `${file.name.replace(/\.[^/.]+$/, '') || 'review-photo'}.webp`
+  return new File([blob], nextName, { type: 'image/webp' })
+}
+
+function sanitizeSegment(segment) {
+  return String(segment || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9/_-]+/gi, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'photo'
+}
+
+function randomSuffix() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+export async function uploadReviewPhoto(file, { reviewId, bucket = REVIEW_PHOTO_BUCKET, prefix } = {}) {
+  if (typeof File !== 'undefined' && !(file instanceof File)) {
+    throw new TypeError('Expected a File for uploadReviewPhoto')
+  }
+
+  if (!supabase?.storage) {
+    throw new Error('Supabase client is not initialised')
+  }
+
+  const processed = await downscaleToWebP(file)
+  const safePrefix = sanitizeSegment(prefix || reviewId || 'review')
+  const fileName = `${sanitizeSegment(processed.name.replace(/\.webp$/i, ''))}-${randomSuffix()}.webp`
+  const storagePath = `${safePrefix}/${fileName}`
+
+  const { error } = await supabase.storage.from(bucket).upload(storagePath, processed, {
+    cacheControl: '3600',
+    contentType: processed.type,
+    upsert: false,
+  })
+
+  if (error) {
+    throw error
+  }
+
+  return {
+    path: storagePath,
+    size: processed.size,
+    bucket,
+    mimeType: processed.type,
+  }
+}
+
+export { REVIEW_PHOTO_BUCKET }

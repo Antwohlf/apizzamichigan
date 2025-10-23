@@ -3,6 +3,8 @@ import { pizzaStyles } from './data/pizzaStyles'
 import { TACO_TYPES } from './data/tacoTypes'
 import { geocodeAddress } from './lib/geocode'
 import ReviewPhotoUploader from './components/ReviewPhotoUploader'
+import InlineSpinner from './components/ui/InlineSpinner'
+import { useGlobalLoading } from './hooks/useGlobalLoading'
 
 const initialForm = {
   entity: 'pizza',
@@ -27,6 +29,7 @@ export default function AdminSubmit() {
   const [geocoding, setGeocoding] = useState(false)
   const [message, setMessage] = useState('')
   const [photoPreviews, setPhotoPreviews] = useState([])
+  const { open: openGlobalLoading, close: closeGlobalLoading, setVariant: setGlobalLoadingVariant } = useGlobalLoading()
 
   useEffect(() => {
     async function checkAuth() {
@@ -122,6 +125,8 @@ export default function AdminSubmit() {
     }
 
     setSubmitting(true)
+    setGlobalLoadingVariant(form.entity === 'taco' ? 'taco' : 'pizza')
+    openGlobalLoading('Submitting listing…')
     try {
       const res = await fetch('/api/admin/submitPlace', {
         method: 'POST',
@@ -140,6 +145,7 @@ export default function AdminSubmit() {
       setMessage(err.message || 'Submission failed')
     } finally {
       setSubmitting(false)
+      closeGlobalLoading()
     }
   }
 
@@ -291,7 +297,11 @@ export default function AdminSubmit() {
             cursor: 'pointer',
           }}
         >
-          {geocoding ? 'Geocoding…' : 'Geocode Address'}
+          {geocoding ? (
+            <InlineSpinner size={18} variant={form.entity === 'taco' ? 'taco' : 'pizza'} label="Geocoding address" />
+          ) : (
+            'Geocode Address'
+          )}
         </button>
 
         {message && (
@@ -311,7 +321,11 @@ export default function AdminSubmit() {
             cursor: 'pointer',
           }}
         >
-          {submitting ? 'Submitting…' : 'Submit Listing'}
+          {submitting ? (
+            <InlineSpinner size={20} variant={form.entity === 'taco' ? 'taco' : 'pizza'} label="Submitting listing" />
+          ) : (
+            'Submit Listing'
+          )}
         </button>
       </form>
     </div>
