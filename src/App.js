@@ -239,11 +239,18 @@ function SiteContainer({ themeKey }) {
       if (!isMounted) return
 
       if (error) {
-        const normalizedFallback = (fallbackPlaces || []).map(place => {
+        const normalizedFallback = (fallbackPlaces || []).map((place, index) => {
+          const canonicalId =
+            place.id ??
+            place.ID ??
+            place.place_id ??
+            place.slug ??
+            `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-fallback-${index}`
           const photos = convertLegacyPhotos(place?.photos)
           const primaryPhoto = photos.length ? (typeof photos[0] === 'string' ? photos[0] : photos[0]?.publicUrl || photos[0]?.path) : null
           return {
             ...place,
+            id: canonicalId,
             type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
             status: normalizeStatus(place?.status),
             lat: typeof place.lat === 'number' ? place.lat : Number(place.lat),
@@ -256,7 +263,13 @@ function SiteContainer({ themeKey }) {
         setPlaces(normalizedFallback)
         setMapError(error)
       } else {
-        const normalized = (data || []).map(place => {
+        const normalized = (data || []).map((place, index) => {
+          const canonicalId =
+            place.id ??
+            place.ID ??
+            place.place_id ??
+            place.slug ??
+            `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-${index}`
           const normalizedPhotos = (() => {
             const fromMap = Array.isArray(photoMap[place.id]) ? photoMap[place.id] : []
             const fallback = convertLegacyPhotos(place.photos)
@@ -274,6 +287,7 @@ function SiteContainer({ themeKey }) {
 
           return {
             ...place,
+            id: canonicalId,
             type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
             style:
               themeKey === ThemeKeys.TACO

@@ -1,9 +1,10 @@
 // src/map.js
 import React, { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import 'leaflet-rotatedmarker'
 
 import { PlacesLayer } from './map/PlacesLayer'
+import { PopupProvider } from './context/PopupProvider'
 
 const ZoomButton = () => {
   const map = useMapEvents({
@@ -80,12 +81,18 @@ const Map = ({ places, theme, site = 'pizza' }) => {
       style={{ height: '100%', width: '100%', position: 'relative' }}
     >
       <TileLayer attribution={attribution} url={tileUrl} />
-      <PlacesLayer site={site} places={places} />
-
-      {/* Render ZoomButton directly inside MapContainer */}
-      <ZoomButton />
+      <PopupProviderBridge>
+        <PlacesLayer site={site} places={places} />
+        {/* Render ZoomButton directly inside MapContainer */}
+        <ZoomButton />
+      </PopupProviderBridge>
     </MapContainer>
   )
 }
 
 export default Map
+
+function PopupProviderBridge({ children }) {
+  const map = useMap()
+  return <PopupProvider map={map}>{children}</PopupProvider>
+}

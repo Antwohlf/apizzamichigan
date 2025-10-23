@@ -1,36 +1,40 @@
-import React, { useEffect, useMemo, useRef } from 'react'
-import { Marker, Popup, Tooltip, useMap } from 'react-leaflet'
+import React, { useCallback, useEffect, useMemo, useRef } from 'react'
+import { Marker, useMap } from 'react-leaflet'
 import { getMarkerIcon } from './getMarkerIcon'
 import { useMapPopup } from './useMapPopup'
-import { PlacePopup } from '../components/map/PlacePopup'
-
-const popupPadding = [64, 120]
+import { usePopup } from '../context/PopupProvider'
+import { renderExpanded, renderPreview } from '../components/map/renderPopup'
+import '../styles/marker-popup.css'
 
 function MapClickCloser({ close }) {
   const map = useMap()
+  const popup = usePopup()
 
   useEffect(() => {
     const handler = event => {
       const target = event?.originalEvent?.target
       if (target && typeof target.closest === 'function') {
-        const shell = target.closest('.place-popup-shell')
+        const shell = target.closest('.marker-popup')
         if (shell) return
         const marker = target.closest('.leaflet-marker-icon')
         if (marker) return
       }
+      popup.hide()
       close()
     }
     map.on('click', handler)
-    return () => map.off('click', handler)
-  }, [map, close])
+    return () => {
+      map.off('click', handler)
+    }
+  }, [map, close, popup])
 
   return null
 }
 
 export function PlacesLayer({ site, places }) {
-  const map = useMap()
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
+  const popup = usePopup()
   const { openEntry, open, close, registerFocusReturn } = useMapPopup()
 
   useEffect(() => {
@@ -47,60 +51,107 @@ export function PlacesLayer({ site, places }) {
     const key = openEntry?.id ? `${openEntry.type}:${openEntry.id}` : null
     if (key) {
       lastOpenKeyRef.current = key
-      const marker = markerRefs.current.get(key)
-      if (marker && typeof marker.openPopup === 'function') {
-        marker.openPopup()
-      }
     } else if (lastOpenKeyRef.current) {
-      const marker = markerRefs.current.get(lastOpenKeyRef.current)
-      if (marker && typeof marker.closePopup === 'function') {
-        marker.closePopup()
-      }
       lastOpenKeyRef.current = null
     }
   }, [openEntry])
 
   useEffect(() => {
-    if (!openEntry?.id || !map) return
-    const activePlace = places.find(place => place.id === openEntry.id)
-    if (!activePlace) return
-    if (typeof activePlace.lat === 'number' && typeof activePlace.lng === 'number') {
-      map.panTo([activePlace.lat, activePlace.lng], { animate: true })
+    if (!popup) return
+    if (!openEntry?.id || openEntry.type !== site) {
+      popup.hide()
+      return
     }
-  }, [openEntry, places, map])
+    const activePlace = places.find(place => String(place.id) === String(openEntry.id))
+    if (!activePlace || typeof activePlace.lat !== 'number' || typeof activePlace.lng !== 'number') {
+      popup.hide()
+      return
+    }
+    const placeId = String(activePlace.id)
+    const target = { id: placeId, lat: activePlace.lat, lng: activePlace.lng, type: site }
+    const hrefParam = `${site}:${placeId}`
+    const href = site === 'taco' ? `/tacos?poi=${hrefParam}` : `/?poi=${hrefParam}`
+    popup.expand(target, node =>
+      renderExpanded(node, { ...activePlace, id: placeId, type: site, href }, () => {
+        popup.hide()
+        close()
+      })
+    )
+  }, [close, openEntry, places, popup, site])
+
+  useEffect(() => () => popup.hide(), [popup])
+
+  const getMarkerKey = useCallback(
+    (place, idx) => `${site}:${place.id ? place.id : idx}`,
+    [site]
+  )
+
+  const buildHref = useCallback(
+    placeId => {
+      const hrefParam = `${site}:${placeId}`
+      return site === 'taco' ? `/tacos?poi=${hrefParam}` : `/?poi=${hrefParam}`
+    },
+    [site]
+  )
 
   const markers = useMemo(
     () =>
       places.map((place, idx) => {
-        const markerKey = `${site}:${place.id || idx}`
+        const placeId = place.id ? String(place.id) : null
+        const lat = typeof place.lat === 'number' ? place.lat : null
+        const lng = typeof place.lng === 'number' ? place.lng : null
+        if (lat === null || lng === null) return null
+        const markerKey = getMarkerKey(place, idx)
         const status = place.status || 'visited'
-        const isOpen = openEntry.type === site && openEntry.id === place.id
 
         return (
           <Marker
             key={markerKey}
-            position={[place.lat, place.lng]}
+            position={[lat, lng]}
             icon={getMarkerIcon(site, status)}
             eventHandlers={{
               click: event => {
+                if (!placeId) return
                 const markerInstance = markerRefs.current.get(markerKey)
                 const node = markerInstance?.getElement?.() || event?.target?.getElement?.()
                 if (node) {
                   node.focus?.()
                 }
-                open(site, place.id, node)
+                open(site, placeId, node)
               },
-              mouseover: () => {
-                const markerInstance = markerRefs.current.get(markerKey)
-                if (markerInstance && typeof markerInstance.openTooltip === 'function') {
-                  markerInstance.openTooltip()
-                }
+              mouseover: event => {
+                if (!placeId || lat === null || lng === null) return
+                const target = { id: placeId, lat, lng, type: site }
+                const href = buildHref(placeId)
+                popup.openPreview(target, node =>
+                  renderPreview(node, { ...place, id: placeId, type: site, href })
+                )
               },
-              mouseout: () => {
-                const markerInstance = markerRefs.current.get(markerKey)
-                if (markerInstance && typeof markerInstance.closeTooltip === 'function') {
-                  markerInstance.closeTooltip()
+              mouseout: event => {
+                if (!placeId) return
+                const related = event?.originalEvent?.relatedTarget
+                if (related && typeof related.closest === 'function') {
+                  const stillOnMarker = related.closest('.leaflet-marker-icon')
+                  const overPopup = related.closest('.marker-popup')
+                  if (stillOnMarker || overPopup) {
+                    return
+                  }
                 }
+                if (popup.isExpanded(placeId)) return
+                popup.hide(120)
+              },
+              focus: () => {
+                if (!placeId || lat === null || lng === null) return
+                const target = { id: placeId, lat, lng, type: site }
+                const href = buildHref(placeId)
+                popup.openPreview(target, node =>
+                  renderPreview(node, { ...place, id: placeId, type: site, href })
+                )
+              },
+              blur: () => {
+                if (!placeId) return
+                if (popup.isExpanded(placeId)) return
+                popup.hide(120)
               },
             }}
             ref={instance => {
@@ -116,37 +167,15 @@ export function PlacesLayer({ site, places }) {
                 }
               }
             }}
-          >
-            {isOpen ? (
-              <Popup
-                closeButton={false}
-                autoPan={true}
-                autoPanPadding={popupPadding}
-                className="place-popup-leaflet"
-              >
-                <PlacePopup place={place} onClose={close} />
-              </Popup>
-            ) : null}
-            <Tooltip direction="top" offset={[0, -24]} opacity={0.9} permanent={false} sticky>
-              <div className="place-tooltip">
-                <strong>{place.name}</strong>
-                <div className="place-tooltip-meta">
-                  Rating: {typeof place.rating === 'number' ? `${place.rating.toFixed(1)}/10` : '—'}
-                  {place.price ? ` • ${place.price}` : ''}
-                  {place.status ? ` • ${place.status}` : ''}
-                </div>
-                {place.address ? <div className="place-tooltip-address">{place.address}</div> : null}
-              </div>
-            </Tooltip>
-          </Marker>
+          />
         )
       }),
-    [places, site, open, openEntry, close]
+    [places, site, popup, open, buildHref, getMarkerKey]
   )
 
   useEffect(() => {
     if (!openEntry.id) return
-    const exists = places.some(place => place.id === openEntry.id)
+    const exists = places.some(place => String(place.id) === String(openEntry.id))
     if (!exists) {
       close()
     }
