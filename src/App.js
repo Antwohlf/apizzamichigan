@@ -8,8 +8,10 @@ import AdminForm from './AdminForm'
 import FrozenPizzaDirectory from './FrozenPizzaDirectory'
 import LatinMarkets from './LatinMarkets'
 import AdminSubmit from './AdminSubmit'
+import AdminReviewsPage from './admin/AdminReviewsPage'
 import { SiteTitle } from './header/SiteTitle'
 import { StatsPanel } from './sidebar/StatsPanel'
+import { MapPopupProvider, useMapPopup } from './map/useMapPopup'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
 import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
@@ -19,6 +21,7 @@ import { trackSiteSwitch } from './analytics'
 import { tacoPlacesFallback } from './data/tacoPlaces'
 import { fetchTacoPlaces } from './lib/supabase-tacos'
 import './App.css'
+import { GlobalLoadingProvider, useGlobalLoading } from './hooks/useGlobalLoading'
 
 const MapView = lazy(() => import('./map'))
 
@@ -26,6 +29,10 @@ const PLACE_TABLE_BY_THEME = {
   [ThemeKeys.PIZZA]: 'pizza_places',
   [ThemeKeys.TACO]: 'taco_places',
 }
+
+const REVIEW_PHOTO_BUCKET = 'review-photos'
+const REVIEW_PHOTO_TABLE = 'review-photos'
+let reviewPhotosTableAvailable = true
 
 const DEFAULT_STATUSES = ['visited', 'unvisited', 'golden']
 
@@ -39,6 +46,71 @@ const normalizeStatus = (status) => {
   return 'visited'
 }
 
+const convertLegacyPhotos = photos =>
+  Array.isArray(photos)
+    ? photos
+        .filter(Boolean)
+        .map((url, index) => ({
+          id: `${url}-${index}`,
+          path: url,
+          publicUrl: url,
+          sortOrder: index + 1,
+        }))
+    : []
+
+async function fetchPhotoMap(placeIds = []) {
+  if (!reviewPhotosTableAvailable) {
+    return {}
+  }
+  if (!Array.isArray(placeIds) || placeIds.length === 0) {
+    return {}
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from(REVIEW_PHOTO_TABLE)
+      .select('id, place_id, storage_path, sort_order')
+      .in('place_id', placeIds)
+      .order('sort_order', { ascending: true })
+
+    if (error) throw error
+
+    const storage = supabase.storage?.from?.(REVIEW_PHOTO_BUCKET)
+    return (data || []).reduce((acc, photo) => {
+      let publicUrl = null
+      if (storage) {
+        const { data: publicData, error: publicError } = storage.getPublicUrl(photo.storage_path)
+        if (publicError) {
+          console.warn('[photos] failed to compute public URL', publicError)
+        } else {
+          publicUrl = publicData?.publicUrl ?? null
+        }
+      }
+
+      const mapped = {
+        id: photo.id,
+        path: photo.storage_path,
+        sortOrder: photo.sort_order,
+        publicUrl,
+      }
+
+      if (!acc[photo.place_id]) {
+        acc[photo.place_id] = [mapped]
+      } else {
+        acc[photo.place_id].push(mapped)
+      }
+      return acc
+    }, {})
+  } catch (err) {
+    if (err?.code === 'PGRST205') {
+      reviewPhotosTableAvailable = false
+      return {}
+    }
+    console.warn('[photos] review photo fetch error', err)
+    return {}
+  }
+}
+
 function SiteContainer({ themeKey }) {
   const [filters, setFilters] = useState({ styles: [], prices: [], statuses: [] })
   const [view, setView] = useState('map')
@@ -48,6 +120,8 @@ function SiteContainer({ themeKey }) {
 
   const { theme } = useTheme()
   const isPizza = themeKey === ThemeKeys.PIZZA
+  const { open: openMapPopup } = useMapPopup()
+  const { open: openLoading, close: closeLoading, setVariant: setLoadingVariant } = useGlobalLoading()
 
   const handleFilterChange = useCallback(next => setFilters(next), [])
 
@@ -122,13 +196,19 @@ function SiteContainer({ themeKey }) {
   }, [isPizza, themeKey, theme.brandName])
 
   useEffect(() => {
+    setLoadingVariant(isPizza ? 'pizza' : 'taco')
+  }, [isPizza, setLoadingVariant])
+
+  useEffect(() => {
     let isMounted = true
     async function fetchPlaces() {
       setMapLoading(true)
+      openLoading(theme.copy.loading || 'Loading map…')
       const fallbackPlaces = themeKey === ThemeKeys.TACO ? tacoPlacesFallback : pizzaPlacesFallback
 
       let data = null
       let error = null
+      let photoMap = {}
 
       try {
         if (themeKey === ThemeKeys.TACO) {
@@ -148,42 +228,99 @@ function SiteContainer({ themeKey }) {
         error = err
       }
 
+      if (!error && Array.isArray(data) && data.length) {
+        const placeIds = data.map(place => place.id).filter(Boolean)
+        if (placeIds.length) {
+          const fetched = await fetchPhotoMap(placeIds)
+          photoMap = fetched
+        }
+      }
+
       if (!isMounted) return
 
       if (error) {
-        const normalizedFallback = (fallbackPlaces || []).map(place => ({
-          ...place,
-          status: normalizeStatus(place?.status),
-          photos: Array.isArray(place?.photos) ? place.photos : [],
-        }))
+        const normalizedFallback = (fallbackPlaces || []).map((place, index) => {
+          const canonicalId =
+            place.id ??
+            place.ID ??
+            place.place_id ??
+            place.slug ??
+            `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-fallback-${index}`
+          const photos = convertLegacyPhotos(place?.photos)
+          const primaryPhoto = photos.length ? (typeof photos[0] === 'string' ? photos[0] : photos[0]?.publicUrl || photos[0]?.path) : null
+          return {
+            ...place,
+            id: canonicalId,
+            type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
+            status: normalizeStatus(place?.status),
+            lat: typeof place.lat === 'number' ? place.lat : Number(place.lat),
+            lng: typeof place.lng === 'number' ? place.lng : Number(place.lng),
+            address: place.address || place.Address || '',
+            photoUrl: primaryPhoto || null,
+            photos,
+          }
+        })
         setPlaces(normalizedFallback)
         setMapError(error)
       } else {
-        const normalized = (data || []).map(place => ({
-          ...place,
-          style:
-            themeKey === ThemeKeys.TACO
-              ? place.type || place.style
-              : place.style === 'Standard'
-                ? 'Traditional'
-                : place.style,
-          price: place.price || place.Price || '',
-          status: normalizeStatus(place.status),
-          photos: Array.isArray(place.photos) ? place.photos : [],
-        }))
+        const normalized = (data || []).map((place, index) => {
+          const canonicalId =
+            place.id ??
+            place.ID ??
+            place.place_id ??
+            place.slug ??
+            `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-${index}`
+          const normalizedPhotos = (() => {
+            const fromMap = Array.isArray(photoMap[place.id]) ? photoMap[place.id] : []
+            const fallback = convertLegacyPhotos(place.photos)
+            const combined = fromMap.length > 0 ? fromMap : fallback
+            return combined
+              .slice()
+              .sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER))
+          })()
+          const firstPhoto = normalizedPhotos.length
+            ? normalizedPhotos[0]?.publicUrl || normalizedPhotos[0]?.path || normalizedPhotos[0]
+            : place.photo_url || place.photoPath || null
+
+          const normalizedLat = typeof place.lat === 'number' ? place.lat : Number(place.lat)
+          const normalizedLng = typeof place.lng === 'number' ? place.lng : Number(place.lng)
+
+          return {
+            ...place,
+            id: canonicalId,
+            type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
+            style:
+              themeKey === ThemeKeys.TACO
+                ? place.type || place.style
+                : place.style === 'Standard'
+                  ? 'Traditional'
+                  : place.style,
+            price: place.price || place.Price || '',
+            status: normalizeStatus(place.status),
+            lat: normalizedLat,
+            lng: normalizedLng,
+            address: place.address || place.Address || '',
+            photoUrl: typeof firstPhoto === 'string' ? firstPhoto : null,
+            photos: normalizedPhotos,
+          }
+        })
 
         setPlaces(normalized)
         setMapError(null)
       }
 
-      setMapLoading(false)
+      if (isMounted) {
+        setMapLoading(false)
+        closeLoading()
+      }
     }
 
     fetchPlaces()
     return () => {
       isMounted = false
+      closeLoading()
     }
-  }, [themeKey])
+  }, [themeKey, theme.copy.loading, openLoading, closeLoading])
 
   const filteredPlaces = useMemo(() => {
     const statusSet = new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
@@ -218,6 +355,24 @@ function SiteContainer({ themeKey }) {
   const switchLabel = isPizza
     ? 'Check out TacoBoutMichigan'
     : 'Check out APizzaMichigan'
+
+  const handleLocatePlace = useCallback(
+    details => {
+      if (!details) return
+      setView('map')
+      const lat = typeof details.lat === 'number' ? details.lat : null
+      const lng = typeof details.lng === 'number' ? details.lng : null
+      if (lat !== null && lng !== null) {
+        // nothing additional; map layer will pan when popup opens
+      }
+      const targetType = details.entity === 'taco' ? 'taco' : 'pizza'
+      const id = details.id || details.place_id || null
+      if (id) {
+        openMapPopup(targetType, id)
+      }
+    },
+    [openMapPopup]
+  )
 
   const handleSiteSwitch = () => {
     trackSiteSwitch(themeKey, nextThemeKey)
@@ -264,7 +419,11 @@ function SiteContainer({ themeKey }) {
                 </div>
               ) : (
                 <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
-                  <MapView places={filteredPlaces} theme={theme} site={isPizza ? 'pizza' : 'taco'} />
+                  <MapView
+                    places={filteredPlaces}
+                    theme={theme}
+                    site={isPizza ? 'pizza' : 'taco'}
+                  />
                 </Suspense>
               )
             ) : (
@@ -286,7 +445,12 @@ function SiteContainer({ themeKey }) {
         <div className="sidebar-wrapper">
           <div className="sidebar-inner sidebar-inner--sticky">
             <StatsPanel places={filteredPlaces} />
-            <SuggestionForm key={themeKey} theme={theme} isPizza={isPizza} />
+            <SuggestionForm
+              key={themeKey}
+              theme={theme}
+              isPizza={isPizza}
+              onLocatePlace={handleLocatePlace}
+            />
           </div>
         </div>
       </div>
@@ -297,27 +461,32 @@ function SiteContainer({ themeKey }) {
 function ThemedRoute({ themeKey }) {
   return (
     <ThemeProvider themeKey={themeKey}>
-      <SiteContainer themeKey={themeKey} />
+      <MapPopupProvider>
+        <SiteContainer themeKey={themeKey} />
+      </MapPopupProvider>
     </ThemeProvider>
   )
 }
 
 export default function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<ThemedRoute themeKey={ThemeKeys.PIZZA} />} />
-        <Route path="/tacos" element={<ThemedRoute themeKey={ThemeKeys.TACO} />} />
-        <Route path="/admin/submit" element={<AdminSubmit />} />
-        <Route
-          path="/admin"
-          element={
-            <div className="admin-shell">
-              <AdminForm />
-            </div>
-          }
-        />
-      </Routes>
-    </Router>
+    <GlobalLoadingProvider>
+      <Router>
+        <Routes>
+          <Route path="/" element={<ThemedRoute themeKey={ThemeKeys.PIZZA} />} />
+          <Route path="/tacos" element={<ThemedRoute themeKey={ThemeKeys.TACO} />} />
+          <Route path="/admin/submit" element={<AdminSubmit />} />
+          <Route path="/admin/reviews" element={<AdminReviewsPage />} />
+          <Route
+            path="/admin"
+            element={
+              <div className="admin-shell">
+                <AdminForm />
+              </div>
+            }
+          />
+        </Routes>
+      </Router>
+    </GlobalLoadingProvider>
   )
 }

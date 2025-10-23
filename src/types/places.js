@@ -1,4 +1,10 @@
 /**
+ * @typedef {Object} ReviewPhoto
+ * @property {string} id
+ * @property {string} path
+ * @property {string|null} [publicUrl]
+ * @property {number} [sortOrder]
+ *
  * @typedef {'visited' | 'unvisited' | 'golden'} PlaceStatus
  *
  * @typedef {Object} PizzaPlace
@@ -12,7 +18,7 @@
  * @property {number} lng
  * @property {string} [review]
  * @property {string} [notes]
- * @property {string[]} [photos]
+ * @property {ReviewPhoto[]} [photos]
  *
  * @typedef {Object} TacoPlace
  * @property {string} id
@@ -25,6 +31,6 @@
  * @property {number} lng
  * @property {string} [review]
  * @property {string} [notes]
- * @property {string[]} [photos]
+ * @property {ReviewPhoto[]} [photos]
  */
 export {}

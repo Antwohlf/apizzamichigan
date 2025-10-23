@@ -182,19 +182,23 @@
   position: relative;
 }
 
-.suggestion-form__suggestions {
+.suggestion-form__suggestions-wrapper {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  margin: 0;
-  padding: 6px 0;
-  list-style: none;
   background: var(--app-card);
   border: 1px solid var(--app-border);
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
-  z-index: 10;
+  z-index: 12;
+  overflow: hidden;
+}
+
+.suggestion-form__suggestions {
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
   max-height: 220px;
   overflow-y: auto;
 }
@@ -218,6 +222,52 @@
 .suggestion-form__suggestions button:focus {
   background: var(--app-accent-muted);
   outline: none;
+}
+
+.suggestion-form__powered {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--app-text-muted);
+  text-align: right;
+  padding: 6px 10px 8px;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.suggestion-form__spinner {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: var(--app-accent);
+  animation: suggestion-spin 0.8s linear infinite;
+}
+
+@keyframes suggestion-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.suggestion-form__hint {
+  margin: -6px 0 6px;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+}
+
+.suggestion-form__hint--success {
+  color: #34d399;
+}
+
+.suggestion-form__hint--info {
+  color: #38bdf8;
+}
+
+.suggestion-form__hint--error {
+  color: #f87171;
 }
 
 .suggestion-form__submit {

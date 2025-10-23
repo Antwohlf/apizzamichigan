@@ -18,7 +18,7 @@ export const pizzaTheme = {
     styleLabel: 'Pizza Style',
     frozenToggleMap: 'Pizza Map',
     frozenToggleFrozen: 'Frozen Pizzas',
-    loading: 'Loading map…',
+    loading: 'Loading pizza map…',
     errorPrefix: 'Error',
   },
   icons: {

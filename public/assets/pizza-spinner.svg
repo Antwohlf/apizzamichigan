@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Whole pizza marker">
+  <title>Whole Pizza Marker</title>
+  <defs>
+    <!-- Match the slice's warm gradients -->
+    <linearGradient id="crust" x1="0%" x2="0%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#f5ce8a" />
+      <stop offset="100%" stop-color="#c47c3a" />
+    </linearGradient>
+    <linearGradient id="cheese" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe08f" />
+      <stop offset="100%" stop-color="#f7b247" />
+    </linearGradient>
+  </defs>
+
+  <!-- Crust: donut ring -->
+  <path
+    d="M32 2a30 30 0 1 1 0 60a30 30 0 1 1 0-60
+       M32 8a24 24 0 1 0 0 48a24 24 0 1 0 0-48Z"
+    fill="url(#crust)"
+    fill-rule="evenodd"
+    stroke="#a56628"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+
+  <!-- Cheese base -->
+  <circle
+    cx="32" cy="32" r="22"
+    fill="url(#cheese)"
+    stroke="#f2a93b"
+    stroke-width="1.5"
+  />
+
+  <!-- Pepperoni (match slice color) -->
+  <circle cx="22" cy="22" r="3.8" fill="#d9382b"/>
+  <circle cx="42" cy="22" r="3.5" fill="#d9382b"/>
+  <circle cx="24" cy="34" r="4.2" fill="#d9382b"/>
+  <circle cx="38" cy="30" r="3.6" fill="#d9382b"/>
+  <circle cx="32" cy="42" r="4.5" fill="#d9382b"/>
+  <circle cx="46" cy="36" r="3.2" fill="#d9382b"/>
+  <circle cx="18" cy="28" r="3.0" fill="#d9382b"/>
+
+  <!-- Light slice guide cuts (subtle, optional) -->
+  <g stroke="#f2a93b" stroke-opacity="0.35" stroke-width="1">
+    <path d="M32 10 L32 54" />
+    <path d="M10 32 L54 32" />
+    <path d="M16.6 16.6 L47.4 47.4" />
+    <path d="M47.4 16.6 L16.6 47.4" />
+  </g>
+
+  <!-- Tiny cheese “drips” for character -->
+  <path d="M14 34 q2 2 0 5 q-2 -1 -2.2 -3 z" fill="#f7b247" opacity="0.6"/>
+  <path d="M50 30 q-2 2 0 5 q2 -1 2.2 -3 z" fill="#f7b247" opacity="0.6"/>
+</svg>
