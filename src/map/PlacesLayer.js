@@ -5,6 +5,7 @@ import { useMapPopup } from './useMapPopup'
 import { usePopup } from '../context/PopupProvider'
 import { renderExpanded, renderPreview } from '../components/map/renderPopup'
 import '../styles/marker-popup.css'
+import { useSelectedPlace } from '../store/selectedPlace'
 
 function MapClickCloser({ close }) {
   const map = useMap()
@@ -36,6 +37,7 @@ export function PlacesLayer({ site, places }) {
   const lastOpenKeyRef = useRef(null)
   const popup = usePopup()
   const { openEntry, open, close, registerFocusReturn } = useMapPopup()
+  const { setSelectedPlace } = useSelectedPlace()
 
   useEffect(() => {
     const marker = openEntry?.id ? markerRefs.current.get(`${openEntry.type}:${openEntry.id}`) : null
@@ -60,26 +62,43 @@ export function PlacesLayer({ site, places }) {
     if (!popup) return
     if (!openEntry?.id || openEntry.type !== site) {
       popup.hide()
+      setSelectedPlace(null)
       return
     }
     const activePlace = places.find(place => String(place.id) === String(openEntry.id))
     if (!activePlace || typeof activePlace.lat !== 'number' || typeof activePlace.lng !== 'number') {
       popup.hide()
+      setSelectedPlace(null)
       return
     }
     const placeId = String(activePlace.id)
     const target = { id: placeId, lat: activePlace.lat, lng: activePlace.lng, type: site }
     const hrefParam = `${site}:${placeId}`
     const href = site === 'taco' ? `/tacos?poi=${hrefParam}` : `/?poi=${hrefParam}`
+    setSelectedPlace({
+      id: activePlace.id ?? activePlace.place_id ?? null,
+      name: activePlace.name ?? null,
+      google_place_id: activePlace.google_place_id ?? activePlace.place_id ?? null,
+      google_maps_url: activePlace.google_maps_url ?? null,
+      address: activePlace.address ?? null,
+      city: activePlace.city ?? null,
+      state: activePlace.state ?? null,
+    })
     popup.expand(target, node =>
       renderExpanded(node, { ...activePlace, id: placeId, type: site, href }, () => {
         popup.hide()
         close()
       })
     )
-  }, [close, openEntry, places, popup, site])
+  }, [close, openEntry, places, popup, site, setSelectedPlace])
 
-  useEffect(() => () => popup.hide(), [popup])
+  useEffect(
+    () => () => {
+      popup.hide()
+      setSelectedPlace(null)
+    },
+    [popup, setSelectedPlace]
+  )
 
   const getMarkerKey = useCallback(
     (place, idx) => `${site}:${place.id ? place.id : idx}`,

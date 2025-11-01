@@ -1,4 +1,5 @@
 import { createRoot, type Root } from 'react-dom/client'
+import { buildGoogleMapsUrl } from '../../lib/buildGoogleMapsUrl'
 
 type Place = {
   id: string
@@ -11,6 +12,10 @@ type Place = {
   rating?: number | null
   address?: string | null
   href?: string | null
+  city?: string | null
+  state?: string | null
+  google_place_id?: string | null
+  google_maps_url?: string | null
 }
 
 const roots = new WeakMap<HTMLElement, Root>()
@@ -50,16 +55,19 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       <div className="actions">
         <a
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
           href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`}
         >
           Directions
         </a>
-        {place.href ? (
-          <a href={place.href} rel="noreferrer">
-            View details
-          </a>
-        ) : null}
+        <a
+          href={buildGoogleMapsUrl(place)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="popup-link--details"
+        >
+          View details
+        </a>
       </div>
     </div>
   )

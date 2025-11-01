@@ -93,6 +93,17 @@ body {
 .sidebar-inner--sticky {
   position: sticky;
   top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: calc(100vh - 48px);
+}
+
+@media (max-width: 1024px) {
+  .sidebar-inner--sticky {
+    position: static;
+    min-height: auto;
+  }
 }
 
 .sidebar-wrapper:last-child {
@@ -764,4 +775,275 @@ body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+.bug-report-sidebar {
+  margin-top: auto;
+  padding-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  position: relative;
+}
+
+.bug-report-sidebar__button {
+  width: 100%;
+  max-width: 220px;
+  border: none;
+  border-radius: 9999px;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: var(--app-accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.bug-report-sidebar__button:hover,
+.bug-report-sidebar__button:focus-visible {
+  background: var(--app-accent-muted);
+  transform: translateY(-1px);
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.32);
+  outline: none;
+}
+
+.bug-report-sidebar__button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(248, 250, 252, 0.35), 0 22px 48px rgba(15, 23, 42, 0.32);
+}
+
+.bug-report-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 1150;
+}
+
+.bug-report-modal {
+  width: min(560px, 100%);
+  background: var(--app-card, #0f172a);
+  color: var(--app-text, #f8fafc);
+  border-radius: 18px;
+  border: 1px solid rgba(248, 250, 252, 0.08);
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.55);
+  padding: 1.5rem;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  position: relative;
+}
+
+.bug-report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.bug-report-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.bug-report-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.bug-report-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.bug-report-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.bug-report-label.optional {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.bug-report-required {
+  color: #f97316;
+  font-size: 0.8rem;
+}
+
+.bug-report-form textarea,
+.bug-report-form input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.65);
+  color: inherit;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bug-report-form textarea:focus,
+.bug-report-form input:focus {
+  outline: none;
+  border-color: rgba(248, 113, 113, 0.7);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+}
+
+.bug-report-error {
+  margin: -0.25rem 0 0;
+  color: #f87171;
+  font-size: 0.85rem;
+}
+
+.bug-report-meta {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.bug-report-meta legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 0.5rem;
+}
+
+.bug-report-meta dl {
+  margin: 0.5rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.bug-report-meta dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+
+.bug-report-meta dd {
+  margin: 0.2rem 0 0;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.bug-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.bug-report-button-secondary,
+.bug-report-button-primary {
+  border-radius: 9999px;
+  padding: 0.6rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.bug-report-button-secondary {
+  background: rgba(15, 23, 42, 0.8);
+  color: inherit;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.bug-report-button-secondary:hover,
+.bug-report-button-secondary:focus-visible,
+.bug-report-button-primary:hover,
+.bug-report-button-primary:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.35);
+  outline: none;
+}
+
+.bug-report-button-primary {
+  background: var(--app-accent);
+  color: #fff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.bug-report-button-primary[disabled] {
+  opacity: 0.7;
+  cursor: progress;
+  transform: none;
+  box-shadow: none;
+}
+
+.bug-report-button-primary:hover,
+.bug-report-button-primary:focus-visible {
+  background: var(--app-accent-muted);
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.32);
+  outline: none;
+}
+
+.bug-report-toast {
+  position: absolute;
+  bottom: calc(100% + 0.75rem);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  padding: 0.65rem 1rem;
+  border-radius: 10px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.45);
+  font-size: 0.88rem;
+  font-weight: 600;
+  z-index: 2;
+  pointer-events: none;
+  text-align: center;
+  max-width: 240px;
+}
+
+.bug-report-toast--success {
+  border: 1px solid rgba(34, 197, 94, 0.65);
+}
+
+.bug-report-toast--error {
+  border: 1px solid rgba(248, 113, 113, 0.65);
+}
+
+@media (max-width: 768px) {
+  .bug-report-sidebar {
+    margin-top: 1.5rem;
+    align-items: stretch;
+  }
+
+  .bug-report-sidebar__button {
+    max-width: none;
+  }
+
+  .bug-report-backdrop {
+    align-items: flex-end;
+    padding: 1rem;
+  }
+
+  .bug-report-modal {
+    border-radius: 16px 16px 0 0;
+    width: 100%;
+    max-height: calc(100vh - 2rem);
+  }
+
+  .bug-report-toast {
+    max-width: min(260px, 90vw);
+  }
 }
