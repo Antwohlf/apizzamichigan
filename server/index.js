@@ -3,6 +3,9 @@ require('dotenv').config()
 const express = require('express')
 const cookieParser = require('cookie-parser')
 const { createClient } = require('@supabase/supabase-js')
+const { handleBugReport } = require('../api/_lib/bugReport')
+const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
+const { getClientIp } = require('../api/_lib/request')
 
 const app = express()
 // Note: 5000 is commonly hijacked by AirPlay Receiver on macOS.
@@ -10,11 +13,6 @@ const app = express()
 const PORT = process.env.PORT || 5050
 const COOKIE_NAME = 'admin_auth'
 const REVIEW_PHOTO_BUCKET = 'review-photos'
-const GOOGLE_PLACES_API_KEY =
-  process.env.GOOGLE_PLACES_API_KEY ||
-  process.env.GOOGLE_MAPS_API_KEY ||
-  process.env.REACT_APP_GOOGLE_GEOCODE_KEY ||
-  process.env.VITE_GOOGLE_PLACES_API_KEY
 const SUGGESTED_PLACES_TABLE = 'suggested_places'
 const LOCATIONS_TABLE = 'locations'
 const REVIEW_PHOTO_TABLE = 'review-photos'
@@ -99,25 +97,13 @@ async function fetchPhotosForPlace(placeId) {
   }
 }
 
-const RATE_LIMIT_WINDOW_MS = 60 * 1000
-const AUTOCOMPLETE_RATE_LIMIT = 35
-const DETAILS_RATE_LIMIT = 60
-const rateLimitBuckets = new Map()
-
-function isRateLimited(key, limit, windowMs = RATE_LIMIT_WINDOW_MS) {
-  const now = Date.now()
-  const bucket = rateLimitBuckets.get(key)
-  if (bucket && bucket.expires > now) {
-    if (bucket.count >= limit) {
-      return true
-    }
-    bucket.count += 1
-    return false
-  }
-
-  rateLimitBuckets.set(key, { count: 1, expires: now + windowMs })
-  return false
-}
+app.post('/api/bug-report', async (req, res) => {
+  const result = await handleBugReport({
+    body: req.body,
+    ip: getClientIp(req),
+  })
+  return res.status(result.status).json(result.body)
+})
 
 app.post('/api/admin/login', (req, res) => {
   if (!ADMIN_PASSWORD) {
@@ -566,132 +552,21 @@ app.post('/api/admin/suggestions/:id/reject', requireAdminAuth, async (req, res)
 })
 
 app.get('/api/places/autocomplete', async (req, res) => {
-  if (!GOOGLE_PLACES_API_KEY) {
-    return res.status(503).json({ error: 'Google Places API key not configured' })
-  }
-
-  const input = (req.query?.input || '').toString().trim()
-  if (!input) {
-    return res.status(400).json({ error: 'Missing input parameter' })
-  }
-  if (input.length < 2) {
-    return res.json({ predictions: [] })
-  }
-
-  const sessionToken = (req.query?.sessiontoken || '').toString().trim()
-  const clientIp = req.ip || req.connection?.remoteAddress || 'unknown'
-  const limiterKey = `${clientIp}:autocomplete`
-  if (isRateLimited(limiterKey, AUTOCOMPLETE_RATE_LIMIT)) {
-    return res.status(429).json({ error: 'Too many autocomplete requests' })
-  }
-
-  try {
-    const params = new URLSearchParams({
-      input,
-      key: GOOGLE_PLACES_API_KEY,
-      components: 'country:us',
-      types: 'establishment',
-    })
-    if (sessionToken) {
-      params.set('sessiontoken', sessionToken)
-    }
-
-    const endpoint = `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params.toString()}`
-    const response = await fetch(endpoint)
-    if (!response.ok) {
-      console.error('[places] autocomplete fetch failed', response.status, response.statusText)
-      return res.status(502).json({ error: 'Autocomplete request failed' })
-    }
-
-    const payload = await response.json()
-    if (payload.status && payload.status !== 'OK') {
-      if (payload.status === 'ZERO_RESULTS') {
-        return res.json({ predictions: [] })
-      }
-      console.warn('[places] autocomplete status', payload.status, payload.error_message)
-      const statusCode = payload.status === 'REQUEST_DENIED' ? 503 : 502
-      return res.status(statusCode).json({
-        error: payload.status === 'REQUEST_DENIED'
-          ? 'Google Places rejected the request. Check API credentials and quotas.'
-          : 'Autocomplete request rejected by Google',
-        status: payload.status,
-      })
-    }
-
-    const predictions = Array.isArray(payload.predictions)
-      ? payload.predictions.map(prediction => ({
-          description: prediction.description,
-          place_id: prediction.place_id,
-        }))
-      : []
-
-    return res.json({ predictions })
-  } catch (error) {
-    console.error('[places] autocomplete error', error)
-    return res.status(500).json({ error: 'Failed to fetch predictions' })
-  }
+  const result = await handleAutocomplete({
+    input: (req.query?.input || '').toString(),
+    sessionToken: (req.query?.sessiontoken || '').toString(),
+    ip: getClientIp(req),
+  })
+  return res.status(result.status).json(result.body)
 })
 
 app.get('/api/places/details', async (req, res) => {
-  if (!GOOGLE_PLACES_API_KEY) {
-    return res.status(503).json({ error: 'Google Places API key not configured' })
-  }
-
-  const placeId = (req.query?.place_id || '').toString().trim()
-  if (!placeId) {
-    return res.status(400).json({ error: 'Missing place_id parameter' })
-  }
-
-  const sessionToken = (req.query?.sessiontoken || '').toString().trim()
-  const clientIp = req.ip || req.connection?.remoteAddress || 'unknown'
-  const limiterKey = `${clientIp}:details`
-  if (isRateLimited(limiterKey, DETAILS_RATE_LIMIT)) {
-    return res.status(429).json({ error: 'Too many place detail requests' })
-  }
-
-  try {
-    const params = new URLSearchParams({
-      place_id: placeId,
-      key: GOOGLE_PLACES_API_KEY,
-      fields: 'place_id,name,formatted_address,geometry/location',
-    })
-    if (sessionToken) {
-      params.set('sessiontoken', sessionToken)
-    }
-
-    const endpoint = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`
-    const response = await fetch(endpoint)
-    if (!response.ok) {
-      console.error('[places] details fetch failed', response.status, response.statusText)
-      return res.status(502).json({ error: 'Place details request failed' })
-    }
-
-    const payload = await response.json()
-    if (payload.status !== 'OK') {
-      console.warn('[places] details status', payload.status, payload.error_message)
-      const statusCode = payload.status === 'REQUEST_DENIED' ? 503 : 502
-      return res.status(statusCode).json({
-        error: payload.status === 'REQUEST_DENIED'
-          ? 'Google Places rejected the request. Check API credentials and quotas.'
-          : 'Place details rejected by Google',
-        status: payload.status,
-      })
-    }
-
-    const result = payload.result || {}
-    const geometry = result.geometry?.location || {}
-
-    return res.json({
-      place_id: result.place_id,
-      name: result.name,
-      formatted_address: result.formatted_address,
-      lat: typeof geometry.lat === 'number' ? geometry.lat : null,
-      lng: typeof geometry.lng === 'number' ? geometry.lng : null,
-    })
-  } catch (error) {
-    console.error('[places] details error', error)
-    return res.status(500).json({ error: 'Failed to fetch place details' })
-  }
+  const result = await handlePlaceDetails({
+    placeId: (req.query?.place_id || '').toString(),
+    sessionToken: (req.query?.sessiontoken || '').toString(),
+    ip: getClientIp(req),
+  })
+  return res.status(result.status).json(result.body)
 })
 
 if (require.main === module) {

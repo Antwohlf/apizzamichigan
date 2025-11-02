@@ -22,6 +22,8 @@ import { tacoPlacesFallback } from './data/tacoPlaces'
 import { fetchTacoPlaces } from './lib/supabase-tacos'
 import './App.css'
 import { GlobalLoadingProvider, useGlobalLoading } from './hooks/useGlobalLoading'
+import { SelectedPlaceProvider } from './store/selectedPlace'
+import { BugReportFab } from './components/bug-report/BugReportFab'
 
 const MapView = lazy(() => import('./map'))
 
@@ -451,6 +453,7 @@ function SiteContainer({ themeKey }) {
               isPizza={isPizza}
               onLocatePlace={handleLocatePlace}
             />
+            <BugReportFab />
           </div>
         </div>
       </div>
@@ -470,23 +473,25 @@ function ThemedRoute({ themeKey }) {
 
 export default function App() {
   return (
-    <GlobalLoadingProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<ThemedRoute themeKey={ThemeKeys.PIZZA} />} />
-          <Route path="/tacos" element={<ThemedRoute themeKey={ThemeKeys.TACO} />} />
-          <Route path="/admin/submit" element={<AdminSubmit />} />
-          <Route path="/admin/reviews" element={<AdminReviewsPage />} />
-          <Route
-            path="/admin"
-            element={
-              <div className="admin-shell">
-                <AdminForm />
-              </div>
-            }
-          />
-        </Routes>
-      </Router>
-    </GlobalLoadingProvider>
+    <SelectedPlaceProvider>
+      <GlobalLoadingProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<ThemedRoute themeKey={ThemeKeys.PIZZA} />} />
+            <Route path="/tacos" element={<ThemedRoute themeKey={ThemeKeys.TACO} />} />
+            <Route path="/admin/submit" element={<AdminSubmit />} />
+            <Route path="/admin/reviews" element={<AdminReviewsPage />} />
+            <Route
+              path="/admin"
+              element={
+                <div className="admin-shell">
+                  <AdminForm />
+                </div>
+              }
+            />
+          </Routes>
+        </Router>
+      </GlobalLoadingProvider>
+    </SelectedPlaceProvider>
   )
 }

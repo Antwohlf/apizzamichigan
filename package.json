@@ -11,6 +11,7 @@
     "cookie-parser": "^1.4.6",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "nodemailer": "^6.9.14",
     "leaflet": "^1.9.4",
     "leaflet-rotatedmarker": "^0.2.0",
     "react": "^18.3.1",
