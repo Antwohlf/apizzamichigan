@@ -16,6 +16,7 @@ type Place = {
   state?: string | null
   google_place_id?: string | null
   google_maps_url?: string | null
+  favorited?: boolean | null
 }
 
 const roots = new WeakMap<HTMLElement, Root>()
@@ -30,20 +31,43 @@ function getRoot(node: HTMLElement) {
 }
 
 export function renderPreview(node: HTMLElement, place: Place) {
+  const isGolden = place.type === 'taco' && Boolean(place.favorited)
+  const classNames = ['popup-card']
+  if (isGolden) {
+    classNames.push('popup-card--favorited', 'golden-glow')
+  }
   getRoot(node).render(
-    <div className="popup-card" data-mode="preview" role="dialog" aria-modal="false">
+    <div
+      className={classNames.join(' ')}
+      data-mode="preview"
+      role="dialog"
+      aria-modal="false"
+      data-favorited={isGolden ? 'true' : 'false'}
+    >
       <div className="title">{place.name}</div>
       <div className="meta">
         {place.price ? <span className="badge">{place.price}</span> : null}
         {place.status ? <span className="badge">{place.status}</span> : null}
+        {isGolden ? <span className="badge badge--golden">Golden</span> : null}
       </div>
     </div>
   )
 }
 
 export function renderExpanded(node: HTMLElement, place: Place, onClose: () => void) {
+  const isGolden = place.type === 'taco' && Boolean(place.favorited)
+  const classNames = ['popup-card']
+  if (isGolden) {
+    classNames.push('popup-card--favorited', 'golden-glow')
+  }
   getRoot(node).render(
-    <div className="popup-card" data-mode="expanded" role="dialog" aria-modal="true">
+    <div
+      className={classNames.join(' ')}
+      data-mode="expanded"
+      role="dialog"
+      aria-modal="true"
+      data-favorited={isGolden ? 'true' : 'false'}
+    >
       <button className="close" onClick={onClose} aria-label="Close">
         ×
       </button>

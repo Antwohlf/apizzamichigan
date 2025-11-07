@@ -17,7 +17,7 @@ export const tacoTheme = {
   copy: {
     styleLabel: 'Taco Type',
     frozenToggleMap: 'Taco Map',
-    frozenToggleFrozen: 'Latin Markets',
+    frozenToggleFrozen: 'Recipes',
     loading: 'Loading taco map…',
     errorPrefix: 'Oops',
   },

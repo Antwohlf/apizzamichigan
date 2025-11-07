@@ -12,6 +12,8 @@
   padding: 10px 12px;
   width: 180px;
   color: rgba(241, 245, 249, 0.98);
+  border: 2px solid transparent;
+  box-sizing: border-box;
 }
 
 .marker-popup [data-mode='preview'] {
@@ -61,6 +63,11 @@
   color: rgba(240, 249, 255, 0.92);
 }
 
+.marker-popup .badge--golden {
+  background: rgba(250, 204, 21, 0.15);
+  color: #fde68a;
+}
+
 .marker-popup .rating {
   margin-top: 6px;
   font-weight: 600;
@@ -81,6 +88,15 @@
 
 .marker-popup .actions a:hover {
   text-decoration: underline;
+}
+
+.popup-card--favorited .title {
+  color: #facc15;
+}
+
+.popup-card--favorited .badge {
+  background: rgba(250, 204, 21, 0.15);
+  color: #fde68a;
 }
 
 .marker-popup-shell .leaflet-popup-content-wrapper,
