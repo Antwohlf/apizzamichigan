@@ -12,6 +12,11 @@ export interface Place {
   review?: string | null;
   photoUrl?: string | null;
   photos?: string[] | null;
+  favorited?: boolean | null;
+  place_type?: string | null;
+  placeType?: string | null;
+  marker_icon_url?: string | null;
+  markerIconUrl?: string | null;
 }
 
 export type PlaceId = Place['id'];

@@ -19,6 +19,9 @@
  * @property {string} [review]
  * @property {string} [notes]
  * @property {ReviewPhoto[]} [photos]
+ * @property {boolean} [favorited]
+ * @property {'pizzeria'|'taqueria'|'tamaleria'} [place_type]
+ * @property {string} [marker_icon_url]
  *
  * @typedef {Object} TacoPlace
  * @property {string} id
@@ -32,5 +35,8 @@
  * @property {string} [review]
  * @property {string} [notes]
  * @property {ReviewPhoto[]} [photos]
+ * @property {boolean} [favorited]
+ * @property {'pizzeria'|'taqueria'|'tamaleria'} [place_type]
+ * @property {string} [marker_icon_url]
  */
 export {}

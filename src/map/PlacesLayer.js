@@ -35,9 +35,55 @@ function MapClickCloser({ close }) {
 export function PlacesLayer({ site, places }) {
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
+  const lastFocusedPlaceRef = useRef(null)
   const popup = usePopup()
   const { openEntry, open, close, registerFocusReturn } = useMapPopup()
   const { setSelectedPlace } = useSelectedPlace()
+  const map = useMap()
+
+  const DEFAULT_CENTER = [44.3148, -85.6024]
+  const DEFAULT_ZOOM = 6
+  const FOCUSED_ZOOM = 12
+  const flyToPlace = useCallback(
+    (lat, lng, options = {}) => {
+      if (!map) return
+      if (typeof lat !== 'number' || typeof lng !== 'number') return
+      const maxZoom = typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : FOCUSED_ZOOM
+      const targetZoom = Math.min(FOCUSED_ZOOM, maxZoom || FOCUSED_ZOOM)
+      const currentZoom = typeof map.getZoom === 'function' ? map.getZoom() : DEFAULT_ZOOM
+      const zoomDelta = Math.abs((currentZoom ?? DEFAULT_ZOOM) - targetZoom)
+      const mapBounds = typeof map.getBounds === 'function' ? map.getBounds() : null
+      const latLng = [lat, lng]
+      const isOutsideView = mapBounds ? !mapBounds.contains(latLng) : false
+
+      const snapFirst = options.snapFirst ?? (zoomDelta > 3 || isOutsideView)
+      if (snapFirst) {
+        map.setView([lat, lng], targetZoom, { animate: false })
+      }
+      if (options.animate === false) {
+        return
+      }
+      const animateOptions = {
+        duration: options.duration ?? 0.8,
+        easeLinearity: 0.25,
+        animate: true,
+      }
+      map.flyTo([lat, lng], targetZoom, animateOptions)
+    },
+    [map]
+  )
+
+  useEffect(() => {
+    if (!map) return
+    if (map.doubleClickZoom?.disable) {
+      map.doubleClickZoom.disable()
+    }
+    return () => {
+      if (map.doubleClickZoom?.enable) {
+        map.doubleClickZoom.enable()
+      }
+    }
+  }, [map])
 
   useEffect(() => {
     const marker = openEntry?.id ? markerRefs.current.get(`${openEntry.type}:${openEntry.id}`) : null
@@ -48,6 +94,33 @@ export function PlacesLayer({ site, places }) {
       registerFocusReturn(el)
     }
   }, [openEntry, registerFocusReturn])
+
+  useEffect(() => {
+    if (!map) return
+
+    if (openEntry?.id) {
+      const targetPlace = places.find(place => String(place.id) === String(openEntry.id))
+      if (targetPlace && typeof targetPlace.lat === 'number' && typeof targetPlace.lng === 'number') {
+        const coords = [targetPlace.lat, targetPlace.lng]
+        const alreadyFocused =
+          lastFocusedPlaceRef.current &&
+          lastFocusedPlaceRef.current.id === targetPlace.id &&
+          lastFocusedPlaceRef.current.lat === targetPlace.lat &&
+          lastFocusedPlaceRef.current.lng === targetPlace.lng
+
+        if (!alreadyFocused) {
+          flyToPlace(coords[0], coords[1], { duration: 0.85 })
+          lastFocusedPlaceRef.current = { id: targetPlace.id, lat: targetPlace.lat, lng: targetPlace.lng }
+        }
+        return
+      }
+    }
+
+    if (lastFocusedPlaceRef.current) {
+      map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { duration: 0.75 })
+      lastFocusedPlaceRef.current = null
+    }
+  }, [map, openEntry, places, flyToPlace])
 
   useEffect(() => {
     const key = openEntry?.id ? `${openEntry.type}:${openEntry.id}` : null
@@ -121,6 +194,7 @@ export function PlacesLayer({ site, places }) {
         const lng = typeof place.lng === 'number' ? place.lng : null
         if (lat === null || lng === null) return null
         const markerKey = getMarkerKey(place, idx)
+
         const status = place.status || 'visited'
 
         return (
@@ -131,6 +205,9 @@ export function PlacesLayer({ site, places }) {
             eventHandlers={{
               click: event => {
                 if (!placeId) return
+                if (lat !== null && lng !== null) {
+                  flyToPlace(lat, lng, { duration: 0.85 })
+                }
                 const markerInstance = markerRefs.current.get(markerKey)
                 const node = markerInstance?.getElement?.() || event?.target?.getElement?.()
                 if (node) {
@@ -194,7 +271,7 @@ export function PlacesLayer({ site, places }) {
           />
         )
       }),
-    [places, site, popup, open, buildHref, getMarkerKey]
+    [places, site, popup, open, buildHref, getMarkerKey, flyToPlace]
   )
 
   useEffect(() => {

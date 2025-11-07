@@ -34,4 +34,5 @@ const supabaseAnonKey =
   resolveEnv(['REACT_APP_SUPABASE_ANON_KEY', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY']) ||
   fallbackKey
 
+export const SUPABASE_URL = supabaseUrl
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)

@@ -24,10 +24,16 @@ export function getMarkerIcon(site, status = 'visited') {
   const safeStatus = status && iconBySiteStatus[site] && iconBySiteStatus[site][status] ? status : 'visited'
   const iconUrl = iconBySiteStatus[site][safeStatus]
 
-  return L.icon({
+  const options = {
     iconUrl,
     iconSize: [36, 36],
     iconAnchor: [18, 36],
     popupAnchor: [0, -28],
-  })
+  }
+
+  if (site === 'taco') {
+    options.className = `leaflet-marker-icon taco-marker${safeStatus === 'golden' ? ' taco-marker--golden' : ''}`
+  }
+
+  return L.icon(options)
 }
