@@ -1,11 +1,76 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react'
+import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
+import MarkerClusterGroup from 'react-leaflet-cluster'
 import { getMarkerIcon } from './getMarkerIcon'
 import { useMapPopup } from './useMapPopup'
 import { usePopup } from '../context/PopupProvider'
 import { renderExpanded, renderPreview } from '../components/map/renderPopup'
 import '../styles/marker-popup.css'
 import { useSelectedPlace } from '../store/selectedPlace'
+import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
+import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
+import pizzaIconGold from '../icons/pizza/marker-pizza-gold.svg'
+import tacoIconColored from '../icons/taco/marker-taco-colored.svg'
+import tacoIconGrey from '../icons/taco/marker-taco-grey.svg'
+import tacoIconGold from '../icons/taco/marker-taco-gold.svg'
+
+const CLUSTER_ICONS = {
+  pizza: { visited: pizzaIconColored, unvisited: pizzaIconGrey, golden: pizzaIconGold },
+  taco: { visited: tacoIconColored, unvisited: tacoIconGrey, golden: tacoIconGold },
+}
+
+const BADGE_COLORS = {
+  visited: '#d9382b',
+  unvisited: '#888888',
+  golden: '#d4af37',
+}
+
+const createClusterIcon = (site, showCounts) => (cluster) => {
+  const count = cluster.getChildCount()
+  const childMarkers = cluster.getAllChildMarkers()
+
+  // Check if all markers have the same status
+  const statuses = childMarkers.map(m => m.options?.status || 'visited')
+  const uniqueStatuses = [...new Set(statuses)]
+  const clusterStatus = uniqueStatuses.length === 1 ? uniqueStatuses[0] : 'visited'
+
+  const icons = CLUSTER_ICONS[site] || CLUSTER_ICONS.pizza
+  const icon = icons[clusterStatus] || icons.visited
+  const badgeColor = site === 'taco' && clusterStatus === 'visited' ? '#e67e22' : BADGE_COLORS[clusterStatus]
+
+  const badgeHtml = showCounts ? `
+        <span style="
+          position: absolute;
+          bottom: -4px;
+          right: -4px;
+          background: ${badgeColor};
+          color: white;
+          border-radius: 50%;
+          min-width: 20px;
+          height: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: bold;
+          border: 2px solid white;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        ">${count}</span>
+  ` : ''
+
+  return L.divIcon({
+    html: `
+      <div style="position: relative; width: 44px; height: 44px;">
+        <img src="${icon}" style="width: 44px; height: 44px;" />
+        ${badgeHtml}
+      </div>
+    `,
+    className: `${site}-cluster-icon`,
+    iconSize: L.point(44, 44),
+    iconAnchor: L.point(22, 44),
+  })
+}
 
 function MapClickCloser({ close }) {
   const map = useMap()
@@ -32,7 +97,7 @@ function MapClickCloser({ close }) {
   return null
 }
 
-export function PlacesLayer({ site, places }) {
+export function PlacesLayer({ site, places, showClusterCounts = true }) {
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
   const lastFocusedPlaceRef = useRef(null)
@@ -257,6 +322,7 @@ export function PlacesLayer({ site, places }) {
             }}
             ref={instance => {
               if (instance) {
+                instance.options.status = status
                 markerRefs.current.set(markerKey, instance)
                 if (place.id) {
                   markerRefs.current.set(`${site}:${place.id}`, instance)
@@ -285,7 +351,16 @@ export function PlacesLayer({ site, places }) {
   return (
     <>
       <MapClickCloser close={close} />
-      {markers}
+      <MarkerClusterGroup
+        key={`cluster-${site}-${showClusterCounts}`}
+        chunkedLoading
+        maxClusterRadius={50}
+        spiderfyOnMaxZoom
+        showCoverageOnHover={false}
+        iconCreateFunction={createClusterIcon(site, showClusterCounts)}
+      >
+        {markers}
+      </MarkerClusterGroup>
     </>
   )
 }
