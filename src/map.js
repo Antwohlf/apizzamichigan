@@ -70,7 +70,7 @@ const ZoomButton = () => {
   );
 };
 
-const Map = ({ places, theme, site = 'pizza' }) => {
+const Map = ({ places, theme, site = 'pizza', showClusterCounts = true }) => {
   const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
 
@@ -82,7 +82,7 @@ const Map = ({ places, theme, site = 'pizza' }) => {
     >
       <TileLayer attribution={attribution} url={tileUrl} />
       <PopupProviderBridge>
-        <PlacesLayer site={site} places={places} />
+        <PlacesLayer site={site} places={places} showClusterCounts={showClusterCounts} />
         {/* Render ZoomButton directly inside MapContainer */}
         <ZoomButton />
       </PopupProviderBridge>
