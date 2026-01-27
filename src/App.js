@@ -167,6 +167,7 @@ function SiteContainer({ themeKey }) {
   const [places, setPlaces] = useState([])
   const [mapLoading, setMapLoading] = useState(true)
   const [mapError, setMapError] = useState(null)
+  const [showClusterCounts, setShowClusterCounts] = useState(true)
 
   const { theme } = useTheme()
   const isPizza = themeKey === ThemeKeys.PIZZA
@@ -269,12 +270,29 @@ function SiteContainer({ themeKey }) {
           error = response?.error ?? null
         } else {
           const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
-          const response = await supabase
-            .from(table)
-            .select('*')
-            .order('name', { ascending: true })
-          data = response?.data ?? null
-          error = response?.error ?? null
+          // Paginate to bypass Supabase's 1000 row default limit
+          const pageSize = 1000
+          let allData = []
+          let page = 0
+          let hasMore = true
+          while (hasMore) {
+            const from = page * pageSize
+            const to = from + pageSize - 1
+            const response = await supabase
+              .from(table)
+              .select('*')
+              .order('name', { ascending: true })
+              .range(from, to)
+            if (response.error) {
+              error = response.error
+              break
+            }
+            const pageData = response.data ?? []
+            allData = allData.concat(pageData)
+            hasMore = pageData.length === pageSize
+            page++
+          }
+          data = allData.length > 0 ? allData : null
         }
       } catch (err) {
         error = err
@@ -453,7 +471,13 @@ function SiteContainer({ themeKey }) {
     <div className="app-shell" style={themeStyles}>
       <div className="app-layout">
         <div className="sidebar-wrapper">
-          <Sidebar onFilterChange={handleFilterChange} themeKey={themeKey} filters={filters} />
+          <Sidebar
+            onFilterChange={handleFilterChange}
+            themeKey={themeKey}
+            filters={filters}
+            showClusterCounts={showClusterCounts}
+            onClusterCountsToggle={setShowClusterCounts}
+          />
         </div>
 
         <div className="main-content">
@@ -494,6 +518,7 @@ function SiteContainer({ themeKey }) {
                     places={filteredPlaces}
                     theme={theme}
                     site={isPizza ? 'pizza' : 'taco'}
+                    showClusterCounts={showClusterCounts}
                   />
                 </Suspense>
               )
