@@ -11,7 +11,7 @@ const ALL_STATUS_VALUES = ['visited', 'unvisited', 'golden']
 const arraysEqual = (a = [], b = []) =>
   a.length === b.length && a.every((value, index) => value === b[index])
 
-const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
+const Sidebar = ({ onFilterChange, themeKey, filters = {}, showClusterCounts = true, onClusterCountsToggle }) => {
   const { theme } = useTheme()
 
   const [selectedStyles, setSelectedStyles] = useState([])
@@ -111,6 +111,27 @@ const Sidebar = ({ onFilterChange, themeKey, filters = {} }) => {
       </section>
 
       <StatusFilter value={selectedStatuses} onChange={setSelectedStatuses} />
+
+      <section className="filter-section" aria-label="Map Settings">
+        <h3 className="filter-section__title">Map Settings</h3>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.5rem 0',
+            cursor: 'pointer',
+          }}
+        >
+          <span style={{ fontSize: '0.9rem', color: 'var(--app-text)' }}>Show cluster counts</span>
+          <input
+            type="checkbox"
+            checked={showClusterCounts}
+            onChange={e => onClusterCountsToggle?.(e.target.checked)}
+            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+          />
+        </label>
+      </section>
     </div>
   )
 }

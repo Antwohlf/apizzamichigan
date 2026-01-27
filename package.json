@@ -11,12 +11,13 @@
     "cookie-parser": "^1.4.6",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "nodemailer": "^6.9.14",
     "leaflet": "^1.9.4",
     "leaflet-rotatedmarker": "^0.2.0",
+    "nodemailer": "^6.9.14",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
+    "react-leaflet-cluster": "^2.1.0",
     "react-router-dom": "^7.1.5",
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
@@ -59,6 +60,8 @@
     ]
   },
   "devDependencies": {
-    "gh-pages": "^6.3.0"
+    "cheerio": "^1.1.2",
+    "gh-pages": "^6.3.0",
+    "typescript": "^4.9.5"
   }
 }
