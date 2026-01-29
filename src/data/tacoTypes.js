@@ -8,4 +8,8 @@ export const TACO_TYPES = [
   'Birria',
   'Lengua',
   'Fish',
+  'Shrimp',
+  'Ground Beef',
+  'Cabeza',
+  'Veggie',
 ]

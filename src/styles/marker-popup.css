@@ -68,6 +68,17 @@
   color: #fde68a;
 }
 
+.marker-popup .badge--style {
+  background: rgba(100, 116, 139, 0.35);
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.marker-popup .style-label {
+  font-size: 0.8rem;
+  color: rgba(148, 163, 184, 0.9);
+  margin-top: 2px;
+}
+
 .marker-popup .rating {
   margin-top: 6px;
   font-weight: 600;

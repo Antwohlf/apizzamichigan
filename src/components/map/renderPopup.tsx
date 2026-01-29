@@ -14,6 +14,7 @@ type Place = {
   href?: string | null
   city?: string | null
   state?: string | null
+  style?: string | null
   google_place_id?: string | null
   google_maps_url?: string | null
   favorited?: boolean | null
@@ -47,7 +48,8 @@ export function renderPreview(node: HTMLElement, place: Place) {
       <div className="title">{place.name}</div>
       <div className="meta">
         {place.price ? <span className="badge">{place.price}</span> : null}
-        {place.status ? <span className="badge">{place.status}</span> : null}
+        {place.style ? <span className="badge badge--style">{place.style}</span> : null}
+        {place.status && place.status !== 'visited' ? <span className="badge">{place.status}</span> : null}
         {isGolden ? <span className="badge badge--golden">Golden</span> : null}
       </div>
     </div>
@@ -72,10 +74,18 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
         ×
       </button>
       <div className="title">{place.name}</div>
+      {place.style ? <div className="style-label">{place.style}</div> : null}
       {typeof place.rating === 'number' ? (
         <div className="rating">★ {place.rating.toFixed(1)}</div>
       ) : null}
-      {place.address ? <div className="addr">{place.address}</div> : null}
+      {place.address ? (
+        <div className="addr">
+          {place.address}
+          {place.city && !place.address.toLowerCase().includes(place.city.toLowerCase())
+            ? `, ${place.city}`
+            : null}
+        </div>
+      ) : null}
       <div className="actions">
         <a
           target="_blank"

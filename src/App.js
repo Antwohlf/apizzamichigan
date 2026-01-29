@@ -12,6 +12,7 @@ import { SiteTitle } from './header/SiteTitle'
 import { StatsPanel } from './sidebar/StatsPanel'
 import { MapPopupProvider, useMapPopup } from './map/useMapPopup'
 import TacoRecipesPanel from './tacos/TacoRecipesPanel'
+import DataDashboard from './pages/DataDashboard'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
 import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
@@ -19,11 +20,66 @@ import { supabase } from './supabaseClient'
 import pizzaPlacesFallback from './data'
 import { trackSiteSwitch } from './analytics'
 import { tacoPlacesFallback } from './data/tacoPlaces'
-import { fetchTacoPlaces } from './lib/supabase-tacos'
+import { STATE_CENTROIDS, HOME_STATE } from './data/stateCentroids'
+import { getDistanceMiles } from './utils/geo'
 import './App.css'
 import { GlobalLoadingProvider, useGlobalLoading } from './hooks/useGlobalLoading'
 import { SelectedPlaceProvider } from './store/selectedPlace'
 import { BugReportFab } from './components/bug-report/BugReportFab'
+import { MapControls } from './map/MapControls'
+
+// Helper to fetch places for a specific state
+async function fetchPlacesForState(table, stateCode) {
+  const pageSize = 1000
+  let allData = []
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('state', stateCode)
+      .range(offset, offset + pageSize - 1)
+
+    if (error) throw error
+    if (!data || data.length === 0) break
+
+    allData = allData.concat(data)
+    if (data.length < pageSize) break
+    offset += pageSize
+  }
+
+  return allData
+}
+
+// Helper to fetch state counts for aggregate markers
+async function fetchStateCounts(table) {
+  const pageSize = 1000
+  let allData = []
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('state')
+      .range(offset, offset + pageSize - 1)
+
+    if (error) throw error
+    if (!data || data.length === 0) break
+
+    allData = allData.concat(data)
+    if (data.length < pageSize) break
+    offset += pageSize
+  }
+
+  const counts = {}
+  allData.forEach(row => {
+    const state = row.state || 'Unknown'
+    counts[state] = (counts[state] || 0) + 1
+  })
+
+  return counts
+}
 
 const MapView = lazy(() => import('./map'))
 
@@ -169,6 +225,19 @@ function SiteContainer({ themeKey }) {
   const [mapError, setMapError] = useState(null)
   const [showClusterCounts, setShowClusterCounts] = useState(true)
 
+  // Search and Near Me state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [userLocation, setUserLocation] = useState(null)
+  const [nearMeActive, setNearMeActive] = useState(false)
+  const [nearMeRadius, setNearMeRadius] = useState(25)
+  const [locationError, setLocationError] = useState(null)
+  const [flyToLocation, setFlyToLocation] = useState(null)
+
+  // State-based loading state
+  const [stateAggregates, setStateAggregates] = useState([])
+  const [loadedStates, setLoadedStates] = useState({ [HOME_STATE]: [] })
+  const loadingStatesRef = React.useRef(new Set())
+
   const { theme } = useTheme()
   const isPizza = themeKey === ThemeKeys.PIZZA
   const { open: openMapPopup } = useMapPopup()
@@ -250,65 +319,119 @@ function SiteContainer({ themeKey }) {
     setLoadingVariant(isPizza ? 'pizza' : 'taco')
   }, [isPizza, setLoadingVariant])
 
+  // Normalize place data (extracted for reuse)
+  const normalizePlaceData = useCallback((data, photoMap, defaultPlaceType) => {
+    return (data || []).map((place, index) => {
+      const canonicalId =
+        place.id ??
+        place.ID ??
+        place.place_id ??
+        place.slug ??
+        `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-${index}`
+      const normalizedPhotos = (() => {
+        const fromMap = Array.isArray(photoMap[place.id]) ? photoMap[place.id] : []
+        const fallback = convertLegacyPhotos(place.photos)
+        const combined = fromMap.length > 0 ? fromMap : fallback
+        return combined
+          .slice()
+          .sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER))
+      })()
+      const firstPhoto = normalizedPhotos.length
+        ? normalizedPhotos[0]?.publicUrl || normalizedPhotos[0]?.path || normalizedPhotos[0]
+        : place.photo_url || place.photoPath || null
+
+      const normalizedLat = typeof place.lat === 'number' ? place.lat : Number(place.lat)
+      const normalizedLng = typeof place.lng === 'number' ? place.lng : Number(place.lng)
+
+      const normalizedStatus = normalizeStatus(place.status)
+      const favorited = computeFavorited(place, normalizedStatus)
+      const placeType = computePlaceType(place, defaultPlaceType)
+      const markerIconUrl = computeMarkerIconUrl(place)
+
+      return {
+        ...place,
+        id: canonicalId,
+        type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
+        style:
+          themeKey === ThemeKeys.TACO
+            ? place.type || place.style
+            : place.style === 'Standard'
+              ? 'Traditional'
+              : place.style,
+        price: place.price || place.Price || '',
+        status: normalizedStatus,
+        favorited,
+        lat: normalizedLat,
+        lng: normalizedLng,
+        address: place.address || place.Address || '',
+        photoUrl: typeof firstPhoto === 'string' ? firstPhoto : null,
+        photos: normalizedPhotos,
+        place_type: placeType,
+        placeType,
+        marker_icon_url: markerIconUrl,
+        markerIconUrl,
+      }
+    })
+  }, [themeKey])
+
+  // Initial load: Michigan places + state counts for aggregates
   useEffect(() => {
     let isMounted = true
     const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
 
-    async function fetchPlaces() {
+    async function initialLoad() {
       setMapLoading(true)
       openLoading(theme.copy.loading || 'Loading map…')
       const fallbackPlaces = themeKey === ThemeKeys.TACO ? tacoPlacesFallback : pizzaPlacesFallback
-
-      let data = null
-      let error = null
-      let photoMap = {}
+      const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
 
       try {
-        if (themeKey === ThemeKeys.TACO) {
-          const response = await fetchTacoPlaces()
-          data = response?.data ?? null
-          error = response?.error ?? null
-        } else {
-          const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
-          // Paginate to bypass Supabase's 1000 row default limit
-          const pageSize = 1000
-          let allData = []
-          let page = 0
-          let hasMore = true
-          while (hasMore) {
-            const from = page * pageSize
-            const to = from + pageSize - 1
-            const response = await supabase
-              .from(table)
-              .select('*')
-              .order('name', { ascending: true })
-              .range(from, to)
-            if (response.error) {
-              error = response.error
-              break
-            }
-            const pageData = response.data ?? []
-            allData = allData.concat(pageData)
-            hasMore = pageData.length === pageSize
-            page++
+        // Fetch Michigan places and state counts in parallel
+        const [michiganData, stateCounts] = await Promise.all([
+          fetchPlacesForState(table, HOME_STATE),
+          fetchStateCounts(table),
+        ])
+
+        if (!isMounted) return
+
+        // Fetch photos for Michigan places
+        let photoMap = {}
+        if (michiganData.length) {
+          const placeIds = michiganData.map(p => p.id).filter(Boolean)
+          if (placeIds.length) {
+            photoMap = await fetchPhotoMap(placeIds)
           }
-          data = allData.length > 0 ? allData : null
         }
-      } catch (err) {
-        error = err
-      }
 
-      if (!error && Array.isArray(data) && data.length) {
-        const placeIds = data.map(place => place.id).filter(Boolean)
-        if (placeIds.length) {
-          const fetched = await fetchPhotoMap(placeIds)
-          photoMap = fetched
-        }
-      }
+        if (!isMounted) return
 
-      if (!isMounted) return
+        // Normalize Michigan places
+        const normalized = normalizePlaceData(michiganData, photoMap, defaultPlaceType)
 
-      if (error) {
+        // Build state aggregates for non-Michigan states
+        const aggregates = []
+        Object.entries(stateCounts).forEach(([stateCode, count]) => {
+          if (stateCode === HOME_STATE || stateCode === 'Unknown' || !STATE_CENTROIDS[stateCode]) return
+          const centroid = STATE_CENTROIDS[stateCode]
+          aggregates.push({
+            id: `state-${stateCode}`,
+            stateCode,
+            stateName: centroid.name,
+            count,
+            lat: centroid.lat,
+            lng: centroid.lng,
+            isAggregate: true,
+          })
+        })
+
+        setPlaces(normalized)
+        setLoadedStates({ [HOME_STATE]: normalized })
+        setStateAggregates(aggregates)
+        setMapError(null)
+      } catch (error) {
+        if (!isMounted) return
+
+        // Fallback to local data
         const normalizedFallback = (fallbackPlaces || []).map((place, index) => {
           const canonicalId =
             place.id ??
@@ -341,61 +464,6 @@ function SiteContainer({ themeKey }) {
         })
         setPlaces(normalizedFallback)
         setMapError(error)
-      } else {
-        const normalized = (data || []).map((place, index) => {
-          const canonicalId =
-            place.id ??
-            place.ID ??
-            place.place_id ??
-            place.slug ??
-            `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-${index}`
-          const normalizedPhotos = (() => {
-            const fromMap = Array.isArray(photoMap[place.id]) ? photoMap[place.id] : []
-            const fallback = convertLegacyPhotos(place.photos)
-            const combined = fromMap.length > 0 ? fromMap : fallback
-            return combined
-              .slice()
-              .sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER))
-          })()
-          const firstPhoto = normalizedPhotos.length
-            ? normalizedPhotos[0]?.publicUrl || normalizedPhotos[0]?.path || normalizedPhotos[0]
-            : place.photo_url || place.photoPath || null
-
-          const normalizedLat = typeof place.lat === 'number' ? place.lat : Number(place.lat)
-          const normalizedLng = typeof place.lng === 'number' ? place.lng : Number(place.lng)
-
-          const normalizedStatus = normalizeStatus(place.status)
-          const favorited = computeFavorited(place, normalizedStatus)
-          const placeType = computePlaceType(place, defaultPlaceType)
-          const markerIconUrl = computeMarkerIconUrl(place)
-
-          return {
-            ...place,
-            id: canonicalId,
-            type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
-            style:
-              themeKey === ThemeKeys.TACO
-                ? place.type || place.style
-                : place.style === 'Standard'
-                  ? 'Traditional'
-                  : place.style,
-            price: place.price || place.Price || '',
-            status: normalizedStatus,
-            favorited,
-            lat: normalizedLat,
-            lng: normalizedLng,
-            address: place.address || place.Address || '',
-            photoUrl: typeof firstPhoto === 'string' ? firstPhoto : null,
-            photos: normalizedPhotos,
-            place_type: placeType,
-            placeType,
-            marker_icon_url: markerIconUrl,
-            markerIconUrl,
-          }
-        })
-
-        setPlaces(normalized)
-        setMapError(null)
       }
 
       if (isMounted) {
@@ -404,16 +472,112 @@ function SiteContainer({ themeKey }) {
       }
     }
 
-    fetchPlaces()
+    initialLoad()
     return () => {
       isMounted = false
       closeLoading()
     }
-  }, [themeKey, theme.copy.loading, openLoading, closeLoading])
+  }, [themeKey, theme.copy.loading, openLoading, closeLoading, isPizza, normalizePlaceData])
+
+  // Load additional state when clicked
+  const handleStateClick = useCallback(async (stateCode) => {
+    if (!stateCode || stateCode === HOME_STATE || loadingStatesRef.current.has(stateCode)) {
+      return
+    }
+
+    // Already loaded - just add to active
+    if (loadedStates[stateCode]) {
+      setPlaces(prev => [...prev, ...loadedStates[stateCode]])
+      // Remove from aggregates
+      setStateAggregates(prev => prev.filter(a => a.stateCode !== stateCode))
+      return
+    }
+
+    loadingStatesRef.current.add(stateCode)
+    const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
+    const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+
+    try {
+      const stateData = await fetchPlacesForState(table, stateCode)
+
+      // Fetch photos
+      let photoMap = {}
+      if (stateData.length) {
+        const placeIds = stateData.map(p => p.id).filter(Boolean)
+        if (placeIds.length) {
+          photoMap = await fetchPhotoMap(placeIds)
+        }
+      }
+
+      const normalized = normalizePlaceData(stateData, photoMap, defaultPlaceType)
+
+      // Update state
+      setLoadedStates(prev => ({ ...prev, [stateCode]: normalized }))
+      setPlaces(prev => [...prev, ...normalized])
+      // Remove from aggregates
+      setStateAggregates(prev => prev.filter(a => a.stateCode !== stateCode))
+    } catch (err) {
+      console.error(`[App] Failed to load state ${stateCode}:`, err)
+    } finally {
+      loadingStatesRef.current.delete(stateCode)
+    }
+  }, [loadedStates, isPizza, themeKey, normalizePlaceData])
+
+  // Handle Near Me toggle
+  const handleNearMeToggle = useCallback(() => {
+    if (nearMeActive) {
+      setNearMeActive(false)
+      setFlyToLocation(null)
+      return
+    }
+
+    if (userLocation) {
+      setNearMeActive(true)
+      setFlyToLocation(userLocation)
+      return
+    }
+
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation not supported')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const loc = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        }
+        setUserLocation(loc)
+        setNearMeActive(true)
+        setFlyToLocation(loc)
+        setLocationError(null)
+      },
+      () => {
+        setLocationError('Location access denied')
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }, [nearMeActive, userLocation])
 
   const filteredPlaces = useMemo(() => {
     const statusSet = new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
-    return places.filter(place => {
+    const searchLower = searchQuery.toLowerCase().trim()
+
+    let results = places.filter(place => {
+      // Search filter
+      if (searchLower && !place.name?.toLowerCase().includes(searchLower)) {
+        return false
+      }
+
+      // Near me filter
+      if (nearMeActive && userLocation) {
+        const distance = getDistanceMiles(userLocation.lat, userLocation.lng, place.lat, place.lng)
+        if (distance > nearMeRadius) return false
+        place._distance = distance
+      }
+
+      // Style, price, status filters
       const placeStatus = place.status || 'visited'
       return (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
@@ -421,7 +585,51 @@ function SiteContainer({ themeKey }) {
         statusSet.has(placeStatus)
       )
     })
-  }, [places, filters])
+
+    // Sort by distance when near me is active
+    if (nearMeActive && userLocation) {
+      results = results.slice().sort((a, b) => (a._distance || 0) - (b._distance || 0))
+    }
+
+    return results
+  }, [places, filters, searchQuery, nearMeActive, userLocation, nearMeRadius])
+
+  // Check if any filter is active
+  const hasActiveFilter = useMemo(() => {
+    return (
+      filters.styles?.length > 0 ||
+      filters.prices?.length > 0 ||
+      (filters.statuses?.length > 0 && filters.statuses.length < 3) ||
+      searchQuery.trim().length > 0 ||
+      nearMeActive
+    )
+  }, [filters, searchQuery, nearMeActive])
+
+  // Recalculate state counts based on filtered places
+  const filteredStateAggregates = useMemo(() => {
+    if (!stateAggregates.length) return stateAggregates
+
+    // If no filters active, show original counts
+    if (!hasActiveFilter) return stateAggregates
+
+    // Count filtered places by state (excluding home state)
+    const filteredCounts = {}
+    filteredPlaces.forEach(place => {
+      const state = place.state || 'Unknown'
+      if (state !== HOME_STATE && state !== 'Unknown') {
+        filteredCounts[state] = (filteredCounts[state] || 0) + 1
+      }
+    })
+
+    // Update counts for states that have loaded places
+    // Hide states with 0 filtered results
+    return stateAggregates
+      .map(agg => ({
+        ...agg,
+        count: filteredCounts[agg.stateCode] ?? 0,
+      }))
+      .filter(agg => agg.count > 0)
+  }, [stateAggregates, filteredPlaces, hasActiveFilter])
 
   const themeStyles = useMemo(
     () => ({
@@ -461,6 +669,19 @@ function SiteContainer({ themeKey }) {
       }
     },
     [openMapPopup]
+  )
+
+  // Handle clicking a place in the results list
+  const handlePlaceClick = useCallback(
+    (place) => {
+      if (!place) return
+      setView('map')
+      const targetType = isPizza ? 'pizza' : 'taco'
+      if (place.id) {
+        openMapPopup(targetType, place.id)
+      }
+    },
+    [isPizza, openMapPopup]
   )
 
   const handleSiteSwitch = () => {
@@ -513,14 +734,31 @@ function SiteContainer({ themeKey }) {
                   {theme.copy.errorPrefix}: {mapError.message}
                 </div>
               ) : (
-                <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
-                  <MapView
-                    places={filteredPlaces}
-                    theme={theme}
-                    site={isPizza ? 'pizza' : 'taco'}
-                    showClusterCounts={showClusterCounts}
+                <div className="map-container-wrapper">
+                  <MapControls
+                    searchQuery={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    nearMeActive={nearMeActive}
+                    nearMeRadius={nearMeRadius}
+                    locationError={locationError}
+                    onNearMeToggle={handleNearMeToggle}
+                    onRadiusChange={setNearMeRadius}
+                    filteredPlaces={filteredPlaces}
+                    onPlaceClick={handlePlaceClick}
                   />
-                </Suspense>
+                  <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
+                    <MapView
+                      key={isPizza ? 'pizza-map' : 'taco-map'}
+                      places={filteredPlaces}
+                      theme={theme}
+                      site={isPizza ? 'pizza' : 'taco'}
+                      showClusterCounts={showClusterCounts}
+                      stateAggregates={filteredStateAggregates}
+                      onStateClick={handleStateClick}
+                      flyToLocation={flyToLocation}
+                    />
+                  </Suspense>
+                </div>
               )
             ) : (
               themeKey === ThemeKeys.TACO ? (
@@ -540,7 +778,7 @@ function SiteContainer({ themeKey }) {
 
         <div className="sidebar-wrapper">
           <div className="sidebar-inner sidebar-inner--sticky">
-            <StatsPanel places={filteredPlaces} />
+            <StatsPanel table={isPizza ? 'pizza_places' : 'taco_places'} />
             <SuggestionForm
               key={themeKey}
               theme={theme}
@@ -573,6 +811,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<ThemedRoute themeKey={ThemeKeys.PIZZA} />} />
             <Route path="/tacos" element={<ThemedRoute themeKey={ThemeKeys.TACO} />} />
+            <Route path="/data" element={<DataDashboard />} />
             <Route path="/admin/submit" element={<AdminSubmit />} />
             <Route path="/admin/reviews" element={<AdminReviewsPage />} />
             <Route

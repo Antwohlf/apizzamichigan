@@ -11,7 +11,13 @@ const ALL_STATUS_VALUES = ['visited', 'unvisited', 'golden']
 const arraysEqual = (a = [], b = []) =>
   a.length === b.length && a.every((value, index) => value === b[index])
 
-const Sidebar = ({ onFilterChange, themeKey, filters = {}, showClusterCounts = true, onClusterCountsToggle }) => {
+const Sidebar = ({
+  onFilterChange,
+  themeKey,
+  filters = {},
+  showClusterCounts = true,
+  onClusterCountsToggle,
+}) => {
   const { theme } = useTheme()
 
   const [selectedStyles, setSelectedStyles] = useState([])
