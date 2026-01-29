@@ -189,6 +189,12 @@ body {
   contain-intrinsic-size: 600px;
 }
 
+.map-container-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .site-footer {
   margin: 1rem 0 0.5rem;
 }
@@ -273,22 +279,27 @@ body {
 
 .zoom-button {
   position: absolute;
-  top: 10px;
+  bottom: 24px;
   right: 10px;
   z-index: 1000;
 }
 
 .zoom-button button {
-  background-color: rgba(255, 255, 255, 0.85);
-  border: none;
-  padding: 8px 12px;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  padding: 10px 16px;
   cursor: pointer;
-  font-size: 14px;
-  border-radius: 4px;
+  font-size: 0.85rem;
+  border-radius: 24px;
+  color: var(--app-text);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
 }
 
 .zoom-button button:hover {
-  background-color: #ffffff;
+  background: var(--app-bg);
+  border-color: var(--app-accent);
 }
 
 .admin-shell {
@@ -1334,4 +1345,45 @@ body {
   .taco-recipes__controls {
     flex-direction: column;
   }
+}
+
+/* Override default Leaflet marker cluster styles */
+.marker-cluster,
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+  background: transparent !important;
+  border: none !important;
+}
+
+.marker-cluster div,
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+  background: transparent !important;
+  border: none !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+}
+
+/* Hide the default span that Leaflet marker cluster adds */
+.leaflet-marker-icon.marker-cluster > div > span {
+  display: none !important;
+}
+
+/* Ensure our custom cluster icons work correctly */
+.pizza-cluster-icon,
+.taco-cluster-icon,
+.pizza-state-marker,
+.taco-state-marker {
+  background: transparent !important;
+}
+
+/* Make sure OUR badge spans are visible */
+.pizza-cluster-icon > div > span,
+.taco-cluster-icon > div > span,
+.pizza-state-marker > div > span,
+.taco-state-marker > div > span {
+  display: flex !important;
 }

@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 /**
- * OpenStreetMap Pizza Import Script
+ * OpenStreetMap Taco/Mexican Restaurant Import Script
  *
- * Imports pizza places from OpenStreetMap into the pizza_places table.
+ * Imports taco and Mexican restaurants from OpenStreetMap into the taco_places table.
  * Places are imported with status='unvisited' so they appear as grey markers.
  *
  * Usage:
- *   node scripts/import-osm-pizza.mjs --dry-run                    # Preview Michigan (default)
- *   node scripts/import-osm-pizza.mjs                              # Import Michigan via API
- *   node scripts/import-osm-pizza.mjs --sql                        # Output SQL to file
- *   node scripts/import-osm-pizza.mjs --state "California" --state-code "CA"  # Import specific state
- *   node scripts/import-osm-pizza.mjs --state "New York" --state-code "NY" --dry-run
+ *   node scripts/import-osm-tacos.mjs --dry-run                    # Preview Michigan (default)
+ *   node scripts/import-osm-tacos.mjs                              # Import Michigan via API
+ *   node scripts/import-osm-tacos.mjs --sql                        # Output SQL to file
+ *   node scripts/import-osm-tacos.mjs --state "California" --state-code "CA"  # Import specific state
+ *   node scripts/import-osm-tacos.mjs --state "New York" --state-code "NY" --dry-run
  */
 
 import { writeFileSync } from 'fs'
 
 import { createClient } from '@supabase/supabase-js'
 import 'dotenv/config'
+import { isExcludedTacoChain } from './lib/excluded-taco-chains.mjs'
 
 // Supabase config - use service role key to bypass RLS for imports
 const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://htahyiuvqmalfpbgiizx.supabase.co'
@@ -28,7 +29,7 @@ if (!supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 /**
- * Generate Overpass API query for pizza places within a state boundary
+ * Generate Overpass API query for taco/Mexican places within a state boundary
  * Tries both 'name' and 'name:en' to handle bilingual regions (e.g., Canadian provinces)
  */
 function buildOverpassQuery(stateName) {
@@ -39,13 +40,13 @@ function buildOverpassQuery(stateName) {
   area["name:en"="${stateName}"]["admin_level"="4"];
 )->.state;
 (
-  // Restaurants with pizza cuisine
-  node["amenity"="restaurant"]["cuisine"~"pizza"](area.state);
-  way["amenity"="restaurant"]["cuisine"~"pizza"](area.state);
+  // Restaurants with Mexican/taco cuisine
+  node["amenity"="restaurant"]["cuisine"~"mexican|taco|tex-mex|burrito"](area.state);
+  way["amenity"="restaurant"]["cuisine"~"mexican|taco|tex-mex|burrito"](area.state);
 
-  // Fast food with pizza cuisine
-  node["amenity"="fast_food"]["cuisine"~"pizza"](area.state);
-  way["amenity"="fast_food"]["cuisine"~"pizza"](area.state);
+  // Fast food with Mexican/taco cuisine
+  node["amenity"="fast_food"]["cuisine"~"mexican|taco|tex-mex|burrito"](area.state);
+  way["amenity"="fast_food"]["cuisine"~"mexican|taco|tex-mex|burrito"](area.state);
 );
 out center;
 `
@@ -92,7 +93,7 @@ function normalizeName(name) {
  * State-aware: places in different states are never duplicates (prevents border false matches)
  */
 function isDuplicate(newPlace, existingPlace) {
-  // Different states are never duplicates (handles border cities like Toledo, OH vs Monroe, MI)
+  // Different states are never duplicates (handles border cities)
   if (newPlace.state && existingPlace.state && newPlace.state !== existingPlace.state) {
     return false
   }
@@ -147,12 +148,12 @@ function buildAddress(tags, stateCode) {
 }
 
 /**
- * Fetch pizza places from OpenStreetMap with automatic endpoint fallback
+ * Fetch taco places from OpenStreetMap with automatic endpoint fallback
  * @param {string} stateName - Full state name for OSM query (e.g., 'Michigan', 'California')
  * @param {string} stateCode - 2-letter state code (e.g., 'MI', 'CA')
  */
-async function fetchOsmPizzaPlaces(stateName, stateCode) {
-  console.log(`Fetching pizza places from OpenStreetMap for ${stateName} (${stateCode})...`)
+async function fetchOsmTacoPlaces(stateName, stateCode) {
+  console.log(`Fetching taco places from OpenStreetMap for ${stateName} (${stateCode})...`)
 
   const query = buildOverpassQuery(stateName)
 
@@ -183,11 +184,19 @@ async function fetchOsmPizzaPlaces(stateName, stateCode) {
 
       // Parse and filter elements
       const places = []
+      let excludedCount = 0
       for (const el of data.elements) {
         const tags = el.tags || {}
         const name = tags.name
 
         if (!name) continue
+
+        // Skip excluded chains (Chipotle, Qdoba, etc. that don't serve tacos)
+        const brand = tags.brand || tags['brand:name'] || ''
+        if (isExcludedTacoChain(name, brand)) {
+          excludedCount++
+          continue
+        }
 
         const lat = el.lat ?? el.center?.lat
         const lng = el.lon ?? el.center?.lon
@@ -209,7 +218,7 @@ async function fetchOsmPizzaPlaces(stateName, stateCode) {
         })
       }
 
-      console.log(`Parsed ${places.length} valid pizza places with names`)
+      console.log(`Parsed ${places.length} valid taco places with names (excluded ${excludedCount} non-taco chains)`)
       return places
 
     } catch (error) {
@@ -234,7 +243,7 @@ async function fetchExistingPlaces() {
 
   while (true) {
     const { data, error } = await supabase
-      .from('pizza_places')
+      .from('taco_places')
       .select('id, name, lat, lng, google_place_id, state')
       .range(offset, offset + pageSize - 1)
 
@@ -308,12 +317,12 @@ function generateSql(places, stateCode) {
   }
 
   const lines = [
-    '-- OpenStreetMap Pizza Import',
+    '-- OpenStreetMap Taco Import',
     `-- Generated: ${new Date().toISOString()}`,
     `-- State: ${stateCode}`,
     `-- Total places: ${places.length}`,
     '',
-    'INSERT INTO pizza_places (name, lat, lng, address, google_place_id, state, status, style, price, rating, notes)',
+    'INSERT INTO taco_places (name, lat, lng, address, google_place_id, state, status, style, price, rating, notes)',
     'VALUES'
   ]
 
@@ -342,7 +351,7 @@ async function insertPlaces(places) {
 
   for (let i = 0; i < places.length; i += batchSize) {
     const batch = places.slice(i, i + batchSize)
-    const { error } = await supabase.from('pizza_places').insert(batch)
+    const { error } = await supabase.from('taco_places').insert(batch)
 
     if (error) {
       console.error(`Error inserting batch at index ${i}:`, error.message)
@@ -379,7 +388,7 @@ async function main() {
   const stateName = getArgValue(args, '--state') || 'Michigan'
   const stateCode = getArgValue(args, '--state-code') || 'MI'
 
-  console.log(`=== Importing pizza places from ${stateName} (${stateCode}) ===\n`)
+  console.log(`=== Importing taco places from ${stateName} (${stateCode}) ===\n`)
 
   if (dryRun) {
     console.log('=== DRY RUN MODE (no changes will be made) ===\n')
@@ -390,7 +399,7 @@ async function main() {
 
   try {
     // Fetch from OSM and database
-    const osmPlaces = await fetchOsmPizzaPlaces(stateName, stateCode)
+    const osmPlaces = await fetchOsmTacoPlaces(stateName, stateCode)
     const existingPlaces = await fetchExistingPlaces()
 
     // Deduplicate
@@ -430,7 +439,7 @@ async function main() {
     // SQL mode - write to file
     if (sqlMode && toInsert.length > 0) {
       const sql = generateSql(toInsert, stateCode)
-      const filename = `scripts/osm-pizza-import-${stateCode.toLowerCase()}.sql`
+      const filename = `scripts/osm-taco-import-${stateCode.toLowerCase()}.sql`
       writeFileSync(filename, sql)
       console.log(`\n=== SQL written to ${filename} ===`)
       console.log('Copy the contents and run in Supabase SQL Editor')

@@ -1,0 +1,241 @@
+/* Map Controls - Overlay on map */
+.map-controls {
+  position: absolute;
+  top: 10px;
+  left: 50px; /* Leave space for Leaflet zoom controls */
+  right: 10px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.map-controls > * {
+  pointer-events: auto;
+}
+
+.map-controls-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Search Bar */
+.map-search-bar {
+  display: flex;
+  align-items: center;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 24px;
+  padding: 0 16px;
+  min-width: 220px;
+  max-width: 320px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+}
+
+.map-search-icon {
+  font-size: 0.85rem;
+  margin-right: 8px;
+  opacity: 0.5;
+}
+
+.map-search-bar input {
+  flex: 1;
+  padding: 10px 0;
+  background: transparent;
+  border: none;
+  color: var(--app-text);
+  font-size: 0.9rem;
+  outline: none;
+  min-width: 0;
+}
+
+.map-search-bar input::placeholder {
+  color: var(--app-text-muted);
+}
+
+.map-search-clear {
+  background: none;
+  border: none;
+  color: var(--app-text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.map-search-clear:hover {
+  color: var(--app-text);
+}
+
+/* Near Me Group */
+.map-near-me-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-near-me-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 24px;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+}
+
+.map-near-me-btn:hover {
+  border-color: var(--app-accent);
+  background: var(--app-bg);
+}
+
+.map-near-me-btn.active {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: white;
+}
+
+.map-near-me-btn .near-me-icon {
+  font-size: 0.9rem;
+}
+
+.map-radius-select {
+  padding: 10px 12px;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 24px;
+  color: var(--app-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+}
+
+.map-radius-select:focus {
+  border-color: var(--app-accent);
+  outline: none;
+}
+
+/* Location Error */
+.map-location-error {
+  background: rgba(239, 68, 68, 0.95);
+  color: white;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  max-width: 300px;
+  margin: 0 auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Results Dropdown */
+.map-results-dropdown {
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 350px;
+  margin: 0 auto;
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+}
+
+.map-results-header {
+  padding: 10px 16px;
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--app-border);
+  font-weight: 500;
+}
+
+.map-results-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.map-result-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--app-border);
+  color: var(--app-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.map-result-item:last-child {
+  border-bottom: none;
+}
+
+.map-result-item:hover {
+  background: var(--app-bg);
+}
+
+.map-result-name {
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.map-result-distance {
+  font-size: 0.78rem;
+  color: var(--app-text-muted);
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+
+.map-results-more {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+  padding: 10px;
+  border-top: 1px solid var(--app-border);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .map-controls {
+    left: 50px;
+    right: 8px;
+    top: 8px;
+  }
+
+  .map-controls-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .map-search-bar {
+    max-width: 100%;
+  }
+
+  .map-near-me-group {
+    justify-content: center;
+  }
+
+  .map-results-dropdown {
+    max-width: 100%;
+  }
+}
