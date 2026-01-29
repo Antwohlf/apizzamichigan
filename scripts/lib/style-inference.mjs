@@ -54,7 +54,7 @@ const CHAIN_STYLE_MAP = {
   "chuck e cheese": 'Traditional',
   "cici's": 'Traditional',
   "cicis pizza": 'Traditional',
-  "sbarro": 'Traditional',
+  "sbarro": 'New York',
   "godfather's": 'Traditional',
   "godfathers pizza": 'Traditional',
   "round table": 'Traditional',
@@ -175,6 +175,7 @@ const CHAIN_PRICE_MAP = {
  * Normalize restaurant name for matching
  */
 function normalizeName(name) {
+  if (!name) return ''
   return name
     .toLowerCase()
     .replace(/['']/g, "'")

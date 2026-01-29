@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
@@ -8,6 +8,7 @@ import { usePopup } from '../context/PopupProvider'
 import { renderExpanded, renderPreview } from '../components/map/renderPopup'
 import '../styles/marker-popup.css'
 import { useSelectedPlace } from '../store/selectedPlace'
+import { StateAggregateLayer } from './StateMarker'
 import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
 import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
 import pizzaIconGold from '../icons/pizza/marker-pizza-gold.svg'
@@ -20,11 +21,8 @@ const CLUSTER_ICONS = {
   taco: { visited: tacoIconColored, unvisited: tacoIconGrey, golden: tacoIconGold },
 }
 
-const BADGE_COLORS = {
-  visited: '#d9382b',
-  unvisited: '#888888',
-  golden: '#d4af37',
-}
+const DEFAULT_CENTER = [44.3148, -85.6024]
+const DEFAULT_ZOOM = 6
 
 const createClusterIcon = (site, showCounts) => (cluster) => {
   const count = cluster.getChildCount()
@@ -37,7 +35,8 @@ const createClusterIcon = (site, showCounts) => (cluster) => {
 
   const icons = CLUSTER_ICONS[site] || CLUSTER_ICONS.pizza
   const icon = icons[clusterStatus] || icons.visited
-  const badgeColor = site === 'taco' && clusterStatus === 'visited' ? '#e67e22' : BADGE_COLORS[clusterStatus]
+  // Always use primary color for badge (red for pizza, orange for taco)
+  const badgeColor = site === 'taco' ? '#e67e22' : '#d9382b'
 
   const badgeHtml = showCounts ? `
         <span style="
@@ -77,6 +76,8 @@ function MapClickCloser({ close }) {
   const popup = usePopup()
 
   useEffect(() => {
+    if (!map || typeof map.on !== 'function') return
+
     const handler = event => {
       const target = event?.originalEvent?.target
       if (target && typeof target.closest === 'function') {
@@ -90,14 +91,20 @@ function MapClickCloser({ close }) {
     }
     map.on('click', handler)
     return () => {
-      map.off('click', handler)
+      if (map && typeof map.off === 'function') {
+        map.off('click', handler)
+      }
     }
   }, [map, close, popup])
 
   return null
 }
 
-export function PlacesLayer({ site, places, showClusterCounts = true }) {
+const FOCUSED_ZOOM = 12
+
+const NEAR_ME_ZOOM = 10 // City-level view for Near Me
+
+export function PlacesLayer({ site, places, showClusterCounts = true, stateAggregates = [], onStateClick, flyToLocation }) {
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
   const lastFocusedPlaceRef = useRef(null)
@@ -105,35 +112,67 @@ export function PlacesLayer({ site, places, showClusterCounts = true }) {
   const { openEntry, open, close, registerFocusReturn } = useMapPopup()
   const { setSelectedPlace } = useSelectedPlace()
   const map = useMap()
+  const [isMapStable, setIsMapStable] = useState(false)
+  const isMountedRef = useRef(true)
 
-  const DEFAULT_CENTER = [44.3148, -85.6024]
-  const DEFAULT_ZOOM = 6
-  const FOCUSED_ZOOM = 12
+  // Track mount state and map stability for safe cleanup
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  // Delay rendering MarkerClusterGroup until map is confirmed stable
+  useEffect(() => {
+    if (!map || typeof map.getZoom !== 'function') {
+      setIsMapStable(false)
+      return
+    }
+
+    // Use requestAnimationFrame to ensure map is fully initialized
+    const rafId = requestAnimationFrame(() => {
+      if (isMountedRef.current && map && typeof map.getZoom === 'function') {
+        setIsMapStable(true)
+      }
+    })
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      setIsMapStable(false)
+    }
+  }, [map])
+
   const flyToPlace = useCallback(
     (lat, lng, options = {}) => {
-      if (!map) return
+      if (!map || typeof map.getMaxZoom !== 'function') return
       if (typeof lat !== 'number' || typeof lng !== 'number') return
-      const maxZoom = typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : FOCUSED_ZOOM
-      const targetZoom = Math.min(FOCUSED_ZOOM, maxZoom || FOCUSED_ZOOM)
-      const currentZoom = typeof map.getZoom === 'function' ? map.getZoom() : DEFAULT_ZOOM
-      const zoomDelta = Math.abs((currentZoom ?? DEFAULT_ZOOM) - targetZoom)
-      const mapBounds = typeof map.getBounds === 'function' ? map.getBounds() : null
-      const latLng = [lat, lng]
-      const isOutsideView = mapBounds ? !mapBounds.contains(latLng) : false
 
-      const snapFirst = options.snapFirst ?? (zoomDelta > 3 || isOutsideView)
-      if (snapFirst) {
-        map.setView([lat, lng], targetZoom, { animate: false })
+      try {
+        const maxZoom = map.getMaxZoom() ?? FOCUSED_ZOOM
+        const targetZoom = Math.min(FOCUSED_ZOOM, maxZoom || FOCUSED_ZOOM)
+        const currentZoom = typeof map.getZoom === 'function' ? map.getZoom() : DEFAULT_ZOOM
+        const zoomDelta = Math.abs((currentZoom ?? DEFAULT_ZOOM) - targetZoom)
+        const mapBounds = typeof map.getBounds === 'function' ? map.getBounds() : null
+        const latLng = [lat, lng]
+        const isOutsideView = mapBounds ? !mapBounds.contains(latLng) : false
+
+        const snapFirst = options.snapFirst ?? (zoomDelta > 3 || isOutsideView)
+        if (snapFirst) {
+          map.setView([lat, lng], targetZoom, { animate: false })
+        }
+        if (options.animate === false) {
+          return
+        }
+        const animateOptions = {
+          duration: options.duration ?? 0.8,
+          easeLinearity: 0.25,
+          animate: true,
+        }
+        map.flyTo([lat, lng], targetZoom, animateOptions)
+      } catch (err) {
+        console.warn('[PlacesLayer] flyToPlace error:', err)
       }
-      if (options.animate === false) {
-        return
-      }
-      const animateOptions = {
-        duration: options.duration ?? 0.8,
-        easeLinearity: 0.25,
-        animate: true,
-      }
-      map.flyTo([lat, lng], targetZoom, animateOptions)
     },
     [map]
   )
@@ -149,6 +188,22 @@ export function PlacesLayer({ site, places, showClusterCounts = true }) {
       }
     }
   }, [map])
+
+  // Fly to user location when Near Me is activated
+  useEffect(() => {
+    if (!map || !flyToLocation) return
+    if (typeof flyToLocation.lat !== 'number' || typeof flyToLocation.lng !== 'number') return
+
+    try {
+      map.flyTo([flyToLocation.lat, flyToLocation.lng], NEAR_ME_ZOOM, {
+        duration: 1.0,
+        easeLinearity: 0.25,
+        animate: true,
+      })
+    } catch (err) {
+      console.warn('[PlacesLayer] flyToLocation error:', err)
+    }
+  }, [map, flyToLocation])
 
   useEffect(() => {
     const marker = openEntry?.id ? markerRefs.current.get(`${openEntry.type}:${openEntry.id}`) : null
@@ -348,19 +403,30 @@ export function PlacesLayer({ site, places, showClusterCounts = true }) {
     }
   }, [openEntry, places, close])
 
+  // Wait for map to be stable before rendering MarkerClusterGroup
+  if (!isMapStable || !map) {
+    return null
+  }
+
   return (
     <>
       <MapClickCloser close={close} />
       <MarkerClusterGroup
         key={`cluster-${site}-${showClusterCounts}`}
         chunkedLoading
-        maxClusterRadius={50}
+        maxClusterRadius={80}
         spiderfyOnMaxZoom
         showCoverageOnHover={false}
         iconCreateFunction={createClusterIcon(site, showClusterCounts)}
       >
         {markers}
       </MarkerClusterGroup>
+      <StateAggregateLayer
+        aggregates={stateAggregates}
+        site={site}
+        onStateClick={onStateClick}
+        showCounts={showClusterCounts}
+      />
     </>
   )
 }

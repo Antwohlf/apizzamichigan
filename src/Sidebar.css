@@ -351,3 +351,168 @@
 .admin-form button:hover {
   background: var(--app-accent-muted);
 }
+
+/* Search Bar */
+.search-bar {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+.search-bar input {
+  width: 100%;
+  padding: 0.75rem 2.5rem 0.75rem 1rem;
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+}
+
+.search-bar input::placeholder {
+  color: var(--app-text-muted);
+}
+
+.search-bar input:focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-muted);
+  outline: none;
+}
+
+.search-clear {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--app-text-muted);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.search-clear:hover {
+  color: var(--app-text);
+}
+
+/* Near Me Section */
+.near-me-section {
+  margin-bottom: 1rem;
+}
+
+.near-me-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.near-me-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 20px;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.near-me-btn:hover {
+  border-color: var(--app-accent);
+}
+
+.near-me-btn.active {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: white;
+}
+
+.near-me-icon {
+  font-size: 1rem;
+}
+
+.radius-select {
+  padding: 0.4rem 0.75rem;
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  color: var(--app-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.radius-select:focus {
+  border-color: var(--app-accent);
+  outline: none;
+}
+
+.location-error {
+  width: 100%;
+  color: #ef4444;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+}
+
+/* Results List */
+.results-section {
+  margin-top: 0.5rem;
+}
+
+.results-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.result-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.75rem;
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  width: 100%;
+}
+
+.result-item:hover {
+  background: var(--app-card);
+  border-color: var(--app-accent);
+}
+
+.result-name {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.result-distance {
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+  margin-left: 0.5rem;
+  flex-shrink: 0;
+}
+
+.results-more {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--app-text-muted);
+  padding: 0.5rem;
+}

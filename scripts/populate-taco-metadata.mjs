@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Bulk populate style and price data for pizza places
+ * Bulk populate type and price data for taco places
  *
  * Usage:
- *   node scripts/populate-pizza-metadata.mjs --dry-run          # Preview changes
- *   node scripts/populate-pizza-metadata.mjs --phase=1          # Only name inference
- *   node scripts/populate-pizza-metadata.mjs --phase=2          # Include scraping
- *   node scripts/populate-pizza-metadata.mjs --export           # Export for review
- *   node scripts/populate-pizza-metadata.mjs --commit           # Write to database
- *   node scripts/populate-pizza-metadata.mjs --stats            # Show current stats
+ *   node scripts/populate-taco-metadata.mjs --dry-run          # Preview changes
+ *   node scripts/populate-taco-metadata.mjs --phase=1          # Only name inference
+ *   node scripts/populate-taco-metadata.mjs --phase=2          # Include scraping
+ *   node scripts/populate-taco-metadata.mjs --export           # Export for review
+ *   node scripts/populate-taco-metadata.mjs --commit           # Write to database
+ *   node scripts/populate-taco-metadata.mjs --stats            # Show current stats
+ *   node scripts/populate-taco-metadata.mjs --chains-only      # Only commit chain matches
  */
 
 import { writeFileSync } from 'fs'
@@ -17,7 +18,13 @@ import 'dotenv/config'
 
 import { RateLimiter } from './lib/rate-limiter.mjs'
 import { ProgressTracker } from './lib/progress-tracker.mjs'
-import { inferStyleFromName, inferPriceFromChain, inferStyleFromCategories, isKnownChain } from './lib/style-inference.mjs'
+import {
+  inferTypeFromName,
+  inferPriceFromChain,
+  inferTypeFromCategories,
+  isKnownChain,
+  formatTypesForStorage
+} from './lib/type-inference-tacos.mjs'
 import { scrapeYelpPrice, extractCity } from './lib/price-scraper.mjs'
 
 // Supabase config - use service role key to bypass RLS for updates
@@ -56,6 +63,7 @@ function parseArgs(argv) {
 
 /**
  * Fetch all places that need metadata (style or price is null)
+ * Note: taco_places uses 'style' column (same as OSM import), not 'type'
  */
 async function fetchPlacesNeedingMetadata() {
   const allPlaces = []
@@ -70,7 +78,7 @@ async function fetchPlacesNeedingMetadata() {
     const to = from + pageSize - 1
 
     const { data, error } = await supabase
-      .from('pizza_places')
+      .from('taco_places')
       .select('id, name, address, lat, lng, style, price')
       .or('style.is.null,price.is.null')
       .order('id', { ascending: true })
@@ -102,31 +110,32 @@ async function runPhase1(places, tracker, args) {
     const existing = tracker.getResult(place.id)
     if (existing?.phase1Complete) continue
 
-    const styleResult = inferStyleFromName(place.name, place.address)
+    const typeResult = inferTypeFromName(place.name, place.address)
     const priceResult = inferPriceFromChain(place.name)
 
     const result = {
       name: place.name,
-      style: styleResult.style,
-      styleConfidence: styleResult.confidence,
-      styleSource: styleResult.source,
-      styleMatch: styleResult.match,
-      price: priceResult.price,
-      priceConfidence: priceResult.confidence,
-      priceSource: priceResult.source,
-      priceMatch: priceResult.match,
+      types: typeResult.types,
+      style: formatTypesForStorage(typeResult.types), // Store as comma-separated string in 'style' column
+      styleConfidence: typeResult.confidence,
+      styleSource: typeResult.source,
+      styleMatch: typeResult.match,
+      price: priceResult.price || typeResult.price,
+      priceConfidence: priceResult.confidence || (typeResult.price ? 'high' : null),
+      priceSource: priceResult.source || (typeResult.price ? 'chain_map' : null),
+      priceMatch: priceResult.match || typeResult.match,
       isKnownChain: isKnownChain(place.name),
       phase1Complete: true,
     }
 
     tracker.markProcessed(place.id, result)
 
-    if (styleResult.style || priceResult.price) {
+    if (typeResult.types || priceResult.price || typeResult.price) {
       inferred++
       if (args.dryRun) {
         const parts = []
-        if (styleResult.style) parts.push(`style: ${styleResult.style}`)
-        if (priceResult.price) parts.push(`price: ${priceResult.price}`)
+        if (typeResult.types) parts.push(`style: ${result.style}`)
+        if (result.price) parts.push(`price: ${result.price}`)
         console.log(`  "${place.name}" => ${parts.join(', ')}`)
       }
     }
@@ -190,13 +199,14 @@ async function runPhase2(places, tracker, args) {
       found++
     }
 
-    // Try to infer style from categories
+    // Try to infer type from categories
     if (!existing.style && scrapedData.categories?.length > 0) {
-      const categoryStyle = inferStyleFromCategories(scrapedData.categories)
-      if (categoryStyle.style) {
-        result.style = categoryStyle.style
-        result.styleSource = categoryStyle.source
-        result.styleConfidence = categoryStyle.confidence
+      const categoryType = inferTypeFromCategories(scrapedData.categories)
+      if (categoryType.types) {
+        result.types = categoryType.types
+        result.style = formatTypesForStorage(categoryType.types)
+        result.styleSource = categoryType.source
+        result.styleConfidence = categoryType.confidence
       }
     }
 
@@ -250,7 +260,7 @@ async function exportForReview(tracker) {
     keywordMatches,
   }
 
-  const outputPath = 'scripts/pizza-metadata-review.json'
+  const outputPath = 'scripts/taco-metadata-review.json'
   writeFileSync(outputPath, JSON.stringify(exported, null, 2))
 
   console.log(`Exported to ${outputPath}`)
@@ -320,7 +330,7 @@ async function commitToDatabase(tracker, args) {
     const { id, ...fields } = update
 
     const { error } = await supabase
-      .from('pizza_places')
+      .from('taco_places')
       .update(fields)
       .eq('id', id)
 
@@ -353,14 +363,17 @@ function showStats(tracker, places) {
   console.log(`Price inferred: ${summary.priceInferred}`)
   console.log(`Needs review: ${summary.needsReview}`)
 
-  // Style distribution
+  // Style (protein type) distribution
   const styleCounts = {}
   Object.values(results).forEach(r => {
-    if (r.style) {
-      styleCounts[r.style] = (styleCounts[r.style] || 0) + 1
+    if (r.types && Array.isArray(r.types)) {
+      // Count each individual protein type
+      r.types.forEach(t => {
+        styleCounts[t] = (styleCounts[t] || 0) + 1
+      })
     }
   })
-  console.log('\nStyle distribution:')
+  console.log('\nProtein/Style distribution:')
   Object.entries(styleCounts)
     .sort((a, b) => b[1] - a[1])
     .forEach(([style, count]) => {
@@ -388,13 +401,13 @@ function showStats(tracker, places) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
 
-  console.log('Pizza Metadata Population Script')
+  console.log('Taco Metadata Population Script')
   console.log('================================')
   if (args.dryRun) console.log('MODE: Dry Run (no changes will be made)')
   console.log(`Phase: ${args.phase}`)
 
-  // Load progress tracker
-  const tracker = new ProgressTracker()
+  // Load progress tracker with taco-specific progress file
+  const tracker = new ProgressTracker('.taco-metadata-progress.json')
   await tracker.load()
 
   // Fetch places needing metadata
