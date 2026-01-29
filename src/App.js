@@ -409,7 +409,7 @@ function SiteContainer({ themeKey }) {
       isMounted = false
       closeLoading()
     }
-  }, [themeKey, theme.copy.loading, openLoading, closeLoading])
+  }, [themeKey, theme.copy.loading, openLoading, closeLoading, isPizza])
 
   const filteredPlaces = useMemo(() => {
     const statusSet = new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
