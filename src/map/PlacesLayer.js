@@ -26,6 +26,9 @@ const BADGE_COLORS = {
   golden: '#d4af37',
 }
 
+const DEFAULT_CENTER = [44.3148, -85.6024]
+const DEFAULT_ZOOM = 6
+
 const createClusterIcon = (site, showCounts) => (cluster) => {
   const count = cluster.getChildCount()
   const childMarkers = cluster.getAllChildMarkers()
@@ -106,8 +109,6 @@ export function PlacesLayer({ site, places, showClusterCounts = true }) {
   const { setSelectedPlace } = useSelectedPlace()
   const map = useMap()
 
-  const DEFAULT_CENTER = [44.3148, -85.6024]
-  const DEFAULT_ZOOM = 6
   const FOCUSED_ZOOM = 12
   const flyToPlace = useCallback(
     (lat, lng, options = {}) => {

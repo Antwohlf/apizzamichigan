@@ -1,13 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import App from './App'
+import { __mockFrom, __setMockTable, __resetMockData } from './supabaseClient'
 
-jest.mock('./supabaseClient', () => require('../__mocks__/supabaseClient.js'))
+jest.mock('./supabaseClient')
 const mockFetchTacoPlaces = jest.fn(() => Promise.resolve({ data: [], error: null }))
 jest.mock('./lib/supabase-tacos', () => ({
   fetchTacoPlaces: (...args) => mockFetchTacoPlaces(...args),
 }))
-
-import App from './App'
-const { __mockFrom, __setMockTable, __resetMockData } = require('./supabaseClient')
 
 const mockDataByTable = {
   pizza_places: [
