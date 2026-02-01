@@ -363,6 +363,161 @@
   text-decoration: underline;
 }
 
+.stats-date {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+/* Rating Value */
+.rating-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.rating-star {
+  color: #facc15;
+}
+
+/* Data Quality Grid */
+.quality-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+/* Data Quality Card */
+.quality-card {
+  background: #27272a;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* Quality cards inside comparison cards */
+.comparison-card .quality-card {
+  background: #1f1f23;
+  margin-bottom: 0.75rem;
+}
+
+.comparison-card .quality-card:last-child {
+  margin-bottom: 0;
+}
+
+.quality-label {
+  font-size: 0.85rem;
+  color: #d1d5db;
+  margin-bottom: 0.5rem;
+}
+
+.quality-bar-track {
+  height: 10px;
+  background: #27272a;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.quality-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+  width: 0;
+  transition: width 0.9s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.quality-bar-fill.animated {
+  width: var(--bar-width, 0);
+}
+
+.quality-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e5e7eb;
+  margin-top: 0.5rem;
+}
+
+.quality-count {
+  font-weight: 400;
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+/* Best Rated Styles */
+.best-rated-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.best-rated-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #333;
+  animation: fadeSlideIn 0.4s ease forwards;
+  animation-delay: var(--item-delay, 0ms);
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
+.best-rated-item:last-child {
+  border-bottom: none;
+}
+
+@keyframes fadeSlideIn {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.best-rated-rank {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #6b7280;
+  width: 24px;
+}
+
+.best-rated-style {
+  flex: 1;
+  font-size: 0.9rem;
+  color: #e5e7eb;
+  font-weight: 500;
+}
+
+.best-rated-rating {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #facc15;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  transition-delay: 0.3s;
+}
+
+.best-rated-rating.animated {
+  opacity: 1;
+}
+
+.best-rated-count {
+  font-size: 0.75rem;
+  color: #6b7280;
+  width: 70px;
+  text-align: right;
+}
+
+/* No Data */
+.no-data {
+  color: #6b7280;
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 1rem 0;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .dashboard-content {
@@ -385,5 +540,9 @@
 
   .stat-value {
     font-size: 1.5rem;
+  }
+
+  .quality-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }

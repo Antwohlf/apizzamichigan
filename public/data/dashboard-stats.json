@@ -1,0 +1,497 @@
+{
+  "generatedAt": "2026-02-01T06:27:22.440Z",
+  "source": "supabase",
+  "pizza": {
+    "total": 135833,
+    "distribution": [
+      [
+        "Traditional",
+        15832
+      ],
+      [
+        "New York",
+        540
+      ],
+      [
+        "Chicago",
+        502
+      ],
+      [
+        "Neapolitan",
+        474
+      ],
+      [
+        "Detroit",
+        313
+      ],
+      [
+        "Tavern",
+        77
+      ],
+      [
+        "Roman",
+        36
+      ],
+      [
+        "Sicilian",
+        27
+      ],
+      [
+        "California",
+        1
+      ]
+    ],
+    "byState": [
+      [
+        "ENG",
+        6404
+      ],
+      [
+        "CA",
+        3806
+      ],
+      [
+        "LOM",
+        3304
+      ],
+      [
+        "NW",
+        3183
+      ],
+      [
+        "ON",
+        3056
+      ],
+      [
+        "NY",
+        2500
+      ],
+      [
+        "TX",
+        2343
+      ],
+      [
+        "BY",
+        2242
+      ],
+      [
+        "IDF",
+        2100
+      ],
+      [
+        "ARA",
+        2088
+      ]
+    ],
+    "byCity": [
+      [
+        "ENG",
+        4831
+      ],
+      [
+        "LOM",
+        1794
+      ],
+      [
+        "VEN",
+        860
+      ],
+      [
+        "LAZ",
+        839
+      ],
+      [
+        "PIE",
+        701
+      ],
+      [
+        "IDF",
+        698
+      ],
+      [
+        "EMR",
+        592
+      ],
+      [
+        "TUS",
+        549
+      ],
+      [
+        "New York",
+        525
+      ],
+      [
+        "ARA",
+        525
+      ]
+    ],
+    "byPrice": [
+      [
+        "$",
+        7674
+      ],
+      [
+        "$$",
+        7765
+      ],
+      [
+        "$$$",
+        151
+      ]
+    ],
+    "byCountry": {
+      "US": 15180,
+      "NL": 4332,
+      "CA": 6967,
+      "VE": 8728,
+      "ES": 7983,
+      "EC": 5253,
+      "PA": 534,
+      "SR": 1465,
+      "HN": 866,
+      "CL": 2209,
+      "NI": 266,
+      "CH": 1606,
+      "MX": 2995,
+      "BO": 1058,
+      "CR": 598,
+      "GY": 159,
+      "IT": 16908,
+      "DE": 14218,
+      "FR": 13109,
+      "GB": 7257,
+      "BE": 891,
+      "AT": 2134,
+      "PT": 1435,
+      "AR": 2061,
+      "SE": 2720,
+      "UY": 367,
+      "NO": 600,
+      "FI": 1481,
+      "IE": 502,
+      "PL": 3712,
+      "CZ": 1087,
+      "DK": 1834,
+      "GR": 826,
+      "HU": 875,
+      "RO": 1006,
+      "HR": 757,
+      "CO": 544,
+      "PE": 508,
+      "BR": 356,
+      "PY": 307,
+      "GT": 52,
+      "SV": 87
+    },
+    "visited": 110,
+    "unvisited": 135717,
+    "golden": 6,
+    "avgRating": 6.2844827586206895,
+    "ratedCount": 116,
+    "topRatedCount": 9,
+    "ratingDistribution": [
+      2,
+      11,
+      43,
+      50,
+      9
+    ],
+    "bestRatedStyles": [
+      [
+        "Chicago",
+        7,
+        6
+      ],
+      [
+        "New York",
+        6.678571428571429,
+        28
+      ],
+      [
+        "Detroit",
+        6.625,
+        16
+      ],
+      [
+        "Neapolitan",
+        6.583333333333333,
+        12
+      ],
+      [
+        "Roman",
+        6.4,
+        5
+      ]
+    ],
+    "bestRatedRegions": [
+      [
+        "NY",
+        7.636363636363637,
+        11
+      ],
+      [
+        "MI",
+        6.235294117647059,
+        68
+      ]
+    ],
+    "withAddress": 90785,
+    "addressPct": 66.83574683618856,
+    "withRating": 116,
+    "withPrice": 15590,
+    "withStyle": 17785,
+    "visitedOrGolden": 116,
+    "withAllFields": 116
+  },
+  "taco": {
+    "total": 46209,
+    "distribution": [
+      [
+        "Chicken",
+        8025
+      ],
+      [
+        "Ground Beef",
+        7765
+      ],
+      [
+        "Carne Asada",
+        903
+      ],
+      [
+        "Fish",
+        624
+      ],
+      [
+        "Pollo",
+        519
+      ],
+      [
+        "Shrimp",
+        236
+      ],
+      [
+        "Carnitas",
+        210
+      ],
+      [
+        "Al Pastor",
+        119
+      ],
+      [
+        "Birria",
+        78
+      ],
+      [
+        "Barbacoa",
+        35
+      ],
+      [
+        "Lengua",
+        6
+      ],
+      [
+        "Cabeza",
+        2
+      ],
+      [
+        "Adobada",
+        1
+      ],
+      [
+        "Quesabirria",
+        1
+      ]
+    ],
+    "byState": [
+      [
+        "CA",
+        5543
+      ],
+      [
+        "TX",
+        3794
+      ],
+      [
+        "NY",
+        1402
+      ],
+      [
+        "IL",
+        1254
+      ],
+      [
+        "WA",
+        1246
+      ],
+      [
+        "SLP",
+        1219
+      ],
+      [
+        "FL",
+        1216
+      ],
+      [
+        "AZ",
+        1205
+      ],
+      [
+        "VA",
+        1070
+      ],
+      [
+        "CO",
+        1056
+      ]
+    ],
+    "byCity": [
+      [
+        "SLP",
+        945
+      ],
+      [
+        "ENG",
+        401
+      ],
+      [
+        "Chicago",
+        384
+      ],
+      [
+        "Los Angeles",
+        351
+      ],
+      [
+        "New York",
+        340
+      ],
+      [
+        "Houston",
+        315
+      ],
+      [
+        "Phoenix",
+        274
+      ],
+      [
+        "San Antonio",
+        272
+      ],
+      [
+        "San Diego",
+        248
+      ],
+      [
+        "Portland",
+        215
+      ]
+    ],
+    "byPrice": [
+      [
+        "$",
+        7940
+      ],
+      [
+        "$$",
+        493
+      ],
+      [
+        "$$$",
+        39
+      ],
+      [
+        "$$$$",
+        2
+      ]
+    ],
+    "byCountry": {
+      "MX": 5290,
+      "US": 11792,
+      "VE": 8353,
+      "EC": 3459,
+      "SR": 1252,
+      "CR": 476,
+      "ES": 3627,
+      "CL": 1467,
+      "GY": 71,
+      "NL": 2085,
+      "HN": 634,
+      "PA": 360,
+      "NI": 145,
+      "CH": 355,
+      "BO": 615,
+      "CA": 1553,
+      "SV": 64,
+      "UY": 91,
+      "GT": 19,
+      "IT": 215,
+      "DE": 781,
+      "FR": 1346,
+      "GB": 642,
+      "AT": 125,
+      "BE": 92,
+      "PL": 135,
+      "PT": 164,
+      "CZ": 126,
+      "SE": 116,
+      "NO": 48,
+      "DK": 79,
+      "FI": 104,
+      "IE": 48,
+      "GR": 47,
+      "HU": 47,
+      "RO": 67,
+      "HR": 24,
+      "AR": 85,
+      "BR": 13,
+      "PY": 21,
+      "CO": 107,
+      "PE": 68
+    },
+    "visited": 30,
+    "unvisited": 46174,
+    "golden": 5,
+    "avgRating": 6.428571428571429,
+    "ratedCount": 35,
+    "topRatedCount": 5,
+    "ratingDistribution": [
+      2,
+      3,
+      12,
+      13,
+      5
+    ],
+    "bestRatedStyles": [
+      [
+        "Al Pastor",
+        7,
+        22
+      ],
+      [
+        "Carne Asada",
+        6.9,
+        10
+      ],
+      [
+        "Carnitas",
+        5.4,
+        5
+      ]
+    ],
+    "bestRatedRegions": [
+      [
+        "MI",
+        6.521739130434782,
+        23
+      ]
+    ],
+    "withAddress": 39811,
+    "addressPct": 86.15421238286913,
+    "withRating": 35,
+    "withPrice": 8474,
+    "withStyle": 9280,
+    "visitedOrGolden": 35,
+    "withAllFields": 28
+  }
+}
