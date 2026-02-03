@@ -11,3 +11,8 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Spinner animation for loading state markers */
+@keyframes spin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}

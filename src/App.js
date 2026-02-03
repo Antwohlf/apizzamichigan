@@ -17,10 +17,8 @@ import DataDashboard from './pages/DataDashboard'
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
 import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
 import { supabase } from './supabaseClient'
-import pizzaPlacesFallback from './data'
 import { trackSiteSwitch } from './analytics'
-import { tacoPlacesFallback } from './data/tacoPlaces'
-import { STATE_CENTROIDS, HOME_STATE } from './data/stateCentroids'
+import { STATE_CENTROIDS } from './data/stateCentroids'
 import { getDistanceMiles } from './utils/geo'
 import './App.css'
 import { GlobalLoadingProvider, useGlobalLoading } from './hooks/useGlobalLoading'
@@ -220,7 +218,6 @@ const computeMarkerIconUrl = (place = {}) => {
 function SiteContainer({ themeKey }) {
   const [filters, setFilters] = useState({ styles: [], prices: [], statuses: [] })
   const [view, setView] = useState('map')
-  const [places, setPlaces] = useState([])
   const [mapLoading, setMapLoading] = useState(true)
   const [mapError, setMapError] = useState(null)
   const [showClusterCounts, setShowClusterCounts] = useState(true)
@@ -233,9 +230,9 @@ function SiteContainer({ themeKey }) {
   const [locationError, setLocationError] = useState(null)
   const [flyToLocation, setFlyToLocation] = useState(null)
 
-  // State-based loading state
-  const [stateAggregates, setStateAggregates] = useState([])
-  const [loadedStates, setLoadedStates] = useState({ [HOME_STATE]: [] })
+  // Three-state region model: UNLOADED -> LOADING -> LOADED
+  // Shape: { [stateCode]: { status: 'unloaded'|'loading'|'loaded', places: [], originalCount } }
+  const [regionStates, setRegionStates] = useState({})
   const loadingStatesRef = React.useRef(new Set())
 
   const { theme } = useTheme()
@@ -374,95 +371,38 @@ function SiteContainer({ themeKey }) {
     })
   }, [themeKey])
 
-  // Initial load: Michigan places + state counts for aggregates
+  // Initial load: Only region counts (uniform loading for all regions worldwide)
   useEffect(() => {
     let isMounted = true
-    const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
 
     async function initialLoad() {
       setMapLoading(true)
       openLoading(theme.copy.loading || 'Loading map…')
-      const fallbackPlaces = themeKey === ThemeKeys.TACO ? tacoPlacesFallback : pizzaPlacesFallback
       const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
 
       try {
-        // Fetch Michigan places and state counts in parallel
-        const [michiganData, stateCounts] = await Promise.all([
-          fetchPlacesForState(table, HOME_STATE),
-          fetchStateCounts(table),
-        ])
+        // Fetch only region counts - no places loaded initially
+        const stateCounts = await fetchStateCounts(table)
 
         if (!isMounted) return
 
-        // Fetch photos for Michigan places
-        let photoMap = {}
-        if (michiganData.length) {
-          const placeIds = michiganData.map(p => p.id).filter(Boolean)
-          if (placeIds.length) {
-            photoMap = await fetchPhotoMap(placeIds)
-          }
-        }
-
-        if (!isMounted) return
-
-        // Normalize Michigan places
-        const normalized = normalizePlaceData(michiganData, photoMap, defaultPlaceType)
-
-        // Build state aggregates for non-Michigan states
-        const aggregates = []
+        // Build region states with three-state model
+        const newRegionStates = {}
         Object.entries(stateCounts).forEach(([stateCode, count]) => {
-          if (stateCode === HOME_STATE || stateCode === 'Unknown' || !STATE_CENTROIDS[stateCode]) return
-          const centroid = STATE_CENTROIDS[stateCode]
-          aggregates.push({
-            id: `state-${stateCode}`,
-            stateCode,
-            stateName: centroid.name,
-            count,
-            lat: centroid.lat,
-            lng: centroid.lng,
-            isAggregate: true,
-          })
+          if (stateCode === 'Unknown' || !STATE_CENTROIDS[stateCode]) return
+          newRegionStates[stateCode] = {
+            status: 'unloaded',
+            originalCount: count,
+            places: [],
+          }
         })
 
-        setPlaces(normalized)
-        setLoadedStates({ [HOME_STATE]: normalized })
-        setStateAggregates(aggregates)
+        // Start with no places - they load on demand when zooming in
+        setRegionStates(newRegionStates)
         setMapError(null)
       } catch (error) {
         if (!isMounted) return
-
-        // Fallback to local data
-        const normalizedFallback = (fallbackPlaces || []).map((place, index) => {
-          const canonicalId =
-            place.id ??
-            place.ID ??
-            place.place_id ??
-            place.slug ??
-            `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-fallback-${index}`
-          const photos = convertLegacyPhotos(place?.photos)
-          const primaryPhoto = photos.length ? (typeof photos[0] === 'string' ? photos[0] : photos[0]?.publicUrl || photos[0]?.path) : null
-          const normalizedStatus = normalizeStatus(place?.status)
-          const favorited = computeFavorited(place, normalizedStatus)
-          const placeType = computePlaceType(place, defaultPlaceType)
-          const markerIconUrl = computeMarkerIconUrl(place)
-          return {
-            ...place,
-            id: canonicalId,
-            type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
-            status: normalizedStatus,
-            favorited,
-            lat: typeof place.lat === 'number' ? place.lat : Number(place.lat),
-            lng: typeof place.lng === 'number' ? place.lng : Number(place.lng),
-            address: place.address || place.Address || '',
-            photoUrl: primaryPhoto || null,
-            photos,
-            place_type: placeType,
-            placeType,
-            marker_icon_url: markerIconUrl,
-            markerIconUrl,
-          }
-        })
-        setPlaces(normalizedFallback)
+        console.error('[App] Failed to load region counts:', error)
         setMapError(error)
       }
 
@@ -477,23 +417,27 @@ function SiteContainer({ themeKey }) {
       isMounted = false
       closeLoading()
     }
-  }, [themeKey, theme.copy.loading, openLoading, closeLoading, isPizza, normalizePlaceData])
+  }, [themeKey, theme.copy.loading, openLoading, closeLoading])
 
-  // Load additional state when clicked
+  // Load places for a region when clicked or zoomed into
   const handleStateClick = useCallback(async (stateCode) => {
-    if (!stateCode || stateCode === HOME_STATE || loadingStatesRef.current.has(stateCode)) {
+    if (!stateCode || loadingStatesRef.current.has(stateCode)) {
       return
     }
 
-    // Already loaded - just add to active
-    if (loadedStates[stateCode]) {
-      setPlaces(prev => [...prev, ...loadedStates[stateCode]])
-      // Remove from aggregates
-      setStateAggregates(prev => prev.filter(a => a.stateCode !== stateCode))
+    const region = regionStates[stateCode]
+    // Only load if unloaded (not loading or already loaded)
+    if (!region || region.status !== 'unloaded') {
       return
     }
 
+    // Mark as loading (aggregate stays visible with spinner)
+    setRegionStates(prev => ({
+      ...prev,
+      [stateCode]: { ...prev[stateCode], status: 'loading' }
+    }))
     loadingStatesRef.current.add(stateCode)
+
     const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
     const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
 
@@ -511,17 +455,22 @@ function SiteContainer({ themeKey }) {
 
       const normalized = normalizePlaceData(stateData, photoMap, defaultPlaceType)
 
-      // Update state
-      setLoadedStates(prev => ({ ...prev, [stateCode]: normalized }))
-      setPlaces(prev => [...prev, ...normalized])
-      // Remove from aggregates
-      setStateAggregates(prev => prev.filter(a => a.stateCode !== stateCode))
+      // Mark as loaded (aggregate hides, markers show)
+      setRegionStates(prev => ({
+        ...prev,
+        [stateCode]: { ...prev[stateCode], status: 'loaded', places: normalized }
+      }))
     } catch (err) {
-      console.error(`[App] Failed to load state ${stateCode}:`, err)
+      // Revert to unloaded on error (aggregate stays visible)
+      setRegionStates(prev => ({
+        ...prev,
+        [stateCode]: { ...prev[stateCode], status: 'unloaded' }
+      }))
+      console.error(`[App] Failed to load region ${stateCode}:`, err)
     } finally {
       loadingStatesRef.current.delete(stateCode)
     }
-  }, [loadedStates, isPizza, themeKey, normalizePlaceData])
+  }, [regionStates, isPizza, themeKey, normalizePlaceData])
 
   // Handle Near Me toggle
   const handleNearMeToggle = useCallback(() => {
@@ -560,11 +509,40 @@ function SiteContainer({ themeKey }) {
     )
   }, [nearMeActive, userLocation])
 
+  // Derive all loaded places from regionStates
+  const allLoadedPlaces = useMemo(() => {
+    return Object.values(regionStates)
+      .filter(r => r.status === 'loaded')
+      .flatMap(r => r.places)
+  }, [regionStates])
+
+  // Derive display aggregates (unloaded + loading regions only)
+  const displayAggregates = useMemo(() => {
+    return Object.entries(regionStates)
+      .filter(([_, r]) => r.status !== 'loaded')  // Hide loaded regions
+      .map(([stateCode, region]) => {
+        const centroid = STATE_CENTROIDS[stateCode]
+        if (!centroid) return null
+        return {
+          id: `state-${stateCode}`,
+          stateCode,
+          stateName: centroid.name,
+          country: centroid.country || 'US',
+          count: region.originalCount,  // Always show original count
+          lat: centroid.lat,
+          lng: centroid.lng,
+          isLoading: region.status === 'loading',
+          isDimmed: false,  // Will be set based on filters below
+        }
+      })
+      .filter(Boolean)
+  }, [regionStates])
+
   const filteredPlaces = useMemo(() => {
     const statusSet = new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
     const searchLower = searchQuery.toLowerCase().trim()
 
-    let results = places.filter(place => {
+    let results = allLoadedPlaces.filter(place => {
       // Search filter
       if (searchLower && !place.name?.toLowerCase().includes(searchLower)) {
         return false
@@ -592,7 +570,7 @@ function SiteContainer({ themeKey }) {
     }
 
     return results
-  }, [places, filters, searchQuery, nearMeActive, userLocation, nearMeRadius])
+  }, [allLoadedPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius])
 
   // Check if any filter is active
   const hasActiveFilter = useMemo(() => {
@@ -605,31 +583,21 @@ function SiteContainer({ themeKey }) {
     )
   }, [filters, searchQuery, nearMeActive])
 
-  // Recalculate state counts based on filtered places
-  const filteredStateAggregates = useMemo(() => {
-    if (!stateAggregates.length) return stateAggregates
+  // Add dimmed state to aggregates when filters are active
+  // Key change: DON'T remove unloaded regions when filters are active - just dim them
+  const filteredDisplayAggregates = useMemo(() => {
+    if (!displayAggregates.length) return displayAggregates
 
-    // If no filters active, show original counts
-    if (!hasActiveFilter) return stateAggregates
+    // If no filters active, show all aggregates normally
+    if (!hasActiveFilter) return displayAggregates
 
-    // Count filtered places by state (excluding home state)
-    const filteredCounts = {}
-    filteredPlaces.forEach(place => {
-      const state = place.state || 'Unknown'
-      if (state !== HOME_STATE && state !== 'Unknown') {
-        filteredCounts[state] = (filteredCounts[state] || 0) + 1
-      }
-    })
-
-    // Update counts for states that have loaded places
-    // Hide states with 0 filtered results
-    return stateAggregates
-      .map(agg => ({
-        ...agg,
-        count: filteredCounts[agg.stateCode] ?? 0,
-      }))
-      .filter(agg => agg.count > 0)
-  }, [stateAggregates, filteredPlaces, hasActiveFilter])
+    // When filters are active, dim unloaded regions (we can't filter them yet)
+    // Loaded regions are not in displayAggregates, so no need to handle them
+    return displayAggregates.map(agg => ({
+      ...agg,
+      isDimmed: true,  // Dim all aggregates when filters are active
+    }))
+  }, [displayAggregates, hasActiveFilter])
 
   const themeStyles = useMemo(
     () => ({
@@ -753,9 +721,10 @@ function SiteContainer({ themeKey }) {
                       theme={theme}
                       site={isPizza ? 'pizza' : 'taco'}
                       showClusterCounts={showClusterCounts}
-                      stateAggregates={filteredStateAggregates}
+                      stateAggregates={filteredDisplayAggregates}
                       onStateClick={handleStateClick}
                       flyToLocation={flyToLocation}
+                      resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}`}
                     />
                   </Suspense>
                 </div>

@@ -11,6 +11,7 @@
  *   node scripts/import-osm-tacos.mjs --sql                        # Output SQL to file
  *   node scripts/import-osm-tacos.mjs --state "California" --state-code "CA"  # Import specific state
  *   node scripts/import-osm-tacos.mjs --state "New York" --state-code "NY" --dry-run
+ *   node scripts/import-osm-tacos.mjs --state "Leiria" --state-code "LEI" --admin-level 6  # European regions
  */
 
 import { writeFileSync } from 'fs'
@@ -18,6 +19,7 @@ import { writeFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import 'dotenv/config'
 import { isExcludedTacoChain } from './lib/excluded-taco-chains.mjs'
+import { loadOsmIdCache, appendToOsmIdCache, hasCacheFile } from './lib/osm-id-cache.mjs'
 
 // Supabase config - use service role key to bypass RLS for imports
 const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://htahyiuvqmalfpbgiizx.supabase.co'
@@ -31,13 +33,15 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 /**
  * Generate Overpass API query for taco/Mexican places within a state boundary
  * Tries both 'name' and 'name:en' to handle bilingual regions (e.g., Canadian provinces)
+ * @param {string} stateName - Name of the state/region
+ * @param {string} adminLevel - OSM admin level (default '4', Portugal uses '6', etc.)
  */
-function buildOverpassQuery(stateName) {
+function buildOverpassQuery(stateName, adminLevel = '4') {
   return `
 [out:json][timeout:180];
 (
-  area["name"="${stateName}"]["admin_level"="4"];
-  area["name:en"="${stateName}"]["admin_level"="4"];
+  area["name"="${stateName}"]["admin_level"="${adminLevel}"];
+  area["name:en"="${stateName}"]["admin_level"="${adminLevel}"];
 )->.state;
 (
   // Restaurants with Mexican/taco cuisine
@@ -52,11 +56,11 @@ out center;
 `
 }
 
-// Overpass API endpoints (main can be overloaded, use mirror as fallback)
+// Overpass API endpoints - main API first, fallback to mirrors
 const OVERPASS_ENDPOINTS = [
-  'https://overpass.kumi.systems/api/interpreter',
   'https://overpass-api.de/api/interpreter',
-  'https://lz4.overpass-api.de/api/interpreter'
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter'
 ]
 const OVERPASS_API_URL = process.env.OVERPASS_URL || OVERPASS_ENDPOINTS[0]
 
@@ -151,11 +155,12 @@ function buildAddress(tags, stateCode) {
  * Fetch taco places from OpenStreetMap with automatic endpoint fallback
  * @param {string} stateName - Full state name for OSM query (e.g., 'Michigan', 'California')
  * @param {string} stateCode - 2-letter state code (e.g., 'MI', 'CA')
+ * @param {string} adminLevel - OSM admin level (default '4')
  */
-async function fetchOsmTacoPlaces(stateName, stateCode) {
+async function fetchOsmTacoPlaces(stateName, stateCode, adminLevel = '4') {
   console.log(`Fetching taco places from OpenStreetMap for ${stateName} (${stateCode})...`)
 
-  const query = buildOverpassQuery(stateName)
+  const query = buildOverpassQuery(stateName, adminLevel)
 
   // Try each endpoint until one works
   const endpoints = process.env.OVERPASS_URL ? [process.env.OVERPASS_URL] : OVERPASS_ENDPOINTS
@@ -231,70 +236,24 @@ async function fetchOsmTacoPlaces(stateName, stateCode) {
 }
 
 /**
- * Fetch existing places from database
+ * Filter out duplicates using the local OSM ID cache.
+ * Zero egress - uses local file instead of querying Supabase.
+ *
+ * @param {Array} newPlaces - Places from OSM
+ * @param {Set} existingOsmIds - Set of existing OSM IDs from local cache
  */
-async function fetchExistingPlaces() {
-  console.log('Fetching existing places from database...')
-
-  // Fetch all existing places with pagination (Supabase has 1000 row default limit)
-  let allData = []
-  let offset = 0
-  const pageSize = 1000
-
-  while (true) {
-    const { data, error } = await supabase
-      .from('taco_places')
-      .select('id, name, lat, lng, google_place_id, state')
-      .range(offset, offset + pageSize - 1)
-
-    if (error) {
-      throw new Error(`Supabase error: ${error.message}`)
-    }
-
-    allData = allData.concat(data)
-
-    if (data.length < pageSize) {
-      break
-    }
-    offset += pageSize
-  }
-
-  console.log(`Found ${allData.length} existing places in database`)
-  return allData
-}
-
-/**
- * Filter out duplicates
- */
-function deduplicatePlaces(newPlaces, existingPlaces) {
+function deduplicateWithCache(newPlaces, existingOsmIds) {
   const results = {
     toInsert: [],
     skipped: []
   }
 
-  for (const newPlace of newPlaces) {
-    // Check if OSM ID already exists
-    const osmIdExists = existingPlaces.some(
-      ep => ep.google_place_id === newPlace.google_place_id
-    )
-
-    if (osmIdExists) {
-      results.skipped.push({ place: newPlace, reason: 'OSM ID already exists' })
-      continue
+  for (const place of newPlaces) {
+    if (existingOsmIds.has(place.google_place_id)) {
+      results.skipped.push({ place, reason: 'OSM ID already exists (cached)' })
+    } else {
+      results.toInsert.push(place)
     }
-
-    // Check for nearby places with similar names
-    const duplicate = existingPlaces.find(ep => isDuplicate(newPlace, ep))
-
-    if (duplicate) {
-      results.skipped.push({
-        place: newPlace,
-        reason: `Similar to existing: "${duplicate.name}"`
-      })
-      continue
-    }
-
-    results.toInsert.push(newPlace)
   }
 
   return results
@@ -387,8 +346,9 @@ async function main() {
   // Parse state arguments (default to Michigan)
   const stateName = getArgValue(args, '--state') || 'Michigan'
   const stateCode = getArgValue(args, '--state-code') || 'MI'
+  const adminLevel = getArgValue(args, '--admin-level') || '4'
 
-  console.log(`=== Importing taco places from ${stateName} (${stateCode}) ===\n`)
+  console.log(`=== Importing taco places from ${stateName} (${stateCode}) [admin_level=${adminLevel}] ===\n`)
 
   if (dryRun) {
     console.log('=== DRY RUN MODE (no changes will be made) ===\n')
@@ -398,13 +358,24 @@ async function main() {
   }
 
   try {
-    // Fetch from OSM and database
-    const osmPlaces = await fetchOsmTacoPlaces(stateName, stateCode)
-    const existingPlaces = await fetchExistingPlaces()
+    // Check for local cache
+    if (!hasCacheFile()) {
+      console.error('ERROR: Local OSM ID cache not found!')
+      console.error('Run this first: node scripts/build-osm-cache.mjs')
+      process.exit(1)
+    }
 
-    // Deduplicate
-    console.log('\nDeduplicating...')
-    const { toInsert, skipped } = deduplicatePlaces(osmPlaces, existingPlaces)
+    // Fetch from OSM
+    const osmPlaces = await fetchOsmTacoPlaces(stateName, stateCode, adminLevel)
+
+    // Load local cache (zero egress!)
+    console.log('Loading local OSM ID cache...')
+    const cache = await loadOsmIdCache()
+    console.log(`Cache has ${cache.taco.size} existing taco OSM IDs`)
+
+    // Deduplicate using local cache
+    console.log('\nDeduplicating against local cache...')
+    const { toInsert, skipped } = deduplicateWithCache(osmPlaces, cache.taco)
 
     // Report
     console.log(`\n=== RESULTS for ${stateName} (${stateCode}) ===`)
@@ -450,6 +421,9 @@ async function main() {
     if (!dryRun && !sqlMode && toInsert.length > 0) {
       console.log('\n')
       await insertPlaces(toInsert)
+
+      // Update local cache with newly inserted places
+      await appendToOsmIdCache('taco', toInsert)
     } else if (dryRun) {
       console.log('\n=== DRY RUN COMPLETE (no changes made) ===')
     }

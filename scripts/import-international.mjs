@@ -115,7 +115,7 @@ function importRegion(regionName, regionCode, type = 'pizza', dryRun = false) {
       args.push('--dry-run')
     }
 
-    const child = spawn('node', args, {
+    const child = spawn(process.execPath, args, {
       stdio: ['inherit', 'pipe', 'pipe']
     })
 
