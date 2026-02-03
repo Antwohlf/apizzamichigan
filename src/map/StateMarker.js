@@ -18,13 +18,32 @@ const BADGE_COLORS = {
 
 /**
  * Creates a state aggregate marker icon with optional count badge
+ * Supports loading spinner and dimmed states
  */
-function createStateIcon(site, count, showCounts = true) {
+function createStateIcon(site, count, showCounts = true, isLoading = false, isDimmed = false) {
   const icon = ICONS[site] || ICONS.pizza
   const badgeColor = BADGE_COLORS[site] || BADGE_COLORS.pizza
+  const opacity = isDimmed ? 0.5 : 0.9
+  const badgeOpacity = isDimmed ? 0.6 : 1
 
   // Format count for display
   const displayCount = count >= 1000 ? `${(count / 1000).toFixed(1)}k` : count
+
+  // Loading spinner overlay
+  const spinnerHtml = isLoading ? `
+        <div style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 18px;
+          height: 18px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: white;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        "></div>
+  ` : ''
 
   const badgeHtml = showCounts ? `
         <span style="
@@ -44,14 +63,16 @@ function createStateIcon(site, count, showCounts = true) {
           font-weight: bold;
           border: 2px solid white;
           box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+          opacity: ${badgeOpacity};
         ">${displayCount}</span>
   ` : ''
 
   return L.divIcon({
     html: `
       <div style="position: relative; width: 44px; height: 44px; cursor: pointer;">
-        <img src="${icon}" style="width: 44px; height: 44px; opacity: 0.9;" />
+        <img src="${icon}" style="width: 44px; height: 44px; opacity: ${opacity};" />
         ${badgeHtml}
+        ${spinnerHtml}
       </div>
     `,
     className: `${site}-state-marker`,
@@ -63,12 +84,16 @@ function createStateIcon(site, count, showCounts = true) {
 /**
  * State aggregate marker - shows a single marker for an entire state
  * Clicking it loads that state's individual places
+ * Supports loading and dimmed visual states
  */
 export function StateMarker({ aggregate, site, onStateClick, showCounts = true }) {
-  const { stateCode, count, lat, lng } = aggregate
+  const { stateCode, count, lat, lng, isLoading = false, isDimmed = false } = aggregate
   const map = useMap()
 
   const handleClick = () => {
+    // Don't trigger click if already loading
+    if (isLoading) return
+
     // Fly to the state with animation
     if (map) {
       map.flyTo([lat, lng], STATE_ZOOM, {
@@ -85,7 +110,7 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
   return (
     <Marker
       position={[lat, lng]}
-      icon={createStateIcon(site, count, showCounts)}
+      icon={createStateIcon(site, count, showCounts, isLoading, isDimmed)}
       eventHandlers={{
         click: handleClick,
       }}
