@@ -241,19 +241,19 @@ Current status of pizza and taco data imports by country.
 
 ## Summary Statistics
 
+**Dashboard totals (Feb 2026):**
+- **164,604 pizza places** across 55 detected countries
+- **52,141 taco places** across 48 detected countries
+
 | Status | Pizza | Tacos |
 |--------|-------|-------|
-| ✅ Region-level | 48 countries | 48 countries |
-| 🌐 Global scripts | 23+ countries | 15+ countries |
-| ❌ Not Covered | ~120 countries | ~130 countries |
+| ✅ Correctly detected | 55 countries | 48 countries |
+| ⚠️ Data exists but miscounted | 9 countries | 9 countries |
+| ❌ Not Covered | ~130 countries | ~140 countries |
 
-**Europe totals:** ~81,500 pizza places | ~5,292 taco places (~86,792 total)
+**Note:** ~4,872 places from 9 countries (Thailand, China, Singapore, Turkey, Philippines, Saudi Arabia, South Africa, India, Indonesia) exist in the database but are miscounted due to state code conflicts. See "State Code Conflicts" section below.
 
-**Global scripts added (Feb 2026):**
-- Pizza: ~11,425 (name) + 4,714 (chains) + 105 (cuisines) + 5,940 (street food) + 1,174 (retry) = **~23,358 places**
-- Tacos: ~310 (chains) + 1,402 (cuisines) + 690 (street food) + 1,095 (retry) = **~3,497 places**
-
-### Currently Covered Countries (48 region-level + 23 global)
+### Currently Covered Countries (55 detected)
 
 **North America (3):**
 - United States (50 states)
@@ -388,10 +388,32 @@ Mexico, Guatemala, El Salvador, Colombia, Peru, Brazil, Argentina, US, Italy, Fr
 
 | Issue | Countries Affected | Reason |
 |-------|-------------------|--------|
-| Zero results | China, Russia | Different character sets, local platforms |
+| Zero results | Russia | Different character sets, local platforms |
 | Repeated 504 timeouts | India, Brazil, Canada | Large countries, complex OSM data |
 | No taco culture | Most of Asia, Africa, Middle East | Tacos aren't common outside Americas |
 
+### State Code Conflicts (Dashboard Miscount Issue)
+
+The global import scripts save places with ISO country codes as the `state` field (e.g., `TH` for Thailand).
+However, these codes conflict with regional codes used by European and Latin American imports.
+The dashboard's country detection prioritizes regional codes, causing global country data to be miscounted.
+
+| Country | Code | Conflict | Data Counted As |
+|---------|------|----------|-----------------|
+| Thailand | TH | Thuringia (Germany) | Germany |
+| China | CN | Canary Islands (Spain) | Spain |
+| Singapore | SG | St. Gallen (Switzerland) | Switzerland |
+| Turkey | TR | Trujillo (Venezuela) | Venezuela |
+| Philippines | PH | Paraguayan dept | Paraguay |
+| Saudi Arabia | SA | Multiple Latin American regions | Various |
+| South Africa | ZA | Guatemalan dept | Guatemala |
+| India | IN | Indiana (US) | USA |
+| Indonesia | ID | Idaho (US) | USA |
+
+**Impact:** ~4,872 places from these 9 countries are in the database but not correctly attributed.
+
+**Future Fix:** Global scripts should use 3-letter codes (THA, CHN, SGP, etc.) to avoid conflicts.
+
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-02-03*

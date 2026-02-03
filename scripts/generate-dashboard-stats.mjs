@@ -100,6 +100,45 @@ const COSTA_RICA_CODES = new Set(['SJC', 'ALC', 'CAC', 'HEC', 'GUC', 'PUC', 'LIC
 const PANAMA_CODES = new Set(['PMP', 'POP', 'CHP', 'CLP', 'CCP', 'VEP', 'HEP', 'LSP', 'BTP', 'DAP', 'EMP', 'KYP', 'NBP', 'PM', 'PO', 'CH', 'CL', 'CC', 'VE', 'HE', 'LS', 'BT', 'DA', 'EM', 'KY', 'NB'])
 const BELIZE_CODES = new Set(['BZB', 'CYB', 'OWB', 'CZB', 'SCB', 'TOB', 'BZ', 'CY', 'OW', 'CZ', 'SC', 'TO'])
 
+// Global script countries (where state = ISO country code)
+// ONLY codes that DON'T conflict with regional codes are included.
+// Excluded due to conflicts:
+//   US states: IN (Indiana/India), ID (Idaho/Indonesia), IL (Illinois/Israel), MA (Massachusetts/Morocco)
+//   German states: TH (Thuringia/Thailand)
+//   Spanish regions: CN (Canary Islands/China)
+//   Swiss cantons: SG (St. Gallen/Singapore)
+//   Venezuela states: TR (Trujillo/Turkey)
+//   Paraguay: PH (Philippines)
+//   Uruguay/Suriname/Guatemala/El Salvador: SA (Saudi Arabia)
+//   Guatemala: ZA (South Africa)
+//   Bavaria: BY (Belarus)
+const GLOBAL_COUNTRY_CODES = new Map([
+  // Asia-Pacific (non-conflicting only)
+  ['JP', 'JP'],  // Japan
+  ['KR', 'KR'],  // South Korea
+  ['VN', 'VN'],  // Vietnam
+  ['MY', 'MY'],  // Malaysia
+  ['AU', 'AU'],  // Australia
+  ['NZ', 'NZ'],  // New Zealand
+  // Middle East (non-conflicting only)
+  ['AE', 'AE'],  // UAE
+  ['EG', 'EG'],  // Egypt
+  ['QA', 'QA'],  // Qatar
+  ['KW', 'KW'],  // Kuwait
+  ['BH', 'BH'],  // Bahrain
+  ['OM', 'OM'],  // Oman
+  ['JO', 'JO'],  // Jordan
+  ['LB', 'LB'],  // Lebanon
+  // Africa (non-conflicting only)
+  ['NG', 'NG'],  // Nigeria
+  ['KE', 'KE'],  // Kenya
+  ['GH', 'GH'],  // Ghana
+  ['TZ', 'TZ'],  // Tanzania
+  // Eastern Europe
+  ['RU', 'RU'],  // Russia
+  ['UA', 'UA'],  // Ukraine
+])
+
 function getCountry(stateCode) {
   if (!stateCode) return 'Unknown'
   if (CANADIAN_CODES.has(stateCode)) return 'CA'
@@ -144,6 +183,8 @@ function getCountry(stateCode) {
   if (COSTA_RICA_CODES.has(stateCode)) return 'CR'
   if (PANAMA_CODES.has(stateCode)) return 'PA'
   if (BELIZE_CODES.has(stateCode)) return 'BZ'
+  // Global script countries (state = ISO country code)
+  if (GLOBAL_COUNTRY_CODES.has(stateCode)) return GLOBAL_COUNTRY_CODES.get(stateCode)
   return 'US'
 }
 
