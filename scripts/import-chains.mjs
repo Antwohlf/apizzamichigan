@@ -65,6 +65,7 @@ const TACO_CHAINS = [
 ]
 
 // Regions to search (global)
+// Note: Use 3-letter codes for countries that conflict with regional codes
 const REGIONS = [
   { name: 'United States', iso: 'US', stateCode: 'US' },
   { name: 'Canada', iso: 'CA', stateCode: 'CA' },
@@ -77,15 +78,15 @@ const REGIONS = [
   { name: 'Australia', iso: 'AU', stateCode: 'AU' },
   { name: 'Japan', iso: 'JP', stateCode: 'JP' },
   { name: 'South Korea', iso: 'KR', stateCode: 'KR' },
-  { name: 'China', iso: 'CN', stateCode: 'CN' },
-  { name: 'India', iso: 'IN', stateCode: 'IN' },
+  { name: 'China', iso: 'CN', stateCode: 'CHN' },        // 3-letter: conflicts with Canary Islands
+  { name: 'India', iso: 'IN', stateCode: 'IND' },        // 3-letter: conflicts with Indiana
   { name: 'Brazil', iso: 'BR', stateCode: 'BR' },
   { name: 'Russia', iso: 'RU', stateCode: 'RU' },
-  { name: 'South Africa', iso: 'ZA', stateCode: 'ZA' },
+  { name: 'South Africa', iso: 'ZA', stateCode: 'ZAF' }, // 3-letter: conflicts with Guatemala
   { name: 'UAE', iso: 'AE', stateCode: 'AE' },
-  { name: 'Saudi Arabia', iso: 'SA', stateCode: 'SA' },
-  { name: 'Philippines', iso: 'PH', stateCode: 'PH' },
-  { name: 'Indonesia', iso: 'ID', stateCode: 'ID' },
+  { name: 'Saudi Arabia', iso: 'SA', stateCode: 'SAU' }, // 3-letter: conflicts with LatAm regions
+  { name: 'Philippines', iso: 'PH', stateCode: 'PHL' },  // 3-letter: conflicts with Paraguay
+  { name: 'Indonesia', iso: 'ID', stateCode: 'IDN' },    // 3-letter: conflicts with Idaho
 ]
 
 function buildChainQuery(isoCode, chains) {

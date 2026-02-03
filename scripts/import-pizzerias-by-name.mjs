@@ -16,25 +16,26 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SU
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 // Focus on regions where name-based search would help most
+// Note: Use 3-letter codes for countries that conflict with regional codes
 const REGIONS = [
   // Asia (often poor cuisine tagging)
   { name: 'Japan', iso: 'JP', stateCode: 'JP' },
   { name: 'South Korea', iso: 'KR', stateCode: 'KR' },
-  { name: 'China', iso: 'CN', stateCode: 'CN' },
-  { name: 'India', iso: 'IN', stateCode: 'IN' },
-  { name: 'Indonesia', iso: 'ID', stateCode: 'ID' },
-  { name: 'Thailand', iso: 'TH', stateCode: 'TH' },
+  { name: 'China', iso: 'CN', stateCode: 'CHN' },        // 3-letter: conflicts with Canary Islands
+  { name: 'India', iso: 'IN', stateCode: 'IND' },        // 3-letter: conflicts with Indiana
+  { name: 'Indonesia', iso: 'ID', stateCode: 'IDN' },    // 3-letter: conflicts with Idaho
+  { name: 'Thailand', iso: 'TH', stateCode: 'THA' },     // 3-letter: conflicts with Thuringia
   { name: 'Vietnam', iso: 'VN', stateCode: 'VN' },
-  { name: 'Philippines', iso: 'PH', stateCode: 'PH' },
+  { name: 'Philippines', iso: 'PH', stateCode: 'PHL' },  // 3-letter: conflicts with Paraguay
   { name: 'Malaysia', iso: 'MY', stateCode: 'MY' },
   // Middle East
-  { name: 'Turkey', iso: 'TR', stateCode: 'TR' },
-  { name: 'Saudi Arabia', iso: 'SA', stateCode: 'SA' },
+  { name: 'Turkey', iso: 'TR', stateCode: 'TUR' },       // 3-letter: conflicts with Venezuela
+  { name: 'Saudi Arabia', iso: 'SA', stateCode: 'SAU' }, // 3-letter: conflicts with LatAm regions
   { name: 'UAE', iso: 'AE', stateCode: 'AE' },
   { name: 'Egypt', iso: 'EG', stateCode: 'EG' },
   { name: 'Israel', iso: 'IL', stateCode: 'IL' },
   // Africa
-  { name: 'South Africa', iso: 'ZA', stateCode: 'ZA' },
+  { name: 'South Africa', iso: 'ZA', stateCode: 'ZAF' }, // 3-letter: conflicts with Guatemala
   { name: 'Nigeria', iso: 'NG', stateCode: 'NG' },
   { name: 'Kenya', iso: 'KE', stateCode: 'KE' },
   { name: 'Morocco', iso: 'MA', stateCode: 'MA' },
