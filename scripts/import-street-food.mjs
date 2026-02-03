@@ -15,6 +15,7 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SU
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 // Regions with strong street food culture
+// Note: Use 3-letter codes for countries that conflict with regional codes
 const REGIONS = [
   // Latin America (strong taco cart culture)
   { name: 'Mexico', iso: 'MX', stateCode: 'MX' },
@@ -32,12 +33,12 @@ const REGIONS = [
   { name: 'Germany', iso: 'DE', stateCode: 'DE' },
   { name: 'United Kingdom', iso: 'GB', stateCode: 'GB' },
   { name: 'Spain', iso: 'ES', stateCode: 'ES' },
-  // Asia
-  { name: 'Thailand', iso: 'TH', stateCode: 'TH' },
+  // Asia (use 3-letter codes for conflicting countries)
+  { name: 'Thailand', iso: 'TH', stateCode: 'THA' },     // 3-letter: conflicts with Thuringia
   { name: 'Vietnam', iso: 'VN', stateCode: 'VN' },
-  { name: 'Indonesia', iso: 'ID', stateCode: 'ID' },
-  { name: 'Philippines', iso: 'PH', stateCode: 'PH' },
-  { name: 'India', iso: 'IN', stateCode: 'IN' },
+  { name: 'Indonesia', iso: 'ID', stateCode: 'IDN' },    // 3-letter: conflicts with Idaho
+  { name: 'Philippines', iso: 'PH', stateCode: 'PHL' },  // 3-letter: conflicts with Paraguay
+  { name: 'India', iso: 'IN', stateCode: 'IND' },        // 3-letter: conflicts with Indiana
 ]
 
 function buildStreetFoodQuery(isoCode, type) {

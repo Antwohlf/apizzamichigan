@@ -137,6 +137,16 @@ const GLOBAL_COUNTRY_CODES = new Map([
   // Eastern Europe
   ['RU', 'RU'],  // Russia
   ['UA', 'UA'],  // Ukraine
+  // 3-letter codes for conflicting countries (migrated from 2-letter)
+  ['THA', 'TH'],  // Thailand (was TH, conflicts with Thuringia)
+  ['CHN', 'CN'],  // China (was CN, conflicts with Canary Islands)
+  ['SGP', 'SG'],  // Singapore (was SG, conflicts with St. Gallen)
+  ['TUR', 'TR'],  // Turkey (was TR, conflicts with Trujillo)
+  ['PHL', 'PH'],  // Philippines (was PH, conflicts with Paraguay)
+  ['SAU', 'SA'],  // Saudi Arabia (was SA, conflicts with LatAm regions)
+  ['ZAF', 'ZA'],  // South Africa (was ZA, conflicts with Guatemala)
+  ['IND', 'IN'],  // India (was IN, conflicts with Indiana)
+  ['IDN', 'ID'],  // Indonesia (was ID, conflicts with Idaho)
 ])
 
 function getCountry(stateCode) {

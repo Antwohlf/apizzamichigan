@@ -44,6 +44,7 @@ const TACO_CUISINES = [
 ]
 
 // All countries (global search)
+// Note: Use 3-letter codes for countries that conflict with regional codes
 const COUNTRIES = [
   // Americas
   { name: 'United States', iso: 'US', stateCode: 'US' },
@@ -65,14 +66,14 @@ const COUNTRIES = [
   { name: 'Austria', iso: 'AT', stateCode: 'AT' },
   { name: 'Switzerland', iso: 'CH', stateCode: 'CH' },
   { name: 'Poland', iso: 'PL', stateCode: 'PL' },
-  // Asia-Pacific
+  // Asia-Pacific (use 3-letter codes for conflicting countries)
   { name: 'Australia', iso: 'AU', stateCode: 'AU' },
   { name: 'Japan', iso: 'JP', stateCode: 'JP' },
   { name: 'South Korea', iso: 'KR', stateCode: 'KR' },
-  { name: 'China', iso: 'CN', stateCode: 'CN' },
-  { name: 'India', iso: 'IN', stateCode: 'IN' },
-  { name: 'Thailand', iso: 'TH', stateCode: 'TH' },
-  { name: 'Singapore', iso: 'SG', stateCode: 'SG' },
+  { name: 'China', iso: 'CN', stateCode: 'CHN' },        // 3-letter: conflicts with Canary Islands
+  { name: 'India', iso: 'IN', stateCode: 'IND' },        // 3-letter: conflicts with Indiana
+  { name: 'Thailand', iso: 'TH', stateCode: 'THA' },     // 3-letter: conflicts with Thuringia
+  { name: 'Singapore', iso: 'SG', stateCode: 'SGP' },    // 3-letter: conflicts with St. Gallen
 ]
 
 function buildCuisineQuery(isoCode, cuisines) {
