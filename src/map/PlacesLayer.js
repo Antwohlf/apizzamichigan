@@ -23,6 +23,7 @@ const CLUSTER_ICONS = {
 
 const DEFAULT_CENTER = [44.3148, -85.6024]
 const DEFAULT_ZOOM = 6
+const MIN_MARKERS_ZOOM = 7 // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
 
 const createClusterIcon = (site, showCounts) => (cluster) => {
   const count = cluster.getChildCount()
@@ -104,7 +105,7 @@ const FOCUSED_ZOOM = 12
 
 const NEAR_ME_ZOOM = 10 // City-level view for Near Me
 
-export function PlacesLayer({ site, places, showClusterCounts = true, stateAggregates = [], onStateClick, flyToLocation }) {
+export function PlacesLayer({ site, places, showClusterCounts = true, stateAggregates = [], onStateClick, flyToLocation, resetKey }) {
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
   const lastFocusedPlaceRef = useRef(null)
@@ -113,6 +114,7 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
   const { setSelectedPlace } = useSelectedPlace()
   const map = useMap()
   const [isMapStable, setIsMapStable] = useState(false)
+  const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM)
   const isMountedRef = useRef(true)
 
   // Track mount state and map stability for safe cleanup
@@ -134,12 +136,87 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
     const rafId = requestAnimationFrame(() => {
       if (isMountedRef.current && map && typeof map.getZoom === 'function') {
         setIsMapStable(true)
+        setCurrentZoom(map.getZoom())
       }
     })
 
     return () => {
       cancelAnimationFrame(rafId)
       setIsMapStable(false)
+    }
+  }, [map])
+
+  // Use refs to track state without triggering effect re-runs
+  const loadedRegionsRef = useRef(new Set())
+  const stateAggregatesRef = useRef(stateAggregates)
+  const onStateClickRef = useRef(onStateClick)
+
+  // Clear loaded regions cache when resetKey changes (filters, theme switch)
+  useEffect(() => {
+    loadedRegionsRef.current.clear()
+  }, [resetKey])
+
+  // Keep refs updated
+  useEffect(() => {
+    stateAggregatesRef.current = stateAggregates
+  }, [stateAggregates])
+
+  useEffect(() => {
+    onStateClickRef.current = onStateClick
+  }, [onStateClick])
+
+  // Track zoom level changes and trigger region loading when zoomed in
+  useEffect(() => {
+    if (!map || typeof map.on !== 'function') return
+
+    let debounceTimer = null
+
+    const handleZoomOrMove = () => {
+      // Debounce to avoid rapid-fire loading
+      if (debounceTimer) clearTimeout(debounceTimer)
+
+      debounceTimer = setTimeout(() => {
+        if (!isMountedRef.current || typeof map.getZoom !== 'function') return
+
+        const newZoom = map.getZoom()
+        setCurrentZoom(newZoom)
+
+        // When zoomed in past threshold, load visible regions
+        if (newZoom >= MIN_MARKERS_ZOOM && onStateClickRef.current) {
+          const bounds = map.getBounds()
+          if (!bounds) return
+
+          // Add buffer to bounds for small regions near edges
+          const expandedBounds = bounds.pad(0.1)
+
+          // Find visible region aggregates and trigger loading
+          const aggregates = stateAggregatesRef.current || []
+          aggregates.forEach(agg => {
+            // Skip if already loading or if we've already triggered this region
+            if (agg.isLoading || loadedRegionsRef.current.has(agg.stateCode)) return
+
+            if (expandedBounds.contains([agg.lat, agg.lng])) {
+              loadedRegionsRef.current.add(agg.stateCode)
+              onStateClickRef.current(agg.stateCode)
+            }
+          })
+        }
+      }, 150) // 150ms debounce
+    }
+
+    map.on('zoomend', handleZoomOrMove)
+    map.on('moveend', handleZoomOrMove)
+
+    // Wait for data before first check (longer delay for initial stability)
+    const timeoutId = setTimeout(handleZoomOrMove, 500)
+
+    return () => {
+      clearTimeout(debounceTimer)
+      clearTimeout(timeoutId)
+      if (map && typeof map.off === 'function') {
+        map.off('zoomend', handleZoomOrMove)
+        map.off('moveend', handleZoomOrMove)
+      }
     }
   }, [map])
 
@@ -408,19 +485,25 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
     return null
   }
 
+  // Only render individual markers when zoomed in enough AND there are places to show
+  const showIndividualMarkers = currentZoom >= MIN_MARKERS_ZOOM && places.length > 0
+
   return (
     <>
       <MapClickCloser close={close} />
-      <MarkerClusterGroup
-        key={`cluster-${site}-${showClusterCounts}`}
-        chunkedLoading
-        maxClusterRadius={80}
-        spiderfyOnMaxZoom
-        showCoverageOnHover={false}
-        iconCreateFunction={createClusterIcon(site, showClusterCounts)}
-      >
-        {markers}
-      </MarkerClusterGroup>
+      {showIndividualMarkers && (
+        <MarkerClusterGroup
+          key={`cluster-${site}-${showClusterCounts}`}
+          chunkedLoading
+          maxClusterRadius={80}
+          spiderfyOnMaxZoom
+          showCoverageOnHover={false}
+          iconCreateFunction={createClusterIcon(site, showClusterCounts)}
+        >
+          {markers}
+        </MarkerClusterGroup>
+      )}
+      {/* Always render aggregates - they self-hide when region status is 'loaded' */}
       <StateAggregateLayer
         aggregates={stateAggregates}
         site={site}
