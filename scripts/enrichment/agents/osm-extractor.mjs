@@ -20,8 +20,8 @@ const OVERPASS_ENDPOINTS = [
 ]
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/reverse'
-const BATCH_SIZE = 30  // Elements per Overpass query
-const BATCH_DELAY = 2000  // ms between batches
+const BATCH_SIZE = parseInt(process.env.OSM_BATCH_SIZE || '10', 10)  // Elements per Overpass query
+const BATCH_DELAY = parseInt(process.env.OSM_BATCH_DELAY_MS || '10000', 10)  // ms between batches (avoid 429s)
 
 class OsmExtractor {
   constructor(workerId) {
@@ -98,6 +98,15 @@ out center tags;
         })
 
         if (!response.ok) {
+          // Back off harder on rate limit.
+          if (response.status === 429) {
+            const retryAfter = parseInt(response.headers.get('retry-after') || '0', 10)
+            const backoffMs = Math.max(retryAfter * 1000, BATCH_DELAY)
+            console.error(`Endpoint ${endpoint} rate-limited (429). Backing off ${backoffMs}ms`)
+            await new Promise(r => setTimeout(r, backoffMs))
+            throw new Error(`429 ${response.statusText}`)
+          }
+
           throw new Error(`${response.status} ${response.statusText}`)
         }
 

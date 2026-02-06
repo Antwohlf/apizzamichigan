@@ -34,10 +34,11 @@ const WORKERS = {
 
 // Worker concurrency limits
 const WORKER_LIMITS = {
-  osm_extract: 2,   // 2 parallel OSM extractors
-  scrape: 3,        // 3 parallel scrapers
-  classify: 2,      // 2 parallel classifiers (limited by LLM rate)
-  sync: 1           // 1 sync agent
+  // Start conservatively to avoid Overpass 429s; raise once stable.
+  osm_extract: parseInt(process.env.OSM_EXTRACT_WORKERS || '1', 10),
+  scrape: parseInt(process.env.SCRAPE_WORKERS || '3', 10),
+  classify: parseInt(process.env.CLASSIFY_WORKERS || '2', 10),
+  sync: parseInt(process.env.SYNC_WORKERS || '1', 10)
 }
 
 // Configuration
