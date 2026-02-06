@@ -9,7 +9,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS pizza_places (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id BIGINT PRIMARY KEY,
   name TEXT NOT NULL,
   lat DOUBLE PRECISION NOT NULL,
   lng DOUBLE PRECISION NOT NULL,
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS pizza_places (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS taco_places (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id BIGINT PRIMARY KEY,
   name TEXT NOT NULL,
   lat DOUBLE PRECISION NOT NULL,
   lng DOUBLE PRECISION NOT NULL,

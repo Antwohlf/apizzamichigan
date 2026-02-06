@@ -19,6 +19,14 @@
 .env.test.local
 .env.production.local
 
+# enrichment pipeline local artifacts
+/.osm-id-cache.json
+/scripts/.osm-id-cache.json
+/scripts/.job-queue.db
+/scripts/.job-queue.db-*
+/scripts/.job-queue.db-shm
+/scripts/.job-queue.db-wal
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
