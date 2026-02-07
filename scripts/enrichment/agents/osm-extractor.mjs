@@ -138,12 +138,74 @@ out center tags;
       name: tags.name || tags['name:en'],
       lat,
       lng,
+
       website: tags.website || tags['contact:website'] || tags.url,
+      menu: tags.menu || tags['contact:menu'],
       phone: tags.phone || tags['contact:phone'],
+      email: tags.email || tags['contact:email'],
+
+      instagram: tags['contact:instagram'],
+      facebook: tags['contact:facebook'],
+      twitter: tags['contact:twitter'],
+      whatsapp: tags['contact:whatsapp'],
+
+      delivery: this.parseYesNo(tags.delivery || tags['contact:delivery']),
+      takeaway: this.parseYesNo(tags.takeaway || tags['contact:takeaway']),
+      driveThrough: this.parseYesNo(tags.drive_through),
+      outdoorSeating: this.parseYesNo(tags.outdoor_seating),
+      indoorSeating: this.parseYesNo(tags.indoor_seating),
+      wheelchair: tags.wheelchair,
+
+      brand: tags.brand,
+      brandWikidata: tags['brand:wikidata'],
+      operator: tags.operator,
+      operatorWikidata: tags['operator:wikidata'],
+
       address: this.buildAddress(tags),
       hours: tags.opening_hours ? { raw: tags.opening_hours } : null,
-      cuisine: tags.cuisine
+      cuisine: tags.cuisine,
+
+      osmTags: this.buildOsmTags(tags)
     }
+  }
+
+  /**
+   * Parse OSM yes/no-like values into boolean.
+   */
+  parseYesNo(value) {
+    if (value == null) return null
+    const v = String(value).trim().toLowerCase()
+    if (['yes', 'true', '1'].includes(v)) return true
+    if (['no', 'false', '0'].includes(v)) return false
+    return null
+  }
+
+  /**
+   * Store a useful subset of raw OSM tags for future use.
+   * (Includes contact:* and payment:* plus a few high-value keys.)
+   */
+  buildOsmTags(tags) {
+    const keep = {}
+    for (const [k, v] of Object.entries(tags || {})) {
+      if (k.startsWith('contact:') || k.startsWith('payment:')) keep[k] = v
+    }
+
+    const also = [
+      'website', 'url', 'menu',
+      'phone', 'email',
+      'opening_hours', 'cuisine',
+      'delivery', 'takeaway', 'drive_through',
+      'outdoor_seating', 'indoor_seating',
+      'wheelchair',
+      'brand', 'brand:wikidata', 'operator', 'operator:wikidata',
+      'addr:housenumber', 'addr:street', 'addr:city', 'addr:state', 'addr:postcode'
+    ]
+
+    for (const k of also) {
+      if (tags?.[k] != null) keep[k] = tags[k]
+    }
+
+    return keep
   }
 
   /**
@@ -172,19 +234,61 @@ out center tags;
       UPDATE ${table}
       SET
         website_url = COALESCE($2, website_url),
-        phone = COALESCE($3, phone),
-        address = COALESCE($4, address),
-        address_source = CASE WHEN $4 IS NOT NULL THEN 'osm' ELSE address_source END,
-        hours = COALESCE($5, hours),
+        menu_url = COALESCE($3, menu_url),
+        phone = COALESCE($4, phone),
+        email = COALESCE($5, email),
+        instagram_url = COALESCE($6, instagram_url),
+        facebook_url = COALESCE($7, facebook_url),
+        twitter_url = COALESCE($8, twitter_url),
+        whatsapp = COALESCE($9, whatsapp),
+
+        delivery = COALESCE($10, delivery),
+        takeaway = COALESCE($11, takeaway),
+        drive_through = COALESCE($12, drive_through),
+        outdoor_seating = COALESCE($13, outdoor_seating),
+        indoor_seating = COALESCE($14, indoor_seating),
+        wheelchair = COALESCE($15, wheelchair),
+
+        brand = COALESCE($16, brand),
+        brand_wikidata = COALESCE($17, brand_wikidata),
+        operator = COALESCE($18, operator),
+        operator_wikidata = COALESCE($19, operator_wikidata),
+
+        address = COALESCE($20, address),
+        address_source = CASE WHEN $20 IS NOT NULL THEN 'osm' ELSE address_source END,
+        hours = COALESCE($21, hours),
+
+        osm_tags = COALESCE($22::jsonb, osm_tags),
+        osm_last_fetched_at = NOW(),
+        osm_fetch_status = 'success',
+        osm_fetch_error = NULL,
+
         last_enriched_at = NOW()
       WHERE google_place_id = $1
       RETURNING id
     `, [
       data.osmId,
       data.website,
+      data.menu,
       data.phone,
+      data.email,
+      data.instagram,
+      data.facebook,
+      data.twitter,
+      data.whatsapp,
+      data.delivery,
+      data.takeaway,
+      data.driveThrough,
+      data.outdoorSeating,
+      data.indoorSeating,
+      data.wheelchair,
+      data.brand,
+      data.brandWikidata,
+      data.operator,
+      data.operatorWikidata,
       data.address,
-      data.hours ? JSON.stringify(data.hours) : null
+      data.hours ? JSON.stringify(data.hours) : null,
+      data.osmTags ? JSON.stringify(data.osmTags) : null
     ])
 
     return result.rowCount > 0
