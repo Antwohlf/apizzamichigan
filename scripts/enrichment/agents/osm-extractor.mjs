@@ -335,6 +335,15 @@ out center tags;
           if (updated) {
             this.queue.complete(el.job.id, data)
             this.stats.completed++
+
+            // If we learned a website URL, enqueue a scrape job.
+            if (data.website) {
+              try {
+                this.queue.addJob('scrape', data.osmId, el.job.placeType, el.job.data || null)
+              } catch (e) {
+                // Non-fatal: scrape enqueue can fail due to contention.
+              }
+            }
           } else {
             this.queue.fail(el.job.id, 'No matching record in local DB')
             this.stats.failed++
