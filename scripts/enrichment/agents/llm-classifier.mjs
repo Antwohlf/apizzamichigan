@@ -59,7 +59,7 @@ function normalizePrice(price) {
 
 async function ollamaGenerate(prompt) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 60000) // 60s timeout
+  const timeout = setTimeout(() => controller.abort(), 180000) // 180s timeout (3 min)
 
   try {
     const res = await fetch(`${OLLAMA_URL}/api/generate`, {
