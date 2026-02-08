@@ -200,9 +200,31 @@ class LlmClassifier {
       return
     }
 
-    const style = normalizeStyle(parsed.style)
+    let style = normalizeStyle(parsed.style)
     const priceRange = normalizePrice(parsed.price_range)
-    const styleConfidence = parsed.style_confidence === 'confirmed' ? 'confirmed' : 'inferred'
+    let styleConfidence = parsed.style_confidence === 'confirmed' ? 'confirmed' : 'inferred'
+
+    // Extra guardrail: if the LLM says a specific style but only "inferred",
+    // require that we actually see evidence in the scraped/OSM text.
+    if (style && styleConfidence === 'inferred') {
+      const haystack = `${JSON.stringify(row.osm_tags || {})} ${JSON.stringify(row.scrape_notes || {})}`.toLowerCase()
+      const evidence = {
+        Detroit: ['detroit'],
+        Chicago: ['chicago', 'deep dish', 'deep-dish', 'stuffed'],
+        'New York': ['new york', 'ny style', 'ny-style', 'brooklyn'],
+        Neapolitan: ['neapolitan', 'wood fired', 'wood-fired', 'brick oven', 'coal fired', 'napoletana'],
+        Sicilian: ['sicilian', 'grandma'],
+        Roman: ['roman', 'al taglio', 'taglio'],
+        Tavern: ['tavern', 'party cut'],
+        California: ['california'],
+      }[style] || []
+
+      const hasEvidence = evidence.length ? evidence.some(k => haystack.includes(k)) : false
+      if (!hasEvidence) {
+        style = null
+        styleConfidence = null
+      }
+    }
 
     // Conservative write: nulls allowed; never write unknown values
     await this.updatePizzaRow(row.id, {
