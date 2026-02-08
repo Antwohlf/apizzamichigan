@@ -58,31 +58,66 @@ function normalizePrice(price) {
 }
 
 async function ollamaGenerate(prompt) {
-  const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL,
-      prompt,
-      stream: false,
-      format: 'json'
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 60000) // 60s timeout
+
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        prompt,
+        stream: false,
+        format: 'json'
+      }),
+      signal: controller.signal
     })
-  })
 
-  if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    throw new Error(`ollama HTTP ${res.status}: ${t.slice(0, 200)}`)
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      throw new Error(`ollama HTTP ${res.status}: ${t.slice(0, 200)}`)
+    }
+
+    const data = await res.json()
+    return data.response
+  } catch (err) {
+    clearTimeout(timeout)
+    if (err.name === 'AbortError') {
+      throw new Error('Ollama request timeout (60s)')
+    }
+    throw err
   }
-
-  const data = await res.json()
-  return data.response
 }
 
 function buildPrompt(row) {
   const osmTags = row.osm_tags ? JSON.stringify(row.osm_tags) : ''
-  const scrapeNotes = row.scrape_notes ? JSON.stringify(row.scrape_notes) : ''
+  
+  // Build a pruned scrape_notes: prioritize JSON-LD, include text_excerpt only if needed
+  let scrapeData = {}
+  if (row.scrape_notes) {
+    const notes = typeof row.scrape_notes === 'string' ? JSON.parse(row.scrape_notes) : row.scrape_notes
+    
+    // Always include jsonld if present (high signal)
+    if (notes.jsonld) scrapeData.jsonld = notes.jsonld
+    
+    // Include other hints (small)
+    if (notes.style_hints) scrapeData.style_hints = notes.style_hints
+    if (notes.price_hint) scrapeData.price_hint = notes.price_hint
+    if (notes.menu_url) scrapeData.menu_url = notes.menu_url
+    
+    // Only include text_excerpt if we have little other signal (keep prompt small)
+    const hasSignal = notes.jsonld?.length || notes.style_hints?.length
+    if (!hasSignal && notes.text_excerpt) {
+      scrapeData.text_excerpt = notes.text_excerpt.slice(0, 4000) // further cap
+    }
+  }
+  
+  const scrapeNotes = Object.keys(scrapeData).length ? JSON.stringify(scrapeData) : ''
 
-  return `You are classifying a pizza restaurant into a fixed taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${PIZZA_STYLES.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the style (e.g. \"Detroit-style\"). Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, then visible text excerpts, then other hints.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nScrape notes (includes jsonld + text_excerpt when available):\n${scrapeNotes}\n`
+  return `You are classifying a pizza restaurant into a fixed taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${PIZZA_STYLES.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the style (e.g. \"Detroit-style\"). Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, then style_hints, then text excerpts.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nScrape hints (prioritized):\n${scrapeNotes}\n`
 }
 
 class LlmClassifier {

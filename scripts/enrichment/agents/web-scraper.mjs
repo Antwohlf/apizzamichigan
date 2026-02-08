@@ -183,8 +183,8 @@ class WebScraper {
     }
     const bodyText = $('body').text()
 
-    // Store a capped cleaned text excerpt for LLM classification
-    const textExcerpt = bodyText.replace(/\s+/g, ' ').trim().slice(0, 12000)
+    // Store a capped cleaned text excerpt for LLM classification (reduced to 6K to stay within model context)
+    const textExcerpt = bodyText.replace(/\s+/g, ' ').trim().slice(0, 6000)
     if (textExcerpt.length) data.text_excerpt = textExcerpt
 
     const prices = bodyText.match(priceIndicators['$']) || []
