@@ -120,6 +120,23 @@ class WebScraper {
     const $ = cheerio.load(html)
     const data = {}
 
+    // Extract JSON-LD (Schema.org) if present (high-signal)
+    const jsonld = []
+    $('script[type="application/ld+json"]').each((_, el) => {
+      const raw = $(el).text()?.trim()
+      if (!raw) return
+      try {
+        const parsed = JSON.parse(raw)
+        jsonld.push(parsed)
+      } catch {
+        // Some sites embed invalid JSON-LD; ignore
+      }
+    })
+    if (jsonld.length) {
+      // Cap the amount we store to avoid huge payloads
+      data.jsonld = jsonld.slice(0, 3)
+    }
+
     // Extract phone numbers
     const phonePatterns = [
       /\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g,
@@ -165,6 +182,11 @@ class WebScraper {
       'price': /(?:price|cost|starting at)[:\s]*\$?\d+/gi
     }
     const bodyText = $('body').text()
+
+    // Store a capped cleaned text excerpt for LLM classification
+    const textExcerpt = bodyText.replace(/\s+/g, ' ').trim().slice(0, 12000)
+    if (textExcerpt.length) data.text_excerpt = textExcerpt
+
     const prices = bodyText.match(priceIndicators['$']) || []
     if (prices.length > 0) {
       // Average price as hint
