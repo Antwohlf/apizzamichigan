@@ -39,7 +39,7 @@ export class JobQueue {
 
     this.db = new Database(this.dbPath)
     this.db.pragma('journal_mode = WAL')  // Better concurrency
-    this.db.pragma('busy_timeout = 5000')  // Wait up to 5s for locks
+    this.db.pragma('busy_timeout = 20000')  // Wait up to 20s for locks
 
     // Create tables
     this.db.exec(`
