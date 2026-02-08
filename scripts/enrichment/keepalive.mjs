@@ -37,9 +37,9 @@ function startCoordinator() {
     OSM_EXTRACT_WORKERS: process.env.OSM_EXTRACT_WORKERS || '1',
     OSM_BATCH_SIZE: process.env.OSM_BATCH_SIZE || '10',
     OSM_BATCH_DELAY_MS: process.env.OSM_BATCH_DELAY_MS || '15000',
-    // focus on OSM by default; enable others explicitly
-    SCRAPE_WORKERS: process.env.SCRAPE_WORKERS || '0',
-    CLASSIFY_WORKERS: process.env.CLASSIFY_WORKERS || '0',
+    // run the full local pipeline by default (OSM -> scrape -> classify)
+    SCRAPE_WORKERS: process.env.SCRAPE_WORKERS || '1',
+    CLASSIFY_WORKERS: process.env.CLASSIFY_WORKERS || '1',
   }
 
   const child = spawn('node', ['scripts/enrichment/agents/coordinator.mjs'], {
