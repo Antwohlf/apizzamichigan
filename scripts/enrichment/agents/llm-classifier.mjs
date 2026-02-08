@@ -31,7 +31,7 @@ const PIZZA_STYLES = [
 
 const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 
-const MODEL = process.env.OLLAMA_MODEL || 'llama3.2:latest'
+const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b'
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 
 function safeJsonParse(text) {
