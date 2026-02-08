@@ -212,10 +212,12 @@ class WebScraper {
    * Process a single job
    */
   async processJob(job) {
-    // Get the website URL from the database
+    // Get the website URL (and some metadata) from the database
     const table = job.placeType === 'pizza' ? 'pizza_places' : 'taco_places'
     const result = await this.pgClient.query(`
-      SELECT website_url FROM ${table} WHERE google_place_id = $1
+      SELECT website_url, state, style, price_range
+      FROM ${table}
+      WHERE google_place_id = $1
     `, [job.osmId])
 
     if (!result.rows[0]?.website_url) {
@@ -225,7 +227,7 @@ class WebScraper {
       return
     }
 
-    const url = result.rows[0].website_url
+    const { website_url: url, state, style, price_range: priceRange } = result.rows[0]
 
     // Check cache
     const cached = await this.checkCache(url)
@@ -236,6 +238,12 @@ class WebScraper {
       } else {
         // Update database with cached data
         await this.updateDb(job.osmId, job.placeType, cached.extracted_data)
+
+        // Handoff: scraped -> classify (pizza-only for now)
+        if (job.placeType === 'pizza' && (style == null && priceRange == null)) {
+          this.queue.addJob('classify', job.osmId, job.placeType, { state })
+        }
+
         this.queue.complete(job.id, cached.extracted_data)
         this.stats.completed++
       }
@@ -251,6 +259,11 @@ class WebScraper {
 
       if (extracted) {
         await this.updateDb(job.osmId, job.placeType, extracted)
+
+        // Handoff: scraped -> classify (pizza-only for now)
+        if (job.placeType === 'pizza' && (style == null && priceRange == null)) {
+          this.queue.addJob('classify', job.osmId, job.placeType, { state })
+        }
       }
 
       this.queue.complete(job.id, extracted || { status: 'no_data_extracted' })
