@@ -15,8 +15,9 @@ import * as cheerio from 'cheerio'
 import 'dotenv/config'
 
 const CONCURRENT_FETCHES = 5
-const FETCH_TIMEOUT = 10000  // 10 seconds
+const FETCH_TIMEOUT = 15000  // 15 seconds (increased for slow sites)
 const FETCH_DELAY = 500      // ms between fetches
+const MAX_RETRIES = 2        // Retry HTTP 5xx errors
 
 class WebScraper {
   constructor(workerId) {
@@ -272,29 +273,46 @@ class WebScraper {
       return
     }
 
-    // Fetch the website
-    try {
-      const { html, finalUrl, statusCode } = await this.fetchWithTimeout(url)
-      const extracted = this.extractFromHtml(html, finalUrl)
+    // Fetch the website (with retry for 5xx errors)
+    let lastError = null
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const { html, finalUrl, statusCode } = await this.fetchWithTimeout(url)
+        const extracted = this.extractFromHtml(html, finalUrl)
 
-      await this.saveToCache(url, finalUrl, statusCode, extracted)
+        await this.saveToCache(url, finalUrl, statusCode, extracted)
 
-      if (extracted) {
-        await this.updateDb(job.osmId, job.placeType, extracted)
+        if (extracted) {
+          await this.updateDb(job.osmId, job.placeType, extracted)
 
-        // Handoff: scraped -> classify (pizza-only for now)
-        if (job.placeType === 'pizza' && (style == null && priceRange == null)) {
-          this.queue.addJob('classify', job.osmId, job.placeType, { state })
+          // Handoff: scraped -> classify (pizza-only for now)
+          if (job.placeType === 'pizza' && (style == null && priceRange == null)) {
+            this.queue.addJob('classify', job.osmId, job.placeType, { state })
+          }
         }
-      }
 
-      this.queue.complete(job.id, extracted || { status: 'no_data_extracted' })
-      this.stats.completed++
-    } catch (error) {
-      await this.saveToCache(url, null, null, null, error.message)
-      this.queue.fail(job.id, error.message)
-      this.stats.failed++
+        this.queue.complete(job.id, extracted || { status: 'no_data_extracted' })
+        this.stats.completed++
+        return
+      } catch (error) {
+        lastError = error
+        
+        // Retry only on HTTP 5xx errors
+        const is5xx = error.message && /HTTP 5\d{2}/.test(error.message)
+        if (is5xx && attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1))) // backoff
+          continue
+        }
+        
+        // Otherwise fail immediately
+        break
+      }
     }
+    
+    // All retries exhausted or non-retryable error
+    await this.saveToCache(url, null, null, null, lastError.message)
+    this.queue.fail(job.id, lastError.message)
+    this.stats.failed++
   }
 
   /**
