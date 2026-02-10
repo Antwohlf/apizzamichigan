@@ -228,7 +228,10 @@ export class JobQueue {
   }
 
   /**
-   * Mark a job as failed
+   * Mark a job as failed.
+   *
+   * Note: claim() increments attempts. fail() will requeue (pending) until
+   * attempts hits max_attempts, then marks it permanently failed.
    */
   fail(jobId, errorMessage) {
     const fail = this.db.transaction(() => {
@@ -259,6 +262,47 @@ export class JobQueue {
     })
 
     fail()
+  }
+
+  /**
+   * Requeue a job as pending without counting it as a "failed" worker event.
+   *
+   * Useful for transient infra failures (e.g. Ollama down / network blip).
+   *
+   * Options:
+   * - refundAttempt: if true, decrements attempts by 1 (since claim() already
+   *   incremented it). This prevents transient outages from burning retries.
+   */
+  retry(jobId, errorMessage, { refundAttempt = true } = {}) {
+    const retry = this.db.transaction(() => {
+      const job = this.db.prepare('SELECT worker_id, attempts FROM jobs WHERE id = ?').get(jobId)
+
+      this.db.prepare(`
+        UPDATE jobs
+        SET status = 'pending',
+            worker_id = NULL,
+            started_at = NULL,
+            completed_at = NULL,
+            last_error = ?,
+            attempts = CASE
+              WHEN ? = 1 AND attempts > 0 THEN attempts - 1
+              ELSE attempts
+            END
+        WHERE id = ?
+      `).run(errorMessage, refundAttempt ? 1 : 0, jobId)
+
+      if (job?.worker_id) {
+        this.db.prepare(`
+          UPDATE workers
+          SET status = 'idle',
+              current_job_id = NULL,
+              last_heartbeat = datetime('now')
+          WHERE worker_id = ?
+        `).run(job.worker_id)
+      }
+    })
+
+    retry()
   }
 
   /**

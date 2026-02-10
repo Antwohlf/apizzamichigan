@@ -33,6 +33,10 @@ const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 
 const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b'
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
+const OLLAMA_TIMEOUT_MS = process.env.OLLAMA_TIMEOUT_MS ? parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) : 180000
+const OLLAMA_HEALTHCHECK_INTERVAL_MS = process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS
+  ? parseInt(process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS, 10)
+  : 30000
 
 function safeJsonParse(text) {
   try {
@@ -59,7 +63,7 @@ function normalizePrice(price) {
 
 async function ollamaGenerate(prompt) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 180000) // 180s timeout (3 min)
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS)
 
   try {
     const res = await fetch(`${OLLAMA_URL}/api/generate`, {
@@ -86,9 +90,25 @@ async function ollamaGenerate(prompt) {
   } catch (err) {
     clearTimeout(timeout)
     if (err.name === 'AbortError') {
-      throw new Error('Ollama request timeout (60s)')
+      const secs = Math.round(OLLAMA_TIMEOUT_MS / 1000)
+      throw new Error(`Ollama request timeout (${secs}s)`)
     }
     throw err
+  }
+}
+
+async function ollamaIsHealthy() {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 2000)
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: controller.signal })
+    if (!res.ok) return { ok: false, error: `ollama HTTP ${res.status}` }
+    return { ok: true, error: null }
+  } catch (err) {
+    if (err.name === 'AbortError') return { ok: false, error: 'ollama healthcheck timeout' }
+    return { ok: false, error: err.message || String(err) }
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -126,7 +146,13 @@ class LlmClassifier {
     this.queue = getQueue()
     this.pgClient = null
     this.running = false
-    this.stats = { completed: 0, failed: 0, overridden: 0 }
+    this.stats = { completed: 0, failed: 0, overridden: 0, retried: 0 }
+
+    this.ollamaHealth = {
+      ok: false,
+      lastCheckedAt: 0,
+      lastError: null
+    }
   }
 
   async init() {
@@ -156,7 +182,8 @@ class LlmClassifier {
       stats: {
         status,
         completed: this.stats.completed,
-        failed: this.stats.failed
+        failed: this.stats.failed,
+        retried: this.stats.retried
       }
     })
   }
@@ -226,7 +253,28 @@ class LlmClassifier {
 
     const prompt = buildPrompt(row)
 
-    const resp = await ollamaGenerate(prompt)
+    let resp
+    try {
+      resp = await ollamaGenerate(prompt)
+    } catch (err) {
+      const msg = err?.message || String(err)
+      // Transient infra failure: requeue without burning attempts
+      const isTransient =
+        msg.includes('fetch failed') ||
+        msg.includes('ECONNREFUSED') ||
+        msg.includes('ENOTFOUND') ||
+        msg.includes('ollama HTTP 5') ||
+        msg.includes('Ollama request timeout')
+
+      if (isTransient) {
+        this.queue.retry(job.id, msg, { refundAttempt: true })
+        this.stats.retried++
+        return
+      }
+
+      throw err
+    }
+
     const parsed = safeJsonParse(resp)
 
     if (!parsed) {
@@ -295,6 +343,23 @@ class LlmClassifier {
 
     while (this.running) {
       try {
+        // Preflight Ollama so we don't claim jobs (and increment attempts) when it's down.
+        const now = Date.now()
+        if (now - this.ollamaHealth.lastCheckedAt > OLLAMA_HEALTHCHECK_INTERVAL_MS || !this.ollamaHealth.ok) {
+          const health = await ollamaIsHealthy()
+          this.ollamaHealth = {
+            ok: health.ok,
+            lastCheckedAt: now,
+            lastError: health.error
+          }
+
+          if (!health.ok) {
+            console.error(`[${this.workerId}] Ollama unhealthy (${health.error}); backing off before claiming jobs...`)
+            await new Promise(r => setTimeout(r, 15000))
+            continue
+          }
+        }
+
         const job = this.queue.claim('classify', this.workerId)
 
         if (!job) {
