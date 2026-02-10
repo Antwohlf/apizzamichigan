@@ -167,6 +167,13 @@ class Coordinator {
       this.workers.delete(workerId)
       this.queue.unregisterWorker(workerId)
 
+      // Don't restart if worker type is paused
+      const pauseStatus = this.queue.getPauseStatus()
+      if (pauseStatus[workerType]) {
+        console.log(`Not restarting ${workerType} worker (paused)`)
+        return
+      }
+
       // Restart worker if still running and exit wasn't clean
       if (this.running && code !== 0) {
         console.log(`Restarting ${workerType} worker...`)
