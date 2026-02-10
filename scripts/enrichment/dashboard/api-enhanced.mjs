@@ -310,6 +310,13 @@ export async function getEnhancedStatus() {
     } catch {}
   }
 
+  // Get pause status
+  const pauseStatus = db.isPaused ? {
+    osm_extract: db.isPaused('osm_extract'),
+    scrape: db.isPaused('scrape'),
+    classify: db.isPaused('classify')
+  } : { osm_extract: false, scrape: false, classify: false }
+
   // Build response
   const metrics = {
     timestamp: new Date().toISOString(),
@@ -317,7 +324,8 @@ export async function getEnhancedStatus() {
     queue: {
       stats: queueStats,
       totals,
-      progress
+      progress,
+      paused: pauseStatus
     },
 
     workers: {

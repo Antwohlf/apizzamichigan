@@ -14,11 +14,13 @@ import { getStatus } from './api.mjs'
 import { getEnhancedStatus } from './api-enhanced.mjs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { getQueue } from '../queue.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.DASHBOARD_PORT || 3456
 
 const app = express()
+app.use(express.json())
 
 // Serve enhanced dashboard by default
 app.get('/', (req, res) => {
@@ -48,6 +50,56 @@ app.get('/api/status/enhanced', async (req, res) => {
     res.json(status)
   } catch (err) {
     console.error('Enhanced API error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Control endpoints (pause/resume)
+app.post('/api/control/pause/:workerType', (req, res) => {
+  try {
+    const { workerType } = req.params
+    const validTypes = ['osm_extract', 'scrape', 'classify']
+    
+    if (!validTypes.includes(workerType)) {
+      return res.status(400).json({ error: 'Invalid worker type' })
+    }
+
+    const queue = getQueue()
+    queue.pause(workerType)
+    
+    res.json({ success: true, workerType, action: 'paused' })
+  } catch (err) {
+    console.error('Pause error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/control/resume/:workerType', (req, res) => {
+  try {
+    const { workerType } = req.params
+    const validTypes = ['osm_extract', 'scrape', 'classify']
+    
+    if (!validTypes.includes(workerType)) {
+      return res.status(400).json({ error: 'Invalid worker type' })
+    }
+
+    const queue = getQueue()
+    queue.resume(workerType)
+    
+    res.json({ success: true, workerType, action: 'resumed' })
+  } catch (err) {
+    console.error('Resume error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/control/status', (req, res) => {
+  try {
+    const queue = getQueue()
+    const status = queue.getPauseStatus()
+    res.json(status)
+  } catch (err) {
+    console.error('Control status error:', err)
     res.status(500).json({ error: err.message })
   }
 })

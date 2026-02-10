@@ -254,7 +254,21 @@ class Coordinator {
    * Ensure we have the right number of workers for each type
    */
   ensureWorkers() {
+    const pauseStatus = this.queue.getPauseStatus()
+
     for (const [type, limit] of Object.entries(WORKER_LIMITS)) {
+      // Skip if this worker type is paused
+      if (pauseStatus[type]) {
+        // Kill existing workers of this type if paused
+        for (const [workerId, worker] of this.workers) {
+          if (worker.type === type) {
+            console.log(`Stopping ${type} worker ${workerId} (paused)`)
+            worker.child.kill()
+          }
+        }
+        continue
+      }
+
       // Count current workers of this type
       let currentCount = 0
       for (const [, worker] of this.workers) {

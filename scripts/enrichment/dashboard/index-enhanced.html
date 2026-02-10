@@ -288,6 +288,39 @@
       color: #8b949e;
       font-size: 14px;
     }
+
+    .control-btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-pause {
+      background: #9e6a03;
+      color: #fff;
+    }
+
+    .btn-pause:hover {
+      background: #bb7b0a;
+    }
+
+    .btn-resume {
+      background: #238636;
+      color: #fff;
+    }
+
+    .btn-resume:hover {
+      background: #2ea043;
+    }
+
+    .control-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -318,6 +351,52 @@
             Failed to load dashboard data. Retrying...
           </div>
         `;
+      }
+    }
+
+    async function pauseWorker(workerType) {
+      const btn = document.getElementById(`btn-${workerType}`);
+      if (btn) btn.disabled = true;
+
+      try {
+        const response = await fetch(`/api/control/pause/${workerType}`, {
+          method: 'POST'
+        });
+        
+        if (response.ok) {
+          console.log(`Paused ${workerType}`);
+          await fetchData(); // Refresh immediately
+        } else {
+          alert(`Failed to pause ${workerType}`);
+        }
+      } catch (error) {
+        console.error('Pause error:', error);
+        alert(`Error pausing ${workerType}: ${error.message}`);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function resumeWorker(workerType) {
+      const btn = document.getElementById(`btn-${workerType}`);
+      if (btn) btn.disabled = true;
+
+      try {
+        const response = await fetch(`/api/control/resume/${workerType}`, {
+          method: 'POST'
+        });
+        
+        if (response.ok) {
+          console.log(`Resumed ${workerType}`);
+          await fetchData(); // Refresh immediately
+        } else {
+          alert(`Failed to resume ${workerType}`);
+        }
+      } catch (error) {
+        console.error('Resume error:', error);
+        alert(`Error resuming ${workerType}: ${error.message}`);
+      } finally {
+        if (btn) btn.disabled = false;
       }
     }
 
@@ -693,10 +772,25 @@
       const totals = queue.totals[type];
       const progress = queue.progress[type];
       const rate = performance.rates[type];
+      const isPaused = queue.paused ? queue.paused[type] : false;
 
       return `
         <div class="card">
-          <h2>${title}</h2>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">${title}</h2>
+            <button 
+              class="control-btn ${isPaused ? 'btn-resume' : 'btn-pause'}" 
+              onclick="${isPaused ? 'resume' : 'pause'}Worker('${type}')"
+              id="btn-${type}">
+              ${isPaused ? '▶️ Resume' : '⏸️ Pause'}
+            </button>
+          </div>
+
+          ${isPaused ? `
+            <div class="alert alert-warning" style="margin-bottom: 12px;">
+              ⏸️ Worker paused
+            </div>
+          ` : ''}
           
           <div class="metric-big">${progress}%</div>
           <div class="metric-label">Complete</div>
@@ -727,9 +821,9 @@
           <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #21262d;">
             <div class="stat-label">Processing Rate</div>
             <div class="stat-value" style="font-size: 14px;">
-              ${rate.perHour}/hr (${rate.perMinute}/min)
+              ${isPaused ? 'Paused' : `${rate.perHour}/hr (${rate.perMinute}/min)`}
             </div>
-            ${rate.etaHours ? `
+            ${!isPaused && rate.etaHours ? `
               <div class="stat-label" style="margin-top: 4px;">
                 ETA: ${rate.etaFormatted}
               </div>

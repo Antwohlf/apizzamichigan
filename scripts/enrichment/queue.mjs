@@ -84,6 +84,12 @@ export class JobQueue {
         value TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS control (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
     `)
 
     return this
@@ -435,6 +441,66 @@ export class JobQueue {
   getStat(key) {
     const row = this.db.prepare('SELECT value FROM stats WHERE key = ?').get(key)
     return row ? JSON.parse(row.value) : null
+  }
+
+  // =========================================================
+  // CONTROL OPERATIONS (pause/resume)
+  // =========================================================
+
+  /**
+   * Set control value
+   */
+  setControl(key, value) {
+    this.db.prepare(`
+      INSERT INTO control (key, value, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET
+        value = ?,
+        updated_at = datetime('now')
+    `).run(key, value, value)
+  }
+
+  /**
+   * Get control value
+   */
+  getControl(key) {
+    const row = this.db.prepare('SELECT value FROM control WHERE key = ?').get(key)
+    return row ? row.value : null
+  }
+
+  /**
+   * Check if worker type is paused
+   */
+  isPaused(workerType) {
+    const value = this.getControl(`pause_${workerType}`)
+    return value === 'true'
+  }
+
+  /**
+   * Pause worker type
+   */
+  pause(workerType) {
+    this.setControl(`pause_${workerType}`, 'true')
+    console.log(`[Queue] Paused ${workerType}`)
+  }
+
+  /**
+   * Resume worker type
+   */
+  resume(workerType) {
+    this.setControl(`pause_${workerType}`, 'false')
+    console.log(`[Queue] Resumed ${workerType}`)
+  }
+
+  /**
+   * Get pause status for all worker types
+   */
+  getPauseStatus() {
+    return {
+      osm_extract: this.isPaused('osm_extract'),
+      scrape: this.isPaused('scrape'),
+      classify: this.isPaused('classify')
+    }
   }
 }
 
