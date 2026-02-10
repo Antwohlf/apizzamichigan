@@ -263,7 +263,7 @@ class Coordinator {
         for (const [workerId, worker] of this.workers) {
           if (worker.type === type) {
             console.log(`Stopping ${type} worker ${workerId} (paused)`)
-            worker.child.kill()
+            worker.process.kill()
           }
         }
         continue
