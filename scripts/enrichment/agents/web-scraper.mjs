@@ -369,8 +369,13 @@ class WebScraper {
 
     // Heartbeat interval
     const heartbeatInterval = setInterval(() => {
-      this.queue.heartbeat(this.workerId)
-      if (process.send) process.send({ type: 'heartbeat' })
+      try {
+        this.queue.heartbeat(this.workerId)
+        if (process.send) process.send({ type: 'heartbeat' })
+      } catch (error) {
+        console.error(`[${this.workerId}] Heartbeat error:`, error.message)
+        // Don't exit on heartbeat errors; they're non-critical
+      }
     }, 30000)
 
     // Handle shutdown message
@@ -382,14 +387,25 @@ class WebScraper {
 
     // Main loop
     while (this.running) {
-      const job = this.queue.claim('scrape', this.workerId)
+      try {
+        const job = this.queue.claim('scrape', this.workerId)
 
-      if (job) {
-        await this.processJob(job)
-        this.sendStats()
-        await new Promise(r => setTimeout(r, FETCH_DELAY))
-      } else {
-        await new Promise(r => setTimeout(r, 5000))
+        if (job) {
+          await this.processJob(job)
+          this.sendStats()
+          await new Promise(r => setTimeout(r, FETCH_DELAY))
+        } else {
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      } catch (error) {
+        // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
+        if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+          console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+          await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
+        } else {
+          console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+          await new Promise(r => setTimeout(r, 5000))
+        }
       }
     }
 

@@ -280,8 +280,13 @@ class LlmClassifier {
     if (process.send) process.send({ type: 'ready' })
 
     const heartbeatInterval = setInterval(() => {
-      this.queue.heartbeat(this.workerId)
-      if (process.send) process.send({ type: 'heartbeat' })
+      try {
+        this.queue.heartbeat(this.workerId)
+        if (process.send) process.send({ type: 'heartbeat' })
+      } catch (error) {
+        console.error(`[${this.workerId}] Heartbeat error:`, error.message)
+        // Don't exit on heartbeat errors; they're non-critical
+      }
     }, 30000)
 
     process.on('message', (msg) => {
@@ -289,23 +294,34 @@ class LlmClassifier {
     })
 
     while (this.running) {
-      const job = this.queue.claim('classify', this.workerId)
-
-      if (!job) {
-        await new Promise(r => setTimeout(r, 5000))
-        continue
-      }
-
       try {
-        await this.processJob(job)
-      } catch (e) {
-        this.queue.fail(job.id, e.message)
-        this.stats.failed++
-      }
+        const job = this.queue.claim('classify', this.workerId)
 
-      this.sendStats('running')
-      // rate limit LLM calls
-      await new Promise(r => setTimeout(r, 750))
+        if (!job) {
+          await new Promise(r => setTimeout(r, 5000))
+          continue
+        }
+
+        try {
+          await this.processJob(job)
+        } catch (e) {
+          this.queue.fail(job.id, e.message)
+          this.stats.failed++
+        }
+
+        this.sendStats('running')
+        // rate limit LLM calls
+        await new Promise(r => setTimeout(r, 750))
+      } catch (error) {
+        // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
+        if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+          console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+          await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
+        } else {
+          console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      }
     }
 
     clearInterval(heartbeatInterval)

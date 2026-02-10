@@ -385,9 +385,14 @@ out center tags;
    * Send heartbeat
    */
   sendHeartbeat() {
-    this.queue.heartbeat(this.workerId)
-    if (process.send) {
-      process.send({ type: 'heartbeat' })
+    try {
+      this.queue.heartbeat(this.workerId)
+      if (process.send) {
+        process.send({ type: 'heartbeat' })
+      }
+    } catch (error) {
+      console.error(`[${this.workerId}] Heartbeat error:`, error.message)
+      // Don't exit on heartbeat errors; they're non-critical
     }
   }
 
@@ -418,21 +423,32 @@ out center tags;
 
     // Main processing loop
     while (this.running) {
-      // Claim jobs for a batch
-      const batch = []
-      while (batch.length < BATCH_SIZE) {
-        const job = this.queue.claim('osm_extract', this.workerId)
-        if (!job) break
-        batch.push(job)
-      }
+      try {
+        // Claim jobs for a batch
+        const batch = []
+        while (batch.length < BATCH_SIZE) {
+          const job = this.queue.claim('osm_extract', this.workerId)
+          if (!job) break
+          batch.push(job)
+        }
 
-      if (batch.length > 0) {
-        console.log(`[${this.workerId}] Processing batch of ${batch.length} jobs`)
-        await this.processBatch(batch)
-        await new Promise(r => setTimeout(r, BATCH_DELAY))
-      } else {
-        // No jobs available, wait
-        await new Promise(r => setTimeout(r, 5000))
+        if (batch.length > 0) {
+          console.log(`[${this.workerId}] Processing batch of ${batch.length} jobs`)
+          await this.processBatch(batch)
+          await new Promise(r => setTimeout(r, BATCH_DELAY))
+        } else {
+          // No jobs available, wait
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      } catch (error) {
+        // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
+        if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+          console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+          await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
+        } else {
+          console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+          await new Promise(r => setTimeout(r, 5000))
+        }
       }
     }
 
