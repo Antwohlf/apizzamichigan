@@ -58,7 +58,7 @@ app.get('/api/status/enhanced', async (req, res) => {
 app.post('/api/control/pause/:workerType', (req, res) => {
   try {
     const { workerType } = req.params
-    const validTypes = ['osm_extract', 'scrape', 'classify']
+    const validTypes = ['osm_extract', 'scrape', 'classify', 'menu_parse']
     
     if (!validTypes.includes(workerType)) {
       return res.status(400).json({ error: 'Invalid worker type' })
@@ -77,7 +77,7 @@ app.post('/api/control/pause/:workerType', (req, res) => {
 app.post('/api/control/resume/:workerType', (req, res) => {
   try {
     const { workerType } = req.params
-    const validTypes = ['osm_extract', 'scrape', 'classify']
+    const validTypes = ['osm_extract', 'scrape', 'classify', 'menu_parse']
     
     if (!validTypes.includes(workerType)) {
       return res.status(400).json({ error: 'Invalid worker type' })

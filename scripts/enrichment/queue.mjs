@@ -499,7 +499,8 @@ export class JobQueue {
     return {
       osm_extract: this.isPaused('osm_extract'),
       scrape: this.isPaused('scrape'),
-      classify: this.isPaused('classify')
+      classify: this.isPaused('classify'),
+      menu_parse: this.isPaused('menu_parse')
     }
   }
 }

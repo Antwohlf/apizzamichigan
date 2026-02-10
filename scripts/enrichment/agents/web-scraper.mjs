@@ -267,8 +267,8 @@ class WebScraper {
           this.queue.addJob('classify', job.osmId, job.placeType, { state })
         }
 
-        // Slowlane: enqueue menu parsing (pizza-only) if we don't already have menu_data
-        if (job.placeType === 'pizza' && menuData == null) {
+        // Slowlane: enqueue menu parsing (pizza-only) if we don't already have menu_data and slowlane isn't paused
+        if (job.placeType === 'pizza' && menuData == null && !this.queue.isPaused('menu_parse')) {
           this.queue.addJob('menu_parse', job.osmId, job.placeType, { state })
         }
 
@@ -295,8 +295,8 @@ class WebScraper {
             this.queue.addJob('classify', job.osmId, job.placeType, { state })
           }
 
-          // Slowlane: enqueue menu parsing (pizza-only) if we don't already have menu_data
-          if (job.placeType === 'pizza' && menuData == null) {
+          // Slowlane: enqueue menu parsing (pizza-only) if we don't already have menu_data and slowlane isn't paused
+          if (job.placeType === 'pizza' && menuData == null && !this.queue.isPaused('menu_parse')) {
             this.queue.addJob('menu_parse', job.osmId, job.placeType, { state })
           }
         }

@@ -171,9 +171,34 @@ export async function getEnhancedStatus() {
       COUNT(*) as total,
       COUNT(*) FILTER (WHERE osm_tags IS NOT NULL) as osm_tags_populated,
       COUNT(*) FILTER (WHERE scrape_method='fetch') as scraped,
-      COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) as classified
+      COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) as classified,
+      COUNT(*) FILTER (WHERE menu_data IS NOT NULL) as with_menu_data
     FROM pizza_places
     WHERE state = 'MI'
+  `)
+
+  // Menu parsing coverage (overall)
+  const menuCoverage = await pgClient.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE menu_data IS NOT NULL) as with_menu_data,
+      COUNT(*) as total
+    FROM pizza_places
+  `)
+
+  // Recent QA flags
+  const qaStats = await pgClient.query(`
+    SELECT
+      COUNT(*) as total_flags,
+      COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours') as flags_last_24h,
+      COUNT(*) FILTER (WHERE severity = 'error' AND created_at > now() - interval '24 hours') as errors_last_24h
+    FROM qa_flags
+  `)
+
+  const qaRecent = await pgClient.query(`
+    SELECT id, place_id, flag_type, severity, message, created_at
+    FROM qa_flags
+    ORDER BY created_at DESC
+    LIMIT 10
   `)
 
   // Geographic coverage
@@ -272,7 +297,7 @@ export async function getEnhancedStatus() {
   const totals = {}
   const progress = {}
   
-  for (const jobType of ['osm_extract', 'scrape', 'classify']) {
+  for (const jobType of ['osm_extract', 'scrape', 'classify', 'menu_parse']) {
     const pending = queueStats.find(s => s.job_type === jobType && s.status === 'pending')?.count || 0
     const processing = queueStats.find(s => s.job_type === jobType && s.status === 'processing')?.count || 0
     const completed = queueStats.find(s => s.job_type === jobType && s.status === 'completed')?.count || 0
@@ -285,7 +310,7 @@ export async function getEnhancedStatus() {
 
   // === PROCESSING RATE & ETA ===
   const processingRates = {}
-  for (const jobType of ['osm_extract', 'scrape', 'classify']) {
+  for (const jobType of ['osm_extract', 'scrape', 'classify', 'menu_parse']) {
     const hourly = lastHourCompletions.find(c => c.job_type === jobType)?.count || 0
     const pending = totals[jobType].pending
     const etaHours = hourly > 0 ? pending / hourly : null
@@ -350,7 +375,12 @@ export async function getEnhancedStatus() {
       michigan: michiganStats.rows[0],
       geography: geoCoverage.rows,
       styles: styleDistribution.rows,
-      handoff: handoffStats.rows[0]
+      handoff: handoffStats.rows[0],
+      menu: menuCoverage.rows[0],
+      qa: {
+        stats: qaStats.rows[0],
+        recent: qaRecent.rows
+      }
     },
 
     errors: {

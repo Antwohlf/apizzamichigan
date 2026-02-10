@@ -443,6 +443,13 @@
           ${renderQueueCard('OSM Extract', 'osm_extract', queue, performance)}
           ${renderQueueCard('Scrape', 'scrape', queue, performance)}
           ${renderQueueCard('Classify', 'classify', queue, performance)}
+          ${renderQueueCard('Menu Parse (Slowlane)', 'menu_parse', queue, performance)}
+        </div>
+
+        <!-- SLOWLANE SUMMARY -->
+        <div class="grid">
+          ${renderSlowlaneSummary(postgres, queue)}
+          ${renderRecentQAFlags(postgres)}
         </div>
       `;
 
@@ -664,6 +671,74 @@
       `;
     }
 
+    function renderSlowlaneSummary(postgres, queue) {
+      const menu = postgres.menu || { with_menu_data: 0, total: 0 };
+      const qa = postgres.qa?.stats || { total_flags: 0, flags_last_24h: 0, errors_last_24h: 0 };
+
+      const withMenu = parseInt(menu.with_menu_data || 0, 10);
+      const total = parseInt(menu.total || 0, 10);
+      const pctMenu = total > 0 ? ((withMenu / total) * 100).toFixed(2) : '0.00';
+
+      return `
+        <div class="card">
+          <h2>🛣️ Slowlane (Menu + QA)</h2>
+
+          <h3>Menu Parsing Coverage</h3>
+          <div class="stat">
+            <span class="stat-label">Places with menu_data</span>
+            <span class="stat-value">${withMenu.toLocaleString()} (${pctMenu}%)</span>
+          </div>
+
+          <h3 style="margin-top: 14px;">QA Flags</h3>
+          <div class="stat">
+            <span class="stat-label">Total flags</span>
+            <span class="stat-value">${parseInt(qa.total_flags || 0, 10).toLocaleString()}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Flags (last 24h)</span>
+            <span class="stat-value">${parseInt(qa.flags_last_24h || 0, 10).toLocaleString()}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Error-severity (last 24h)</span>
+            <span class="stat-value">${parseInt(qa.errors_last_24h || 0, 10).toLocaleString()}</span>
+          </div>
+
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #21262d;">
+            <div class="stat-label">Tip</div>
+            <div class="stat-value" style="font-size: 13px; font-weight: 500; color: #8b949e;">
+              Menu parsing runs via JambaMini every 20s (Haiku fallback on low confidence).
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderRecentQAFlags(postgres) {
+      const recent = postgres.qa?.recent || [];
+
+      return `
+        <div class="card">
+          <h2>🧪 Recent QA Flags</h2>
+          ${recent.length === 0 ? `
+            <div class="stat-label">No flags yet.</div>
+          ` : `
+            <div class="activity-feed">
+              ${recent.map(f => `
+                <div class="activity-item ${f.severity === 'error' ? 'failure' : ''}">
+                  <div class="activity-time">${formatTime(f.created_at)}</div>
+                  <div class="activity-desc">
+                    <span class="badge ${f.severity === 'error' ? 'badge-error' : (f.severity === 'warn' ? 'badge-warning' : 'badge-info')}">${f.flag_type}</span>
+                    Place #${f.place_id}
+                  </div>
+                  <div class="activity-error" style="color:#8b949e;">${escapeHtml(f.message)}</div>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
     function renderSystemHealth(health) {
       if (!health || health.error) {
         return `
@@ -769,10 +844,10 @@
     }
 
     function renderQueueCard(title, type, queue, performance) {
-      const totals = queue.totals[type];
-      const progress = queue.progress[type];
-      const rate = performance.rates[type];
-      const isPaused = queue.paused ? queue.paused[type] : false;
+      const totals = queue.totals[type] || { pending: 0, processing: 0, completed: 0, failed: 0, total: 0 };
+      const progress = queue.progress[type] || 0;
+      const rate = performance.rates[type] || { perHour: 0, perMinute: 0, etaHours: null, etaFormatted: 'N/A' };
+      const isPaused = queue.paused ? !!queue.paused[type] : false;
 
       return `
         <div class="card">
@@ -831,6 +906,16 @@
           </div>
         </div>
       `;
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
     }
 
     function formatTime(timestamp) {
