@@ -34,6 +34,11 @@ const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b'
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 const OLLAMA_TIMEOUT_MS = process.env.OLLAMA_TIMEOUT_MS ? parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) : 180000
+
+// Performance tuning (important on 4-core machines): cap per-request threads.
+// Ollama supports passing "options" in /api/generate.
+const OLLAMA_NUM_THREADS = process.env.OLLAMA_NUM_THREADS ? parseInt(process.env.OLLAMA_NUM_THREADS, 10) : 2
+
 const OLLAMA_HEALTHCHECK_INTERVAL_MS = process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS
   ? parseInt(process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS, 10)
   : 30000
@@ -73,7 +78,10 @@ async function ollamaGenerate(prompt) {
         model: MODEL,
         prompt,
         stream: false,
-        format: 'json'
+        format: 'json',
+        options: {
+          num_thread: Number.isFinite(OLLAMA_NUM_THREADS) && OLLAMA_NUM_THREADS > 0 ? OLLAMA_NUM_THREADS : 2
+        }
       }),
       signal: controller.signal
     })
