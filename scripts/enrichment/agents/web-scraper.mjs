@@ -12,12 +12,54 @@
 import { getQueue } from '../queue.mjs'
 import pg from 'pg'
 import * as cheerio from 'cheerio'
+import fs from 'node:fs'
+import path from 'node:path'
 import 'dotenv/config'
 
 const CONCURRENT_FETCHES = 5
-const FETCH_TIMEOUT = 15000  // 15 seconds (increased for slow sites)
-const FETCH_DELAY = 500      // ms between fetches
-const MAX_RETRIES = 2        // Retry HTTP 5xx errors
+
+// Network tuning
+// - Default timeout bumped to 30s to reduce false failures on slow sites.
+// - Can be overridden per-run via env.
+const FETCH_TIMEOUT = Number.parseInt(process.env.SCRAPE_FETCH_TIMEOUT_MS || '30000', 10) // ms
+const FETCH_DELAY = Number.parseInt(process.env.SCRAPE_FETCH_DELAY_MS || '500', 10)      // ms between jobs
+
+// Retry policy
+// - Still retries HTTP 5xx.
+// - Also retries transient network/abort errors.
+const MAX_RETRIES = Number.parseInt(process.env.SCRAPE_MAX_RETRIES || '3', 10)
+
+// Where to record "can't scrape" cases so we can revisit later.
+// Keep it simple: append-only JSONL file in /tmp/openclaw by default.
+const CANT_SCRAPE_LOG = process.env.SCRAPE_CANT_SCRAPE_LOG || '/tmp/openclaw/scrape-cant-scrape.jsonl'
+
+function isCantScrapeErrorMessage(msg) {
+  if (!msg) return false
+  // Treat these as permanent/expected failures for now.
+  return (
+    /^HTTP (403|404|410|520|521|523|525|526|530)$/.test(msg) ||
+    msg.startsWith('Non-HTML content:')
+  )
+}
+
+function shouldRetryErrorMessage(msg) {
+  if (!msg) return false
+  if (/^HTTP 5\d{2}$/.test(msg)) return true
+  // Node fetch transient errors often show up as these strings.
+  if (msg === 'fetch failed') return true
+  if (msg === 'This operation was aborted') return true
+  return false
+}
+
+function logCantScrape(entry) {
+  try {
+    const dir = path.dirname(CANT_SCRAPE_LOG)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.appendFileSync(CANT_SCRAPE_LOG, `${JSON.stringify(entry)}\n`)
+  } catch {
+    // never crash the worker because logging failed
+  }
+}
 
 class WebScraper {
   constructor(workerId) {
@@ -256,8 +298,22 @@ class WebScraper {
     const cached = await this.checkCache(url)
     if (cached) {
       if (cached.fetch_error) {
-        this.queue.fail(job.id, `Cached error: ${cached.fetch_error}`)
-        this.stats.failed++
+        const msg = String(cached.fetch_error)
+        if (isCantScrapeErrorMessage(msg)) {
+          logCantScrape({
+            ts: new Date().toISOString(),
+            source: 'cache',
+            osmId: job.osmId,
+            placeType: job.placeType,
+            url,
+            error: msg
+          })
+          this.queue.complete(job.id, { status: 'cant_scrape', reason: msg })
+          this.stats.completed++
+        } else {
+          this.queue.fail(job.id, `Cached error: ${msg}`)
+          this.stats.failed++
+        }
       } else {
         // Update database with cached data
         await this.updateDb(job.osmId, job.placeType, cached.extracted_data)
@@ -278,7 +334,7 @@ class WebScraper {
       return
     }
 
-    // Fetch the website (with retry for 5xx errors)
+    // Fetch the website (with retry for transient errors)
     let lastError = null
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -306,22 +362,40 @@ class WebScraper {
         return
       } catch (error) {
         lastError = error
-        
-        // Retry only on HTTP 5xx errors
-        const is5xx = error.message && /HTTP 5\d{2}/.test(error.message)
-        if (is5xx && attempt < MAX_RETRIES) {
-          await new Promise(r => setTimeout(r, 2000 * (attempt + 1))) // backoff
+        const msg = String(error?.message || error)
+
+        // If it's a permanent/expected block/deadlink for now, don't keep retrying.
+        if (isCantScrapeErrorMessage(msg)) {
+          await this.saveToCache(url, null, null, null, msg)
+          logCantScrape({
+            ts: new Date().toISOString(),
+            source: 'fetch',
+            osmId: job.osmId,
+            placeType: job.placeType,
+            url,
+            error: msg
+          })
+          this.queue.complete(job.id, { status: 'cant_scrape', reason: msg })
+          this.stats.completed++
+          return
+        }
+
+        // Retry transient errors (5xx, fetch failures, aborts)
+        if (shouldRetryErrorMessage(msg) && attempt < MAX_RETRIES) {
+          const backoffMs = 1500 * (attempt + 1)
+          await new Promise(r => setTimeout(r, backoffMs))
           continue
         }
-        
-        // Otherwise fail immediately
+
+        // Otherwise, fail and let the queue's max_attempts policy decide.
         break
       }
     }
-    
+
     // All retries exhausted or non-retryable error
-    await this.saveToCache(url, null, null, null, lastError.message)
-    this.queue.fail(job.id, lastError.message)
+    const msg = String(lastError?.message || lastError)
+    await this.saveToCache(url, null, null, null, msg)
+    this.queue.fail(job.id, msg)
     this.stats.failed++
   }
 
