@@ -29,6 +29,12 @@ const FETCH_DELAY = Number.parseInt(process.env.SCRAPE_FETCH_DELAY_MS || '500', 
 // - Also retries transient network/abort errors.
 const MAX_RETRIES = Number.parseInt(process.env.SCRAPE_MAX_RETRIES || '3', 10)
 
+// Automatically requeue previously-failed scrape jobs in conservative batches.
+// This avoids having to manually run batches, while still spacing actual requests.
+const REQUEUE_BATCH = Number.parseInt(process.env.SCRAPE_REQUEUE_BATCH || '100', 10)
+const REQUEUE_INTERVAL_MS = Number.parseInt(process.env.SCRAPE_REQUEUE_INTERVAL_MS || '60000', 10)
+const REQUEUE_PENDING_MAX = Number.parseInt(process.env.SCRAPE_REQUEUE_PENDING_MAX || '200', 10)
+
 // Where to record "can't scrape" cases so we can revisit later.
 // Keep it simple: append-only JSONL file in /tmp/openclaw by default.
 const CANT_SCRAPE_LOG = process.env.SCRAPE_CANT_SCRAPE_LOG || '/tmp/openclaw/scrape-cant-scrape.jsonl'
@@ -62,6 +68,107 @@ function logCantScrape(entry) {
 }
 
 class WebScraper {
+  lastRequeueAt = 0
+
+  cleanupUnclaimablePending() {
+    // If a scrape job is "pending" but attempts are exhausted, it will never be claimable.
+    // Flip to failed so the queue doesn't look stuck.
+    try {
+      return this.queue.db
+        .prepare(
+          `
+          UPDATE jobs
+          SET status='failed', completed_at=datetime('now')
+          WHERE job_type='scrape'
+            AND status='pending'
+            AND attempts >= max_attempts
+          `
+        )
+        .run().changes
+    } catch {
+      return 0
+    }
+  }
+
+  maybeRequeueFailedBatch() {
+    const now = Date.now()
+    if (now - this.lastRequeueAt < REQUEUE_INTERVAL_MS) return { requeued: 0, cleaned: 0 }
+
+    // Don't keep requeueing if we already have a healthy buffer.
+    const pending = this.queue.db
+      .prepare("SELECT COUNT(*) n FROM jobs WHERE job_type='scrape' AND status='pending'")
+      .get().n
+
+    const cleaned = this.cleanupUnclaimablePending()
+
+    if (pending > REQUEUE_PENDING_MAX) {
+      this.lastRequeueAt = now
+      return { requeued: 0, cleaned }
+    }
+
+    const candidates = this.queue.db
+      .prepare(
+        `
+        SELECT id, last_error
+        FROM jobs
+        WHERE job_type='scrape'
+          AND status='failed'
+          AND last_error IS NOT NULL
+
+          -- include transient-ish
+          AND (
+            last_error LIKE '%fetch failed%'
+            OR last_error LIKE '%This operation was aborted%'
+            OR last_error LIKE '%timeout%'
+            OR last_error LIKE 'HTTP 5%'
+            OR last_error LIKE '%ECONNRESET%'
+            OR last_error LIKE '%ETIMEDOUT%'
+          )
+
+          -- exclude 403s and permanent-ish
+          AND last_error NOT LIKE 'HTTP 403%'
+          AND last_error NOT LIKE 'Cached error: HTTP 403%'
+          AND last_error NOT LIKE 'HTTP 404%'
+          AND last_error NOT LIKE 'Cached error: HTTP 404%'
+          AND last_error NOT LIKE 'HTTP 410%'
+          AND last_error NOT LIKE 'Cached error: HTTP 410%'
+
+        ORDER BY id ASC
+        LIMIT ?
+        `
+      )
+      .all(REQUEUE_BATCH)
+
+    if (!candidates.length) {
+      this.lastRequeueAt = now
+      return { requeued: 0, cleaned }
+    }
+
+    const stamp = new Date().toISOString()
+    const tx = this.queue.db.transaction((rows) => {
+      const stmt = this.queue.db.prepare(
+        `
+        UPDATE jobs
+        SET status='pending',
+            worker_id=NULL,
+            started_at=NULL,
+            completed_at=NULL,
+            attempts=0,
+            last_error=?
+        WHERE id=?
+        `
+      )
+      for (const r of rows) {
+        stmt.run(`requeued ${stamp} (was: ${String(r.last_error).slice(0, 120)})`, r.id)
+      }
+    })
+
+    tx(candidates)
+    this.lastRequeueAt = now
+    console.log(`[${this.workerId}] Requeued ${candidates.length} failed scrape jobs (batch)`)
+    return { requeued: candidates.length, cleaned }
+  }
+
   constructor(workerId) {
     this.workerId = workerId
     this.queue = getQueue()
@@ -479,6 +586,10 @@ class WebScraper {
           this.sendStats()
           await new Promise(r => setTimeout(r, FETCH_DELAY))
         } else {
+          // No pending jobs right now. Periodically requeue a conservative batch of
+          // previously-failed transient scrapes (excluding 403s) so the worker can
+          // systematically work through the backlog without manual batching.
+          this.maybeRequeueFailedBatch()
           await new Promise(r => setTimeout(r, 5000))
         }
       } catch (error) {
