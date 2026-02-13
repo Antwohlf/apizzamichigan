@@ -154,7 +154,8 @@ class WebScraper {
             started_at=NULL,
             completed_at=NULL,
             attempts=0,
-            last_error=?
+            last_error=?,
+            data=json_set(COALESCE(data, '{}'), '$.skipCache', 1)
         WHERE id=?
         `
       )
@@ -401,8 +402,11 @@ class WebScraper {
 
     const { website_url: url, state, style, price_range: priceRange, menu_data: menuData } = result.rows[0]
 
-    // Check cache
-    const cached = await this.checkCache(url)
+    // Skip cache if this job was explicitly requeued for a fresh retry
+    const skipCache = job.data?.skipCache === 1
+
+    // Check cache (unless skipCache is set)
+    const cached = skipCache ? null : await this.checkCache(url)
     if (cached) {
       if (cached.fetch_error) {
         const msg = String(cached.fetch_error)

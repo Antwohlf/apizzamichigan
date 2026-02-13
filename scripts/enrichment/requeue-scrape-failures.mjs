@@ -65,7 +65,8 @@ const requeueTx = q.db.transaction((rows) => {
         started_at = NULL,
         completed_at = NULL,
         attempts = 0,
-        last_error = ?
+        last_error = ?,
+        data = json_set(COALESCE(data, '{}'), '$.skipCache', 1)
     WHERE id = ?
     `
   )
