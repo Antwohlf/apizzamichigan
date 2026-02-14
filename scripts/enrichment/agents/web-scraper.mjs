@@ -583,6 +583,9 @@ class WebScraper {
     // Main loop
     while (this.running) {
       try {
+        // Periodically requeue failed jobs before claiming (so it runs even when processing)
+        this.maybeRequeueFailedBatch()
+
         const job = this.queue.claim('scrape', this.workerId)
 
         if (job) {
@@ -590,10 +593,7 @@ class WebScraper {
           this.sendStats()
           await new Promise(r => setTimeout(r, FETCH_DELAY))
         } else {
-          // No pending jobs right now. Periodically requeue a conservative batch of
-          // previously-failed transient scrapes (excluding 403s) so the worker can
-          // systematically work through the backlog without manual batching.
-          this.maybeRequeueFailedBatch()
+          // No pending jobs right now, wait a bit before checking again
           await new Promise(r => setTimeout(r, 5000))
         }
       } catch (error) {
