@@ -33,6 +33,7 @@ async function main() {
       osm_tags
     FROM pizza_places
     WHERE (style IS NOT NULL OR price_range IS NOT NULL)
+      AND state = 'MI'
     ORDER BY last_enriched_at DESC NULLS LAST
     LIMIT $1
   `, [LIMIT])
