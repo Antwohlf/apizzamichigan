@@ -27,6 +27,24 @@
 /scripts/.job-queue.db-shm
 /scripts/.job-queue.db-wal
 
+# OpenClaw / cron / watchdog local artifacts
+/.openclaw/
+/.status/
+/.cron_status/
+/.watchdog/
+/.cron-state-*.json
+/.enrichment-status-*.json
+/.last-enrichment-status.json
+/.status_hourly.json
+/.status_hourly.json.bak
+
+# local agent scaffolding
+/.clawd/
+/.codex/
+
+# local patch files
+*.patch
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

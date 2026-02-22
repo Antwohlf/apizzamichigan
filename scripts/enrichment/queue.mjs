@@ -308,17 +308,52 @@ export class JobQueue {
   /**
    * Recover orphaned jobs (from crashed workers)
    */
-  recoverOrphaned(timeoutMinutes = 10) {
-    const result = this.db.prepare(`
-      UPDATE jobs
-      SET status = 'pending',
-          worker_id = NULL,
-          started_at = NULL
-      WHERE status = 'processing'
-        AND started_at < datetime('now', '-' || ? || ' minutes')
-    `).run(timeoutMinutes)
+  recoverOrphaned(timeoutMinutes = 10, { failJobTypes = ['menu_parse'] } = {}) {
+    const recover = this.db.transaction(() => {
+      const orphaned = this.db.prepare(`
+        SELECT id, job_type, worker_id
+        FROM jobs
+        WHERE status = 'processing'
+          AND started_at < datetime('now', '-' || ? || ' minutes')
+      `).all(timeoutMinutes)
 
-    return result.changes
+      if (!orphaned.length) return 0
+
+      const nowIso = new Date().toISOString()
+
+      for (const job of orphaned) {
+        const shouldFail = failJobTypes.includes(job.job_type)
+
+        this.db.prepare(`
+          UPDATE jobs
+          SET status = ?,
+              worker_id = NULL,
+              started_at = NULL,
+              last_error = ?,
+              completed_at = CASE WHEN ? = 'failed' THEN datetime('now') ELSE NULL END
+          WHERE id = ?
+        `).run(
+          shouldFail ? 'failed' : 'pending',
+          `Recovered orphaned job after ${timeoutMinutes}m timeout at ${nowIso}`,
+          shouldFail ? 'failed' : 'pending',
+          job.id
+        )
+
+        if (job.worker_id) {
+          this.db.prepare(`
+            UPDATE workers
+            SET status = 'idle',
+                current_job_id = NULL,
+                last_heartbeat = datetime('now')
+            WHERE worker_id = ?
+          `).run(job.worker_id)
+        }
+      }
+
+      return orphaned.length
+    })
+
+    return recover()
   }
 
   // =========================================================
