@@ -12,8 +12,10 @@ const resolveEnv = (keys = []) => {
 
 const importMetaEnv = (name) => {
   try {
-    if (typeof import.meta !== 'undefined' && import.meta.env && name in import.meta.env) {
-      return import.meta.env[name]
+    // eslint-disable-next-line no-eval
+    const metaEnv = eval('import.meta').env
+    if (metaEnv && name in metaEnv) {
+      return metaEnv[name]
     }
   } catch (err) {
     // ignore

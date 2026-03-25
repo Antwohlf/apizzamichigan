@@ -35,6 +35,13 @@ async function fetchStats(table) {
   return allData
 }
 
+function normalizeStatus(value) {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  return normalized
+}
+
 export function StatsPanel({ table = 'pizza_places' }) {
   const [stats, setStats] = useState({ tried: 0, unvisited: 0, average: '—' })
   const [loading, setLoading] = useState(true)
@@ -49,8 +56,19 @@ export function StatsPanel({ table = 'pizza_places' }) {
 
         if (!isMounted) return
 
-        const tried = data.filter(p => ['visited', 'golden'].includes(p.status || 'visited'))
-        const unvisited = data.filter(p => (p.status || 'visited') === 'unvisited')
+        const withNormalizedStatus = data.map(place => ({
+          ...place,
+          _status: normalizeStatus(place.status),
+        }))
+
+        const tried = withNormalizedStatus.filter(
+          p =>
+            typeof p._status === 'string' &&
+            (p._status.startsWith('visited') || p._status.startsWith('golden')) &&
+            typeof p.rating === 'number' &&
+            !Number.isNaN(p.rating)
+        )
+        const unvisited = withNormalizedStatus.filter(p => p._status === 'unvisited')
         const rated = tried.filter(p => typeof p.rating === 'number' && !Number.isNaN(p.rating))
         const average = rated.length
           ? rated.reduce((sum, place) => sum + (place.rating ?? 0), 0) / rated.length

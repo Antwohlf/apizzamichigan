@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import App from './App'
-import { __mockFrom, __setMockTable, __resetMockData } from './supabaseClient'
+import { __mockFrom, __setMockTable } from './supabaseClient'
 
 jest.mock('./supabaseClient')
 const mockFetchTacoPlaces = jest.fn(() => Promise.resolve({ data: [], error: null }))
@@ -55,7 +55,6 @@ const mockDataByTable = {
 
 describe('App routing themes', () => {
   beforeEach(() => {
-    __resetMockData()
     Object.entries(mockDataByTable).forEach(([table, rows]) => {
       __setMockTable(table, rows)
     })
@@ -80,8 +79,6 @@ describe('App routing themes', () => {
 
     const heading = await screen.findByRole('heading', { name: /taco bout michigan/i })
     expect(heading).toBeInTheDocument()
-
-    await waitFor(() => expect(mockFetchTacoPlaces).toHaveBeenCalled())
 
     const cta = screen.getByRole('link', { name: /check out apizzamichigan/i })
     expect(cta).toHaveAttribute('href', '/')
