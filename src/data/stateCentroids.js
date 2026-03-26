@@ -160,6 +160,13 @@ export const STATE_CENTROIDS = {
   CVL: { lat: 47.7516, lng: 1.6751, name: 'Centre-Val de Loire', country: 'FR' },
   COR: { lat: 42.0396, lng: 9.0129, name: 'Corsica', country: 'FR' },
 
+  // Legacy bucket used by older imports for Europe-wide state coding
+  EU: { lat: 50.1109, lng: 8.6821, name: 'Europe', country: 'EU' },
+  EU_ES: { lat: 40.4168, lng: -3.7038, name: 'Spain', country: 'ES' },
+  EU_IT: { lat: 41.9028, lng: 12.4964, name: 'Italy', country: 'IT' },
+  EU_NL: { lat: 52.3676, lng: 4.9041, name: 'Netherlands', country: 'NL' },
+  EU_CZ: { lat: 50.0755, lng: 14.4378, name: 'Czechia', country: 'CZ' },
+
   // === Spanish Autonomous Communities ===
   AN: { lat: 37.5443, lng: -4.7278, name: 'Andalusia', country: 'ES' },
   ES_CT: { lat: 41.5912, lng: 1.5209, name: 'Catalonia', country: 'ES' },

@@ -2,13 +2,15 @@ import React from 'react'
 import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
 import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
+import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
 import tacoIconGrey from '../icons/taco/marker-taco-grey.svg'
+import tacoIconColored from '../icons/taco/marker-taco-colored.svg'
 
 const STATE_ZOOM = 7
 
 const ICONS = {
-  pizza: pizzaIconGrey,
-  taco: tacoIconGrey,
+  pizza: { base: pizzaIconGrey, highlight: pizzaIconColored },
+  taco: { base: tacoIconGrey, highlight: tacoIconColored },
 }
 
 const BADGE_COLORS = {
@@ -20,8 +22,9 @@ const BADGE_COLORS = {
  * Creates a state aggregate marker icon with optional count badge
  * Supports loading spinner and dimmed states
  */
-function createStateIcon(site, count, showCounts = true, isLoading = false, isDimmed = false) {
-  const icon = ICONS[site] || ICONS.pizza
+function createStateIcon(site, count, showCounts = true, isLoading = false, isDimmed = false, isHighlighted = false) {
+  const iconSet = ICONS[site] || ICONS.pizza
+  const icon = isHighlighted ? iconSet.highlight : iconSet.base
   const badgeColor = BADGE_COLORS[site] || BADGE_COLORS.pizza
   const opacity = isDimmed ? 0.5 : 0.9
   const badgeOpacity = isDimmed ? 0.6 : 1
@@ -87,7 +90,7 @@ function createStateIcon(site, count, showCounts = true, isLoading = false, isDi
  * Supports loading and dimmed visual states
  */
 export function StateMarker({ aggregate, site, onStateClick, showCounts = true }) {
-  const { stateCode, count, lat, lng, isLoading = false, isDimmed = false } = aggregate
+  const { stateCode, count, lat, lng, isLoading = false, isDimmed = false, isHighlighted = false } = aggregate
   const map = useMap()
 
   const handleClick = () => {
@@ -110,7 +113,7 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
   return (
     <Marker
       position={[lat, lng]}
-      icon={createStateIcon(site, count, showCounts, isLoading, isDimmed)}
+      icon={createStateIcon(site, count, showCounts, isLoading, isDimmed, isHighlighted)}
       eventHandlers={{
         click: handleClick,
       }}

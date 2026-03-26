@@ -50,31 +50,66 @@ async function fetchPlacesForState(table, stateCode) {
   return allData
 }
 
-// Helper to fetch state counts for aggregate markers
-async function fetchStateCounts(table) {
+// Helper to fetch state counts for aggregate markers, with optional filtering/progressive updates
+async function fetchStateCounts(table, {
+  includeStates,
+  includeStatuses,
+  caseInsensitiveStatuses = false,
+  splitEuropeByCountry = false,
+  requireRating = false,
+  onProgress,
+  progressEveryPages = 1,
+} = {}) {
   const pageSize = 1000
-  let allData = []
+  const counts = {}
   let offset = 0
+  let page = 0
 
   while (true) {
-    const { data, error } = await supabase
+    let query = supabase
       .from(table)
-      .select('state')
+      .select(splitEuropeByCountry ? 'state,address' : 'state')
       .range(offset, offset + pageSize - 1)
+
+    if (Array.isArray(includeStates) && includeStates.length > 0) {
+      query = query.in('state', includeStates)
+    }
+    if (Array.isArray(includeStatuses) && includeStatuses.length > 0) {
+      if (caseInsensitiveStatuses) {
+        const statusOr = includeStatuses
+          .map(status => `status.ilike.${String(status).trim().toLowerCase()}*`)
+          .join(',')
+        query = query.or(statusOr)
+      } else {
+        query = query.in('status', includeStatuses)
+      }
+    }
+    if (requireRating) {
+      query = query.not('rating', 'is', null)
+    }
+
+    const { data, error } = await query
 
     if (error) throw error
     if (!data || data.length === 0) break
 
-    allData = allData.concat(data)
+    data.forEach(row => {
+      const regionKey = resolveRegionKey(row, splitEuropeByCountry)
+      counts[regionKey] = (counts[regionKey] || 0) + 1
+    })
+
+    page += 1
+    if (typeof onProgress === 'function' && page % progressEveryPages === 0) {
+      onProgress({ ...counts })
+    }
+
     if (data.length < pageSize) break
     offset += pageSize
   }
 
-  const counts = {}
-  allData.forEach(row => {
-    const state = row.state || 'Unknown'
-    counts[state] = (counts[state] || 0) + 1
-  })
+  if (typeof onProgress === 'function') {
+    onProgress({ ...counts })
+  }
 
   return counts
 }
@@ -85,6 +120,9 @@ const PLACE_TABLE_BY_THEME = {
   [ThemeKeys.PIZZA]: 'pizza_places',
   [ThemeKeys.TACO]: 'taco_places',
 }
+const PRIORITY_INITIAL_STATES = ['MI', 'WI', 'IN', 'OH', 'IL']
+const REGION_COUNTS_CACHE = new Map()
+const ANTHONY_COUNTS_CACHE = new Map()
 
 const REVIEW_PHOTO_BUCKET = 'review-photos'
 const REVIEW_PHOTO_TABLE = 'review-photos'
@@ -95,6 +133,29 @@ const FAVORITE_FLAG_FIELDS = ['favorited', 'is_favorited', 'isFavorite', 'is_fav
 const VALID_PLACE_TYPES = new Set(['pizzeria', 'taqueria', 'tamaleria'])
 const PLACE_TYPE_FIELDS = ['place_type', 'placeType', 'place_category', 'placeCategory']
 const MARKER_ICON_FIELDS = ['marker_icon_url', 'markerIconUrl', 'icon_url', 'iconUrl']
+const normalizeRegionCode = value => (typeof value === 'string' ? value.trim().toUpperCase() : '')
+const EUROPE_COUNTRY_BY_ADDRESS_NAME = {
+  SPAIN: 'EU_ES',
+  ITALY: 'EU_IT',
+  NETHERLANDS: 'EU_NL',
+  CZECHIA: 'EU_CZ',
+  'CZECH REPUBLIC': 'EU_CZ',
+}
+
+const resolveRegionKey = ({ state, address }, splitEuropeByCountry = false) => {
+  const normalizedState = normalizeRegionCode(state)
+  if (!normalizedState) return 'Unknown'
+  if (!splitEuropeByCountry || normalizedState !== 'EU') return normalizedState
+
+  const addressParts = typeof address === 'string'
+    ? address.split(',').map(part => part.trim()).filter(Boolean)
+    : []
+  const countryName = addressParts.length
+    ? addressParts[addressParts.length - 1].toUpperCase()
+    : ''
+
+  return EUROPE_COUNTRY_BY_ADDRESS_NAME[countryName] || 'EU'
+}
 
 const normalizeStatus = (status) => {
   if (typeof status === 'string') {
@@ -221,6 +282,8 @@ function SiteContainer({ themeKey }) {
   const [mapLoading, setMapLoading] = useState(true)
   const [mapError, setMapError] = useState(null)
   const [showClusterCounts, setShowClusterCounts] = useState(true)
+  const [showAnthonysVisits, setShowAnthonysVisits] = useState(false)
+  const [anthonysCountsByState, setAnthonysCountsByState] = useState({})
 
   // Search and Near Me state
   const [searchQuery, setSearchQuery] = useState('')
@@ -357,6 +420,7 @@ function SiteContainer({ themeKey }) {
               : place.style,
         price: place.price || place.Price || '',
         status: normalizedStatus,
+        statusRaw: typeof place.status === 'string' ? place.status.trim().toLowerCase() : null,
         favorited,
         lat: normalizedLat,
         lng: normalizedLng,
@@ -371,9 +435,20 @@ function SiteContainer({ themeKey }) {
     })
   }, [themeKey])
 
-  // Initial load: Only region counts (uniform loading for all regions worldwide)
+  // Initial load: prioritize Michigan + nearby states, then progressively hydrate the rest
   useEffect(() => {
     let isMounted = true
+    const buildRegionStatesFromCounts = (counts, existing = {}) => {
+      const next = { ...existing }
+      Object.entries(counts).forEach(([stateCode, count]) => {
+        if (stateCode === 'Unknown' || !STATE_CENTROIDS[stateCode]) return
+        const prevRegion = next[stateCode]
+        next[stateCode] = prevRegion
+          ? { ...prevRegion, originalCount: count }
+          : { status: 'unloaded', originalCount: count, places: [] }
+      })
+      return next
+    }
 
     async function initialLoad() {
       setMapLoading(true)
@@ -381,32 +456,74 @@ function SiteContainer({ themeKey }) {
       const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
 
       try {
-        // Fetch only region counts - no places loaded initially
-        const stateCounts = await fetchStateCounts(table)
+        const cachedRegionCounts = REGION_COUNTS_CACHE.get(table)
+        const cachedAnthonyCounts = ANTHONY_COUNTS_CACHE.get(table)
 
-        if (!isMounted) return
+        if (cachedAnthonyCounts) {
+          setAnthonysCountsByState(cachedAnthonyCounts)
+        } else {
+          setAnthonysCountsByState({})
+        }
 
-        // Build region states with three-state model
-        const newRegionStates = {}
-        Object.entries(stateCounts).forEach(([stateCode, count]) => {
-          if (stateCode === 'Unknown' || !STATE_CENTROIDS[stateCode]) return
-          newRegionStates[stateCode] = {
-            status: 'unloaded',
-            originalCount: count,
-            places: [],
+        if (cachedRegionCounts) {
+          setRegionStates(buildRegionStatesFromCounts(cachedRegionCounts))
+          setMapError(null)
+          setMapLoading(false)
+          closeLoading()
+        } else {
+          const [priorityCounts, priorityAnthonyCounts] = await Promise.all([
+            fetchStateCounts(table, { includeStates: PRIORITY_INITIAL_STATES }),
+            cachedAnthonyCounts
+              ? Promise.resolve(cachedAnthonyCounts)
+              : fetchStateCounts(table, {
+                includeStates: PRIORITY_INITIAL_STATES,
+                includeStatuses: ['visited', 'golden'],
+                splitEuropeByCountry: true,
+                requireRating: true,
+              }),
+          ])
+          if (!isMounted) return
+
+          setRegionStates(buildRegionStatesFromCounts(priorityCounts))
+          if (!cachedAnthonyCounts) {
+            setAnthonysCountsByState(priorityAnthonyCounts)
           }
+          setMapError(null)
+          setMapLoading(false)
+          closeLoading()
+        }
+
+        // Non-blocking background hydration for the rest of the map
+        fetchStateCounts(table, {
+          onProgress: (allCounts) => {
+            if (!isMounted) return
+            REGION_COUNTS_CACHE.set(table, allCounts)
+            setRegionStates(prev => buildRegionStatesFromCounts(allCounts, prev))
+          },
+          progressEveryPages: 3,
+        }).catch(error => {
+          if (!isMounted) return
+          console.warn('[App] Background region hydration failed:', error)
         })
 
-        // Start with no places - they load on demand when zooming in
-        setRegionStates(newRegionStates)
-        setMapError(null)
+        fetchStateCounts(table, {
+          includeStatuses: ['visited', 'golden'],
+          splitEuropeByCountry: true,
+          requireRating: true,
+          onProgress: (counts) => {
+            if (!isMounted) return
+            ANTHONY_COUNTS_CACHE.set(table, counts)
+            setAnthonysCountsByState(counts)
+          },
+          progressEveryPages: 1,
+        }).catch(error => {
+          if (!isMounted) return
+          console.warn('[App] Background Anthony counts hydration failed:', error)
+        })
       } catch (error) {
         if (!isMounted) return
         console.error('[App] Failed to load region counts:', error)
         setMapError(error)
-      }
-
-      if (isMounted) {
         setMapLoading(false)
         closeLoading()
       }
@@ -425,7 +542,8 @@ function SiteContainer({ themeKey }) {
       return
     }
 
-    const region = regionStates[stateCode]
+    const loadKey = stateCode.startsWith('EU_') ? 'EU' : stateCode
+    const region = regionStates[loadKey]
     // Only load if unloaded (not loading or already loaded)
     if (!region || region.status !== 'unloaded') {
       return
@@ -434,15 +552,15 @@ function SiteContainer({ themeKey }) {
     // Mark as loading (aggregate stays visible with spinner)
     setRegionStates(prev => ({
       ...prev,
-      [stateCode]: { ...prev[stateCode], status: 'loading' }
+      [loadKey]: { ...prev[loadKey], status: 'loading' }
     }))
-    loadingStatesRef.current.add(stateCode)
+    loadingStatesRef.current.add(loadKey)
 
     const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
     const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
 
     try {
-      const stateData = await fetchPlacesForState(table, stateCode)
+      const stateData = await fetchPlacesForState(table, loadKey)
 
       // Fetch photos
       let photoMap = {}
@@ -458,17 +576,17 @@ function SiteContainer({ themeKey }) {
       // Mark as loaded (aggregate hides, markers show)
       setRegionStates(prev => ({
         ...prev,
-        [stateCode]: { ...prev[stateCode], status: 'loaded', places: normalized }
+        [loadKey]: { ...prev[loadKey], status: 'loaded', places: normalized }
       }))
     } catch (err) {
       // Revert to unloaded on error (aggregate stays visible)
       setRegionStates(prev => ({
         ...prev,
-        [stateCode]: { ...prev[stateCode], status: 'unloaded' }
+        [loadKey]: { ...prev[loadKey], status: 'unloaded' }
       }))
-      console.error(`[App] Failed to load region ${stateCode}:`, err)
+      console.error(`[App] Failed to load region ${loadKey}:`, err)
     } finally {
-      loadingStatesRef.current.delete(stateCode)
+      loadingStatesRef.current.delete(loadKey)
     }
   }, [regionStates, isPizza, themeKey, normalizePlaceData])
 
@@ -516,30 +634,16 @@ function SiteContainer({ themeKey }) {
       .flatMap(r => r.places)
   }, [regionStates])
 
-  // Derive display aggregates (unloaded + loading regions only)
-  const displayAggregates = useMemo(() => {
-    return Object.entries(regionStates)
-      .filter(([_, r]) => r.status !== 'loaded')  // Hide loaded regions
-      .map(([stateCode, region]) => {
-        const centroid = STATE_CENTROIDS[stateCode]
-        if (!centroid) return null
-        return {
-          id: `state-${stateCode}`,
-          stateCode,
-          stateName: centroid.name,
-          country: centroid.country || 'US',
-          count: region.originalCount,  // Always show original count
-          lat: centroid.lat,
-          lng: centroid.lng,
-          isLoading: region.status === 'loading',
-          isDimmed: false,  // Will be set based on filters below
-        }
-      })
-      .filter(Boolean)
-  }, [regionStates])
+  const effectiveStatusSet = useMemo(
+    () => (
+      showAnthonysVisits
+        ? new Set(['visited', 'golden'])
+        : new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
+    ),
+    [filters.statuses, showAnthonysVisits]
+  )
 
   const filteredPlaces = useMemo(() => {
-    const statusSet = new Set(filters.statuses && filters.statuses.length ? filters.statuses : DEFAULT_STATUSES)
     const searchLower = searchQuery.toLowerCase().trim()
 
     let results = allLoadedPlaces.filter(place => {
@@ -557,10 +661,15 @@ function SiteContainer({ themeKey }) {
 
       // Style, price, status filters
       const placeStatus = place.status || 'visited'
+      const isExplicitAnthonyVisit =
+        typeof place.statusRaw === 'string' &&
+        (place.statusRaw.startsWith('visited') || place.statusRaw.startsWith('golden')) &&
+        typeof place.rating === 'number' &&
+        !Number.isNaN(place.rating)
       return (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
         (filters.prices.length === 0 || filters.prices.includes(place.price)) &&
-        statusSet.has(placeStatus)
+        (showAnthonysVisits ? isExplicitAnthonyVisit : effectiveStatusSet.has(placeStatus))
       )
     })
 
@@ -570,10 +679,9 @@ function SiteContainer({ themeKey }) {
     }
 
     return results
-  }, [allLoadedPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius])
+  }, [allLoadedPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits])
 
-  // Check if any filter is active
-  const hasActiveFilter = useMemo(() => {
+  const shouldDimUnloadedAggregates = useMemo(() => {
     return (
       filters.styles?.length > 0 ||
       filters.prices?.length > 0 ||
@@ -583,21 +691,75 @@ function SiteContainer({ themeKey }) {
     )
   }, [filters, searchQuery, nearMeActive])
 
-  // Add dimmed state to aggregates when filters are active
-  // Key change: DON'T remove unloaded regions when filters are active - just dim them
+  const filteredCountByState = useMemo(() => {
+    return filteredPlaces.reduce((acc, place) => {
+      const stateCode = showAnthonysVisits
+        ? resolveRegionKey({ state: place.state, address: place.address }, true)
+        : normalizeRegionCode(place.state)
+      if (stateCode) {
+        acc[stateCode] = (acc[stateCode] || 0) + 1
+      }
+      return acc
+    }, {})
+  }, [filteredPlaces, showAnthonysVisits])
+
   const filteredDisplayAggregates = useMemo(() => {
-    if (!displayAggregates.length) return displayAggregates
+    const baseAggregates = Object.entries(regionStates)
+      .map(([stateCode, region]) => {
+        const centroid = STATE_CENTROIDS[stateCode]
+        if (!centroid) return null
 
-    // If no filters active, show all aggregates normally
-    if (!hasActiveFilter) return displayAggregates
+        const isLoaded = region.status === 'loaded'
+        const anthonyCount = isLoaded
+          ? (filteredCountByState[stateCode] || 0)
+          : (anthonysCountsByState[stateCode] || 0)
+        const count = showAnthonysVisits
+          ? anthonyCount
+          : (isLoaded ? (filteredCountByState[stateCode] || 0) : region.originalCount)
+        return {
+          id: `state-${stateCode}`,
+          stateCode,
+          stateName: centroid.name,
+          country: centroid.country || 'US',
+          regionStatus: region.status,
+          count,
+          lat: centroid.lat,
+          lng: centroid.lng,
+          isLoading: region.status === 'loading',
+          isDimmed: !showAnthonysVisits && !isLoaded && shouldDimUnloadedAggregates,
+          isHighlighted: showAnthonysVisits && count > 0,
+        }
+      })
+      .filter(Boolean)
+    if (!showAnthonysVisits) {
+      return baseAggregates
+    }
 
-    // When filters are active, dim unloaded regions (we can't filter them yet)
-    // Loaded regions are not in displayAggregates, so no need to handle them
-    return displayAggregates.map(agg => ({
-      ...agg,
-      isDimmed: true,  // Dim all aggregates when filters are active
-    }))
-  }, [displayAggregates, hasActiveFilter])
+    const euBase = baseAggregates.find(agg => agg.stateCode === 'EU')
+    const euCountryAggregates = Object.entries(anthonysCountsByState)
+      .filter(([code, count]) => code.startsWith('EU_') && count > 0 && STATE_CENTROIDS[code])
+      .map(([code, count]) => {
+        const centroid = STATE_CENTROIDS[code]
+        return {
+          id: `state-${code}`,
+          stateCode: code,
+          stateName: centroid.name,
+          country: centroid.country || 'EU',
+          regionStatus: euBase?.regionStatus || 'unloaded',
+          count,
+          lat: centroid.lat,
+          lng: centroid.lng,
+          isLoading: Boolean(euBase?.isLoading),
+          isDimmed: false,
+          isHighlighted: true,
+        }
+      })
+
+    return [
+      ...baseAggregates.filter(agg => agg.stateCode !== 'EU' && agg.count > 0),
+      ...euCountryAggregates,
+    ]
+  }, [regionStates, filteredCountByState, anthonysCountsByState, showAnthonysVisits, shouldDimUnloadedAggregates])
 
   const themeStyles = useMemo(
     () => ({
@@ -666,6 +828,8 @@ function SiteContainer({ themeKey }) {
             filters={filters}
             showClusterCounts={showClusterCounts}
             onClusterCountsToggle={setShowClusterCounts}
+            showAnthonysVisits={showAnthonysVisits}
+            onAnthonysVisitsToggle={setShowAnthonysVisits}
           />
         </div>
 
@@ -675,7 +839,10 @@ function SiteContainer({ themeKey }) {
           <div className="view-toggle">
             {['map', 'frozen'].map(mode => {
               const isActive = view === mode
-              const label = mode === 'map' ? theme.copy.frozenToggleMap : theme.copy.frozenToggleFrozen
+              const isTacoComingSoonTab = !isPizza && mode === 'frozen'
+              const label = mode === 'map'
+                ? theme.copy.frozenToggleMap
+                : (isTacoComingSoonTab ? 'Coming Soon' : theme.copy.frozenToggleFrozen)
               return (
                 <button
                   key={mode}
@@ -724,14 +891,16 @@ function SiteContainer({ themeKey }) {
                       stateAggregates={filteredDisplayAggregates}
                       onStateClick={handleStateClick}
                       flyToLocation={flyToLocation}
-                      resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}`}
+                      resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}`}
                     />
                   </Suspense>
                 </div>
               )
             ) : (
               themeKey === ThemeKeys.TACO ? (
-                <TacoRecipesPanel />
+                <div className="map-status" data-status="loading">
+                  Taco recipes are coming soon.
+                </div>
               ) : (
                 <FrozenPizzaDirectory filters={filters} theme={theme} themeKey={themeKey} />
               )
