@@ -11,7 +11,6 @@ import AdminReviewsPage from './admin/AdminReviewsPage'
 import { SiteTitle } from './header/SiteTitle'
 import { StatsPanel } from './sidebar/StatsPanel'
 import { MapPopupProvider, useMapPopup } from './map/useMapPopup'
-import TacoRecipesPanel from './tacos/TacoRecipesPanel'
 import DataDashboard from './pages/DataDashboard'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
