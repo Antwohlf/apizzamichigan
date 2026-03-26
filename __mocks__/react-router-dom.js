@@ -22,4 +22,5 @@ module.exports = {
   },
   Route: ({ element }) => element,
   Link: ({ to, children, ...rest }) => React.createElement('a', { href: to, ...rest }, children),
+  useLocation: () => ({ pathname: getPathname() }),
 }
