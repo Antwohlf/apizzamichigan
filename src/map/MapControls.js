@@ -56,7 +56,37 @@ export function MapControls({
   filteredPlaces = [],
   onPlaceClick,
 }) {
-  const showResults = (searchQuery.trim() || nearMeActive) && filteredPlaces.length > 0
+  const [isResultsOpen, setIsResultsOpen] = useState(true)
+
+  useEffect(() => {
+    if ((searchQuery.trim() || nearMeActive) && filteredPlaces.length > 0) {
+      setIsResultsOpen(true)
+    }
+  }, [searchQuery, nearMeActive, filteredPlaces.length])
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsResultsOpen(false)
+      }
+    }
+    const handlePointerDown = (event) => {
+      const target = event?.target
+      if (target && typeof target.closest === 'function' && !target.closest('.map-controls')) {
+        setIsResultsOpen(false)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown, { passive: true })
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('touchstart', handlePointerDown)
+    }
+  }, [])
+
+  const showResults = isResultsOpen && (searchQuery.trim() || nearMeActive) && filteredPlaces.length > 0
 
   return (
     <div className="map-controls">
@@ -99,7 +129,15 @@ export function MapControls({
       {showResults && onPlaceClick && (
         <div className="map-results-dropdown">
           <div className="map-results-header">
-            {filteredPlaces.length} {filteredPlaces.length === 1 ? 'place' : 'places'} found
+            <span>{filteredPlaces.length} {filteredPlaces.length === 1 ? 'place' : 'places'} found</span>
+            <button
+              type="button"
+              className="map-results-close"
+              onClick={() => setIsResultsOpen(false)}
+              aria-label="Hide results"
+            >
+              Hide
+            </button>
           </div>
           <div className="map-results-list">
             {filteredPlaces.slice(0, 50).map(place => (
@@ -107,7 +145,10 @@ export function MapControls({
                 key={place.id}
                 type="button"
                 className="map-result-item"
-                onClick={() => onPlaceClick(place)}
+                onClick={() => {
+                  setIsResultsOpen(false)
+                  onPlaceClick(place)
+                }}
               >
                 <span className="map-result-name">{place.name}</span>
                 {typeof place._distance === 'number' && (

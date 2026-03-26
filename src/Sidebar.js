@@ -17,6 +17,8 @@ const Sidebar = ({
   filters = {},
   showClusterCounts = true,
   onClusterCountsToggle,
+  showAnthonysVisits = false,
+  onAnthonysVisitsToggle,
 }) => {
   const { theme } = useTheme()
 
@@ -134,6 +136,23 @@ const Sidebar = ({
             type="checkbox"
             checked={showClusterCounts}
             onChange={e => onClusterCountsToggle?.(e.target.checked)}
+            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+          />
+        </label>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.5rem 0',
+            cursor: 'pointer',
+          }}
+        >
+          <span style={{ fontSize: '0.9rem', color: 'var(--app-text)' }}>Anthony&apos;s Visits</span>
+          <input
+            type="checkbox"
+            checked={showAnthonysVisits}
+            onChange={e => onAnthonysVisitsToggle?.(e.target.checked)}
             style={{ width: '18px', height: '18px', cursor: 'pointer' }}
           />
         </label>

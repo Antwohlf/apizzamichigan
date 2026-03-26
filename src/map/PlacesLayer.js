@@ -191,15 +191,42 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
 
           // Find visible region aggregates and trigger loading
           const aggregates = stateAggregatesRef.current || []
+          let loadedThisPass = false
           aggregates.forEach(agg => {
             // Skip if already loading or if we've already triggered this region
-            if (agg.isLoading || loadedRegionsRef.current.has(agg.stateCode)) return
+            if (agg.isLoading || agg.regionStatus !== 'unloaded' || loadedRegionsRef.current.has(agg.stateCode)) return
 
             if (expandedBounds.contains([agg.lat, agg.lng])) {
               loadedRegionsRef.current.add(agg.stateCode)
               onStateClickRef.current(agg.stateCode)
+              loadedThisPass = true
             }
           })
+
+          // City-level zoom often excludes state centroids (e.g., Ann Arbor vs MI centroid).
+          // If nothing matched bounds, load the nearest unloaded region to map center.
+          if (!loadedThisPass && typeof map.getCenter === 'function') {
+            const center = map.getCenter()
+            if (!center) return
+
+            let nearest = null
+            let nearestDistance = Number.POSITIVE_INFINITY
+            aggregates.forEach(agg => {
+              if (agg.isLoading || agg.regionStatus !== 'unloaded' || loadedRegionsRef.current.has(agg.stateCode)) return
+              const dLat = agg.lat - center.lat
+              const dLng = agg.lng - center.lng
+              const distanceSquared = (dLat * dLat) + (dLng * dLng)
+              if (distanceSquared < nearestDistance) {
+                nearestDistance = distanceSquared
+                nearest = agg
+              }
+            })
+
+            if (nearest && nearestDistance <= 16) {
+              loadedRegionsRef.current.add(nearest.stateCode)
+              onStateClickRef.current(nearest.stateCode)
+            }
+          }
         }
       }, 150) // 150ms debounce
     }
@@ -487,6 +514,7 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
 
   // Only render individual markers when zoomed in enough AND there are places to show
   const showIndividualMarkers = currentZoom >= MIN_MARKERS_ZOOM && places.length > 0
+  const showStateAggregates = currentZoom < MIN_MARKERS_ZOOM
 
   return (
     <>
@@ -503,13 +531,14 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
           {markers}
         </MarkerClusterGroup>
       )}
-      {/* Always render aggregates - they self-hide when region status is 'loaded' */}
-      <StateAggregateLayer
-        aggregates={stateAggregates}
-        site={site}
-        onStateClick={onStateClick}
-        showCounts={showClusterCounts}
-      />
+      {showStateAggregates && (
+        <StateAggregateLayer
+          aggregates={stateAggregates}
+          site={site}
+          onStateClick={onStateClick}
+          showCounts={showClusterCounts}
+        />
+      )}
     </>
   )
 }
