@@ -39,10 +39,29 @@ const OLLAMA_TIMEOUT_MS = process.env.OLLAMA_TIMEOUT_MS ? parseInt(process.env.O
 // Ollama supports passing "options" in /api/generate.
 // On 4-core machines: 4 threads allows full utilization per request while leaving room for OS/other workers.
 const OLLAMA_NUM_THREADS = process.env.OLLAMA_NUM_THREADS ? parseInt(process.env.OLLAMA_NUM_THREADS, 10) : 4
+const OLLAMA_NUM_PREDICT = process.env.OLLAMA_NUM_PREDICT ? parseInt(process.env.OLLAMA_NUM_PREDICT, 10) : 120
+const OLLAMA_TEMPERATURE = process.env.OLLAMA_TEMPERATURE ? Number(process.env.OLLAMA_TEMPERATURE) : 0
 
 const OLLAMA_HEALTHCHECK_INTERVAL_MS = process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS
   ? parseInt(process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS, 10)
   : 30000
+
+const OSM_TAG_KEYS = [
+  'amenity',
+  'brand',
+  'brand:wikidata',
+  'cuisine',
+  'name',
+  'operator',
+  'operator:wikidata',
+  'website',
+  'contact:website',
+  'phone',
+  'contact:phone',
+  'addr:city',
+  'addr:state',
+  'addr:country'
+]
 
 function safeJsonParse(text) {
   try {
@@ -82,7 +101,9 @@ async function ollamaGenerate(prompt, { onController } = {}) {
         stream: false,
         format: 'json',
         options: {
-          num_thread: Number.isFinite(OLLAMA_NUM_THREADS) && OLLAMA_NUM_THREADS > 0 ? OLLAMA_NUM_THREADS : 2
+          num_thread: Number.isFinite(OLLAMA_NUM_THREADS) && OLLAMA_NUM_THREADS > 0 ? OLLAMA_NUM_THREADS : 2,
+          num_predict: Number.isFinite(OLLAMA_NUM_PREDICT) && OLLAMA_NUM_PREDICT > 0 ? OLLAMA_NUM_PREDICT : 120,
+          temperature: Number.isFinite(OLLAMA_TEMPERATURE) ? OLLAMA_TEMPERATURE : 0
         }
       }),
       signal: controller.signal
@@ -124,30 +145,91 @@ async function ollamaIsHealthy() {
   }
 }
 
+function truncateText(value, maxChars = 1000) {
+  if (value === null || value === undefined) return value
+  const text = typeof value === 'string' ? value : JSON.stringify(value)
+  return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text
+}
+
+function pruneOsmTags(tags) {
+  if (!tags || typeof tags !== 'object') return {}
+  return OSM_TAG_KEYS.reduce((acc, key) => {
+    if (tags[key] !== null && tags[key] !== undefined && tags[key] !== '') {
+      acc[key] = truncateText(tags[key], 300)
+    }
+    return acc
+  }, {})
+}
+
+function pruneJsonLdEntry(entry) {
+  if (!entry || typeof entry !== 'object') return entry
+  const address = entry.address && typeof entry.address === 'object'
+    ? {
+        streetAddress: entry.address.streetAddress,
+        addressLocality: entry.address.addressLocality,
+        addressRegion: entry.address.addressRegion,
+        addressCountry: entry.address.addressCountry,
+      }
+    : undefined
+
+  return {
+    '@type': entry['@type'],
+    name: entry.name,
+    description: truncateText(entry.description, 500),
+    servesCuisine: entry.servesCuisine,
+    priceRange: entry.priceRange,
+    telephone: entry.telephone,
+    url: entry.url,
+    menu: entry.menu,
+    address,
+  }
+}
+
+function pruneJsonLd(jsonld) {
+  if (!jsonld) return null
+  const entries = Array.isArray(jsonld) ? jsonld : [jsonld]
+  return entries
+    .slice(0, 3)
+    .map(pruneJsonLdEntry)
+    .filter(Boolean)
+}
+
+function parseScrapeNotes(scrapeNotes) {
+  if (!scrapeNotes) return {}
+  if (typeof scrapeNotes !== 'string') return scrapeNotes
+  try {
+    return JSON.parse(scrapeNotes)
+  } catch {
+    return { text_excerpt: scrapeNotes }
+  }
+}
+
 function buildPrompt(row) {
-  const osmTags = row.osm_tags ? JSON.stringify(row.osm_tags) : ''
+  const osmTags = row.osm_tags ? JSON.stringify(pruneOsmTags(row.osm_tags)) : ''
 
   // Build a pruned scrape_notes: prioritize JSON-LD, include text_excerpt only if needed
   let scrapeData = {}
   if (row.scrape_notes) {
-    const notes = typeof row.scrape_notes === 'string' ? JSON.parse(row.scrape_notes) : row.scrape_notes
+    const notes = parseScrapeNotes(row.scrape_notes)
 
     // Always include jsonld if present (high signal)
-    if (notes.jsonld) scrapeData.jsonld = notes.jsonld
+    if (notes.jsonld) scrapeData.jsonld = pruneJsonLd(notes.jsonld)
 
     // Include other hints (small)
-    if (notes.style_hints) scrapeData.style_hints = notes.style_hints
-    if (notes.price_hint) scrapeData.price_hint = notes.price_hint
-    if (notes.menu_url) scrapeData.menu_url = notes.menu_url
+    if (notes.style_hints) scrapeData.style_hints = Array.isArray(notes.style_hints)
+      ? notes.style_hints.slice(0, 15).map(hint => truncateText(hint, 120))
+      : truncateText(notes.style_hints, 500)
+    if (notes.price_hint) scrapeData.price_hint = truncateText(notes.price_hint, 120)
+    if (notes.menu_url) scrapeData.menu_url = truncateText(notes.menu_url, 300)
 
     // Only include text_excerpt if we have little other signal (keep prompt small)
-    const hasSignal = notes.jsonld?.length || notes.style_hints?.length
+    const hasSignal = Boolean(scrapeData.jsonld?.length || scrapeData.style_hints)
     if (!hasSignal && notes.text_excerpt) {
-      scrapeData.text_excerpt = notes.text_excerpt.slice(0, 4000) // further cap
+      scrapeData.text_excerpt = truncateText(notes.text_excerpt, 1200)
     }
   }
 
-  const scrapeNotes = Object.keys(scrapeData).length ? JSON.stringify(scrapeData) : ''
+  const scrapeNotes = Object.keys(scrapeData).length ? truncateText(JSON.stringify(scrapeData), 2500) : ''
 
   return `You are classifying a pizza restaurant into a fixed taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${PIZZA_STYLES.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the style (e.g. \"Detroit-style\"). Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, then style_hints, then text excerpts.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nScrape hints (prioritized):\n${scrapeNotes}\n`
 }
@@ -283,6 +365,7 @@ class LlmClassifier {
     }
 
     const prompt = buildPrompt(row)
+    console.log(`[${this.workerId}] Prompt size for job ${job.id}: ${prompt.length} chars`)
 
     let resp
     try {
