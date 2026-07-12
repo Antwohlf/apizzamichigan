@@ -67,8 +67,9 @@ function normalizePrice(price) {
   return PRICE_RANGES.includes(p) ? p : null
 }
 
-async function ollamaGenerate(prompt) {
+async function ollamaGenerate(prompt, { onController } = {}) {
   const controller = new AbortController()
+  if (typeof onController === 'function') onController(controller)
   const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS)
 
   try {
@@ -103,6 +104,8 @@ async function ollamaGenerate(prompt) {
       throw new Error(`Ollama request timeout (${secs}s)`)
     }
     throw err
+  } finally {
+    if (typeof onController === 'function') onController(null)
   }
 }
 
@@ -150,11 +153,15 @@ function buildPrompt(row) {
 }
 
 class LlmClassifier {
-  constructor(workerId) {
+  constructor(workerId, { maxJobs = 0 } = {}) {
     this.workerId = workerId
     this.queue = getQueue()
     this.pgClient = null
     this.running = false
+    this.stopping = false
+    this.currentJob = null
+    this.activeOllamaController = null
+    this.maxJobs = maxJobs
     this.stats = { completed: 0, failed: 0, overridden: 0, retried: 0 }
 
     this.ollamaHealth = {
@@ -179,9 +186,24 @@ class LlmClassifier {
 
   async shutdown() {
     this.running = false
+    this.stopping = true
+    if (this.activeOllamaController) {
+      this.activeOllamaController.abort()
+      this.activeOllamaController = null
+    }
     this.queue.unregisterWorker(this.workerId)
     this.queue.close()
     if (this.pgClient) await this.pgClient.end()
+  }
+
+  requestShutdown(signal = 'shutdown') {
+    if (this.stopping) return
+    console.log(`[${this.workerId}] ${signal} received; stopping after current operation`)
+    this.running = false
+    this.stopping = true
+    if (this.activeOllamaController) {
+      this.activeOllamaController.abort()
+    }
   }
 
   sendStats(status = 'running') {
@@ -264,7 +286,11 @@ class LlmClassifier {
 
     let resp
     try {
-      resp = await ollamaGenerate(prompt)
+      resp = await ollamaGenerate(prompt, {
+        onController: controller => {
+          this.activeOllamaController = controller
+        }
+      })
     } catch (err) {
       const msg = err?.message || String(err)
       // Transient infra failure: requeue without burning attempts
@@ -273,7 +299,8 @@ class LlmClassifier {
         msg.includes('ECONNREFUSED') ||
         msg.includes('ENOTFOUND') ||
         msg.includes('ollama HTTP 5') ||
-        msg.includes('Ollama request timeout')
+        msg.includes('Ollama request timeout') ||
+        msg.includes('Classifier shutdown')
 
       if (isTransient) {
         this.queue.retry(job.id, msg, { refundAttempt: true })
@@ -347,66 +374,103 @@ class LlmClassifier {
     }, 30000)
 
     process.on('message', (msg) => {
-      if (msg.type === 'shutdown') this.running = false
+      if (msg.type === 'shutdown') this.requestShutdown('shutdown message')
     })
 
-    while (this.running) {
-      try {
-        // Preflight Ollama so we don't claim jobs (and increment attempts) when it's down.
-        const now = Date.now()
-        if (now - this.ollamaHealth.lastCheckedAt > OLLAMA_HEALTHCHECK_INTERVAL_MS || !this.ollamaHealth.ok) {
-          const health = await ollamaIsHealthy()
-          this.ollamaHealth = {
-            ok: health.ok,
-            lastCheckedAt: now,
-            lastError: health.error
+    const stop = signal => this.requestShutdown(signal)
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+
+    try {
+      while (this.running) {
+        try {
+          // Preflight Ollama so we don't claim jobs (and increment attempts) when it's down.
+          const now = Date.now()
+          if (now - this.ollamaHealth.lastCheckedAt > OLLAMA_HEALTHCHECK_INTERVAL_MS || !this.ollamaHealth.ok) {
+            const health = await ollamaIsHealthy()
+            this.ollamaHealth = {
+              ok: health.ok,
+              lastCheckedAt: now,
+              lastError: health.error
+            }
+
+            if (!health.ok) {
+              console.error(`[${this.workerId}] Ollama unhealthy (${health.error}); backing off before claiming jobs...`)
+              await new Promise(r => setTimeout(r, 15000))
+              continue
+            }
           }
 
-          if (!health.ok) {
-            console.error(`[${this.workerId}] Ollama unhealthy (${health.error}); backing off before claiming jobs...`)
-            await new Promise(r => setTimeout(r, 15000))
+          const job = this.queue.claim('classify', this.workerId)
+
+          if (!job) {
+            await new Promise(r => setTimeout(r, 5000))
             continue
           }
-        }
 
-        const job = this.queue.claim('classify', this.workerId)
+          this.currentJob = job
+          console.log(`[${this.workerId}] Claimed classify job ${job.id} (${job.osmId})`)
 
-        if (!job) {
-          await new Promise(r => setTimeout(r, 5000))
-          continue
-        }
+          try {
+            await this.processJob(job)
+          } catch (e) {
+            this.queue.fail(job.id, e.message)
+            this.stats.failed++
+          } finally {
+            this.currentJob = null
+          }
 
-        try {
-          await this.processJob(job)
-        } catch (e) {
-          this.queue.fail(job.id, e.message)
-          this.stats.failed++
-        }
-
-        this.sendStats('running')
-        // rate limit LLM calls
-        await new Promise(r => setTimeout(r, 750))
-      } catch (error) {
-        // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
-        if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
-          console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
-          await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
-        } else {
-          console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
-          await new Promise(r => setTimeout(r, 5000))
+          this.sendStats('running')
+          if (this.maxJobs > 0 && this.stats.completed + this.stats.failed + this.stats.retried >= this.maxJobs) {
+            console.log(`[${this.workerId}] Reached max jobs (${this.maxJobs}); stopping`)
+            this.running = false
+            break
+          }
+          // rate limit LLM calls
+          await new Promise(r => setTimeout(r, 750))
+        } catch (error) {
+          // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
+          if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+            console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+            await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
+          } else {
+            console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+            await new Promise(r => setTimeout(r, 5000))
+          }
         }
       }
-    }
+    } finally {
+      process.off('SIGINT', stop)
+      process.off('SIGTERM', stop)
 
-    clearInterval(heartbeatInterval)
-    await this.shutdown()
-    console.log(`[${this.workerId}] LLM Classifier stopped`)
+      if (this.currentJob) {
+        try {
+          this.queue.retry(this.currentJob.id, 'Classifier stopped before completing job', { refundAttempt: true })
+          console.log(`[${this.workerId}] Requeued in-flight job ${this.currentJob.id} during shutdown`)
+        } catch (error) {
+          console.error(`[${this.workerId}] Failed to requeue in-flight job ${this.currentJob.id}:`, error.message)
+        } finally {
+          this.currentJob = null
+        }
+      }
+
+      clearInterval(heartbeatInterval)
+      await this.shutdown()
+      console.log(`[${this.workerId}] LLM Classifier stopped`)
+    }
   }
 }
 
 const args = process.argv.slice(2)
 const workerIdIdx = args.indexOf('--worker-id')
 const workerId = workerIdIdx >= 0 ? args[workerIdIdx + 1] : `classify-${Date.now()}`
+const maxJobsIdx = args.indexOf('--max-jobs')
+const maxJobs = maxJobsIdx >= 0 ? parseInt(args[maxJobsIdx + 1], 10) : parseInt(process.env.CLASSIFY_MAX_JOBS || '0', 10)
 
-const worker = new LlmClassifier(workerId)
-worker.run().catch(console.error)
+const worker = new LlmClassifier(workerId, {
+  maxJobs: Number.isFinite(maxJobs) && maxJobs > 0 ? maxJobs : 0
+})
+worker.run().catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})
