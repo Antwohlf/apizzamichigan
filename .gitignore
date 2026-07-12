@@ -26,8 +26,11 @@
 /scripts/.job-queue.db-*
 /scripts/.job-queue.db-shm
 /scripts/.job-queue.db-wal
+/scripts/.*-progress.json
+/scripts/.status_hourly.json
 
 # OpenClaw / cron / watchdog local artifacts
+/logs/
 /.openclaw/
 /.status/
 /.cron_status/
