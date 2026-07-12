@@ -55,7 +55,7 @@ async function fetchAllFromSupabase(tableName) {
       .from(tableName)
       .select('*')
       .range(offset, offset + BATCH_SIZE - 1)
-      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
 
     if (error) {
       throw new Error(`Supabase error: ${error.message}`)

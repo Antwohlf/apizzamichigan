@@ -1,245 +1,104 @@
-# Data Pipeline Documentation
+# Data Pipeline (Current)
 
-This document describes the data acquisition, enrichment, and maintenance processes for the APizzaMichigan/TacoBoutMichigan project.
+This document describes how APizzaMichigan/TacoBoutMichigan data is **imported**, **enriched**, and **maintained**.
+
+> Source of truth for coverage numbers: `docs/world-coverage.md` and `public/data/dashboard-stats.json`.
 
 ## Overview
 
-The project maintains two primary datasets:
-- **pizza_places**: ~37,000 pizza restaurants across the US
-- **taco_places**: ~33,000 taco/Mexican restaurants across the US
+We maintain two primary datasets in Supabase (PostgreSQL):
 
-Data is stored in Supabase (PostgreSQL) and sourced primarily from OpenStreetMap.
+- `pizza_places`
+- `taco_places`
 
----
+Data is sourced primarily from **OpenStreetMap (OSM)** via the **Overpass API**, then optionally enriched via a **local-first enrichment pipeline** (OSM deep tags + website scraping + local LLM classification) before syncing updates back to Supabase.
 
-## Data Sources
-
-### Primary Source: OpenStreetMap (OSM)
+## 1) Import: OSM → Supabase
 
-OpenStreetMap is the primary data source for restaurant locations. The data is freely available and community-maintained.
+### Primary source: OpenStreetMap (Overpass)
 
-**Query approach:**
-- Use Overpass API to query OSM
-- Filter by `amenity=restaurant` or `amenity=fast_food`
-- Match by cuisine tags (`cuisine=pizza`, `cuisine=mexican`, etc.) and name patterns
-- Extract: name, coordinates, address components, website, phone, hours
+**Query approach (high level):**
+- Overpass API queries for `amenity=restaurant` and `amenity=fast_food`
+- Filter by cuisine tags (e.g. `cuisine=pizza`) and/or name patterns for global scripts
+- Extract at minimum: name, coordinates, OSM identifiers, and any available tags (address/website/phone/hours when present)
 
-**Scripts:**
-- `scripts/import-osm-pizza.mjs` - Pizza import script
-- `scripts/import-osm-tacos.mjs` - Taco import script
-- `scripts/import-all-states.mjs` - Batch import for all US states
+### Import scripts
 
-### Secondary Sources
+**US state-by-state:**
+- `scripts/import-osm-pizza.mjs`
+- `scripts/import-osm-tacos.mjs`
+- `scripts/import-all-states.mjs`
+- `scripts/import-all-tacos-states.mjs`
 
-1. **Nominatim Reverse Geocoding** - For enriching missing addresses
-2. **Name-based inference** - For categorizing chains and styles
+**Region-based international imports:**
+- `scripts/import-international.mjs` (Canada + Mexico)
+- `scripts/import-europe.mjs`
+- `scripts/import-latin-america.mjs`
 
----
+**Global/country-level scripts (name/chains/cuisine heuristics):**
+- `scripts/import-pizzerias-by-name.mjs`
+- `scripts/import-chains.mjs`
+- `scripts/import-additional-cuisines.mjs`
+- `scripts/import-street-food.mjs`
+- `scripts/import-retry-failed.mjs`
 
-## Database Schema
+### Coverage
 
-### pizza_places
+Coverage has expanded well beyond US-only.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| name | text | Restaurant name |
-| lat | double | Latitude |
-| lng | double | Longitude |
-| address | text | Full street address |
-| state | text | 2-letter state code |
-| style | text | Pizza style (e.g., "New York", "Detroit", "Neapolitan") |
-| price | text | Price tier ($, $$, $$$) |
-| status | text | Visit status (unvisited, visited, golden) |
-| notes | text | Additional notes |
-| osm_id | bigint | OpenStreetMap node/way ID |
-| created_at | timestamp | Record creation time |
-| updated_at | timestamp | Last update time |
+See:
+- `docs/world-coverage.md` (country-by-country)
 
-### taco_places
+## 2) Baseline enrichment (existing scripts)
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | bigint | Primary key |
-| name | text | Restaurant name |
-| lat | double | Latitude |
-| lng | double | Longitude |
-| address | text | Full street address |
-| state | text | 2-letter state code |
-| style | text | Protein types (comma-separated: "birria, al pastor") |
-| price | text | Price tier ($, $$, $$$) |
-| status | text | Visit status (unvisited, visited, golden) |
-| notes | text | Additional notes |
-| osm_id | bigint | OpenStreetMap node/way ID |
-| created_at | timestamp | Record creation time |
-| updated_at | timestamp | Last update time |
+These are “in-Supabase” enrichment steps that infer metadata from existing fields (name, chain match, etc.):
 
----
+- Pizza: `scripts/populate-pizza-metadata.mjs` using `scripts/lib/style-inference.mjs`
+- Tacos: `scripts/populate-taco-metadata.mjs` using `scripts/lib/type-inference-tacos.mjs`
 
-## Metadata Enrichment
+These are useful, but they are limited by what OSM provided during import.
 
-### Pizza Style Inference
+## 3) Local-first enrichment pipeline (recommended path forward)
 
-**Script:** `scripts/populate-pizza-metadata.mjs`
-**Library:** `scripts/lib/style-inference.mjs`
+For deeper enrichment (style/price/address/website/phone/hours confidence), we use a **local working database** and worker agents.
 
-**Process:**
-1. Match known chains to predefined styles/prices
-2. Match name keywords to styles (e.g., "Detroit" -> Detroit style)
-3. Export unmatched for manual review
+Canonical docs:
+- Architecture: `docs/data-enhancement-architecture.md`
+- Setup guide: `scripts/enrichment/SETUP.md`
 
-**Confidence levels:**
-- `chain` - High confidence (known chain match)
-- `keyword` - Medium confidence (name contains style keyword)
-- `address_keyword` - Low confidence (excluded - matches address not name)
+### What it does
 
-**Pizza styles tracked:**
-- New York, Detroit, Chicago, Neapolitan, Sicilian, Greek, St. Louis, New Haven, California, Roman, Coal-Fired, Wood-Fired, Grandma, Bar
+1. **One-time seed:** pull Supabase tables down to local Postgres
+   - `scripts/enrichment/sync-from-supabase.mjs`
 
-### Taco Protein/Type Inference
+2. **Enrichment loop:**
+   - **OSM deep extract**: query Overpass by known OSM element IDs to fetch full tags
+   - **Website scrape**: simple fetch-based scrape when a website URL is present
+   - **LLM classification** (planned): run **Ollama** locally to classify into the project’s exact taxonomy
 
-**Script:** `scripts/populate-taco-metadata.mjs`
-**Library:** `scripts/lib/type-inference-tacos.mjs`
+3. **Sync back to Supabase** (planned): batch UPDATE enriched fields from local Postgres
 
-**Process:**
-1. Match known chains to predefined protein types and prices
-2. Match name keywords to protein types (e.g., "birria" in name)
-3. Allow multiple types per restaurant (comma-separated)
+### Current implementation status
 
-**Protein types tracked:**
-- Carne Asada, Al Pastor, Birria, Carnitas, Chicken, Pollo, Fish, Shrimp, Barbacoa, Lengua, Cabeza, Chorizo, Ground Beef, Veggie
+Implemented foundation:
+- Queue + worker tracking: `scripts/enrichment/queue.mjs` (SQLite)
+- Local DB schemas: `scripts/enrichment/local-schema.sql`, `local-schema-v2.sql`
+- Agents: `scripts/enrichment/agents/coordinator.mjs`, `osm-extractor.mjs`, `web-scraper.mjs`
 
-**Chain mappings include:**
-- Taco Bell -> Ground Beef, Chicken ($)
-- Del Taco -> Ground Beef, Chicken, Carne Asada ($)
-- Chipotle -> Carne Asada, Carnitas, Chicken ($$)
-- And many more regional chains
+Planned (not implemented yet):
+- `scripts/enrichment/agents/llm-classifier.mjs`
+- `scripts/enrichment/agents/sync-agent.mjs`
 
-### Address Enrichment
+## 4) Maintenance / operational cadence
 
-**Script:** `scripts/enrich-addresses.mjs`
+Recommended cadence:
+- **Imports:** quarterly (or as-needed for new regions)
+- **Metadata inference scripts:** after imports
+- **Local-first enrichment:** run continuously or in batches (MI → major US → broader)
+- **Sync back to Supabase:** daily batch (once implemented)
 
-**Process:**
-1. Query places with `address IS NULL`
-2. Reverse geocode using Nominatim API
-3. Build address from components (street, city, state, zip)
-4. Update database with enriched address
+## 5) Common issues
 
-**Rate limiting:** 1 request per second (Nominatim requirement)
-
-**Progress tracking:** Saves progress to JSON files to allow resumption:
-- `scripts/.address-enrichment-pizza_places.json`
-- `scripts/.address-enrichment-taco_places.json`
-
----
-
-## Scripts Reference
-
-### Import Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `import-osm-pizza.mjs` | Import pizza places from OSM for a single state |
-| `import-osm-tacos.mjs` | Import taco places from OSM for a single state |
-| `import-all-states.mjs` | Batch import all US states (pizza) |
-| `import-all-tacos-states.mjs` | Batch import all US states (tacos) |
-
-### Enrichment Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `populate-pizza-metadata.mjs` | Infer pizza styles and prices |
-| `populate-taco-metadata.mjs` | Infer taco protein types and prices |
-| `enrich-addresses.mjs` | Fill missing addresses via reverse geocoding |
-| `migrate-add-state-column.mjs` | Backfill state codes from coordinates |
-
-### Analysis Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `check-address-coverage.mjs` | Quick stats on address/style coverage |
-| `generate-data-quality-report.mjs` | Detailed report with duplicate detection |
-| `analyze-pizza-keywords.mjs` | Review pizza keyword matches |
-
-### Utility Libraries
-
-| Library | Purpose |
-|---------|---------|
-| `lib/style-inference.mjs` | Pizza chain/style matching logic |
-| `lib/type-inference-tacos.mjs` | Taco chain/protein matching logic |
-| `lib/excluded-taco-chains.mjs` | Chains to exclude (burrito-only, etc.) |
-| `lib/state-import-tracker.mjs` | Track import progress by state |
-
----
-
-## Running Scripts
-
-### Prerequisites
-
-```bash
-# Install dependencies
-npm install
-
-# Set environment variables in .env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key  # For write operations
-```
-
-### Common Commands
-
-```bash
-# Check current data coverage
-node scripts/check-address-coverage.mjs
-
-# Run full data quality report
-node scripts/generate-data-quality-report.mjs pizza_places
-node scripts/generate-data-quality-report.mjs taco_places
-
-# Import from OSM (single state)
-node scripts/import-osm-pizza.mjs MI
-node scripts/import-osm-tacos.mjs CA
-
-# Enrich metadata
-node scripts/populate-pizza-metadata.mjs --phase=1 --commit
-node scripts/populate-taco-metadata.mjs --phase=1 --commit
-
-# Enrich missing addresses
-node scripts/enrich-addresses.mjs pizza_places --commit
-node scripts/enrich-addresses.mjs taco_places --commit
-```
-
----
-
-## Data Quality Metrics
-
-As of the last enrichment run:
-
-### Pizza Places
-- Total: 37,187
-- With address: ~71% (enrichment in progress)
-- With style: ~48%
-- Potential duplicates: ~50 groups
-
-### Taco Places
-- Total: 33,207
-- With address: ~71% (enrichment in progress)
-- With style/type: ~28%
-- Potential duplicates: ~54 groups
-
----
-
-## Maintenance Tasks
-
-### Regular Tasks
-
-1. **Re-import from OSM** - Quarterly to catch new restaurants
-2. **Duplicate review** - Check `generate-data-quality-report.mjs` output
-3. **Address enrichment** - Run for new imports without addresses
-
-### Future Improvements
-
-- [ ] Integrate Google Places API for hours/ratings (requires API key)
-- [ ] Add Yelp data enrichment for reviews
-- [ ] Automated duplicate merging
-- [ ] User-submitted corrections workflow
+- **OSM region name mismatch:** OSM boundaries often use native-language names (e.g. “Bayern”, not “Bavaria”).
+- **Overpass timeouts/429s:** use built-in retry/fallback endpoints and respect delays.
+- **Country/state code conflicts:** some global scripts use ISO country codes in the `state` field; this can collide with regional codes and affect dashboard counts. See `docs/world-coverage.md`.

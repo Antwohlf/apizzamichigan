@@ -24,10 +24,70 @@ ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS website_url TEXT;
 
 ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS menu_url TEXT;
+
+ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS phone TEXT;
 
 ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS email TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS instagram_url TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS facebook_url TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS twitter_url TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS whatsapp TEXT;
+
+ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS hours JSONB;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS delivery BOOLEAN;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS takeaway BOOLEAN;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS drive_through BOOLEAN;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS outdoor_seating BOOLEAN;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS indoor_seating BOOLEAN;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS wheelchair TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS brand TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS brand_wikidata TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS operator TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS operator_wikidata TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS osm_tags JSONB;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS osm_last_fetched_at TIMESTAMPTZ;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS osm_fetch_status TEXT;
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS osm_fetch_error TEXT;
 
 ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS enrichment_status TEXT DEFAULT 'pending'
@@ -63,10 +123,70 @@ ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS website_url TEXT;
 
 ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS menu_url TEXT;
+
+ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS phone TEXT;
 
 ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS email TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS instagram_url TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS facebook_url TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS twitter_url TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS whatsapp TEXT;
+
+ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS hours JSONB;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS delivery BOOLEAN;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS takeaway BOOLEAN;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS drive_through BOOLEAN;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS outdoor_seating BOOLEAN;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS indoor_seating BOOLEAN;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS wheelchair TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS brand TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS brand_wikidata TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS operator TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS operator_wikidata TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS osm_tags JSONB;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS osm_last_fetched_at TIMESTAMPTZ;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS osm_fetch_status TEXT;
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS osm_fetch_error TEXT;
 
 ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS enrichment_status TEXT DEFAULT 'pending'
