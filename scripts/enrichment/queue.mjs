@@ -39,7 +39,7 @@ export class JobQueue {
 
     this.db = new Database(this.dbPath)
     this.db.pragma('journal_mode = WAL')  // Better concurrency
-    this.db.pragma('busy_timeout = 5000')  // Wait up to 5s for locks
+    this.db.pragma('busy_timeout = 20000')  // Wait up to 20s for locks
 
     // Create tables
     this.db.exec(`
@@ -80,6 +80,12 @@ export class JobQueue {
       );
 
       CREATE TABLE IF NOT EXISTS stats (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS control (
         key TEXT PRIMARY KEY,
         value TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
@@ -222,7 +228,10 @@ export class JobQueue {
   }
 
   /**
-   * Mark a job as failed
+   * Mark a job as failed.
+   *
+   * Note: claim() increments attempts. fail() will requeue (pending) until
+   * attempts hits max_attempts, then marks it permanently failed.
    */
   fail(jobId, errorMessage) {
     const fail = this.db.transaction(() => {
@@ -256,19 +265,95 @@ export class JobQueue {
   }
 
   /**
+   * Requeue a job as pending without counting it as a "failed" worker event.
+   *
+   * Useful for transient infra failures (e.g. Ollama down / network blip).
+   *
+   * Options:
+   * - refundAttempt: if true, decrements attempts by 1 (since claim() already
+   *   incremented it). This prevents transient outages from burning retries.
+   */
+  retry(jobId, errorMessage, { refundAttempt = true } = {}) {
+    const retry = this.db.transaction(() => {
+      const job = this.db.prepare('SELECT worker_id, attempts FROM jobs WHERE id = ?').get(jobId)
+
+      this.db.prepare(`
+        UPDATE jobs
+        SET status = 'pending',
+            worker_id = NULL,
+            started_at = NULL,
+            completed_at = NULL,
+            last_error = ?,
+            attempts = CASE
+              WHEN ? = 1 AND attempts > 0 THEN attempts - 1
+              ELSE attempts
+            END
+        WHERE id = ?
+      `).run(errorMessage, refundAttempt ? 1 : 0, jobId)
+
+      if (job?.worker_id) {
+        this.db.prepare(`
+          UPDATE workers
+          SET status = 'idle',
+              current_job_id = NULL,
+              last_heartbeat = datetime('now')
+          WHERE worker_id = ?
+        `).run(job.worker_id)
+      }
+    })
+
+    retry()
+  }
+
+  /**
    * Recover orphaned jobs (from crashed workers)
    */
-  recoverOrphaned(timeoutMinutes = 10) {
-    const result = this.db.prepare(`
-      UPDATE jobs
-      SET status = 'pending',
-          worker_id = NULL,
-          started_at = NULL
-      WHERE status = 'processing'
-        AND started_at < datetime('now', '-' || ? || ' minutes')
-    `).run(timeoutMinutes)
+  recoverOrphaned(timeoutMinutes = 10, { failJobTypes = ['menu_parse'] } = {}) {
+    const recover = this.db.transaction(() => {
+      const orphaned = this.db.prepare(`
+        SELECT id, job_type, worker_id
+        FROM jobs
+        WHERE status = 'processing'
+          AND started_at < datetime('now', '-' || ? || ' minutes')
+      `).all(timeoutMinutes)
 
-    return result.changes
+      if (!orphaned.length) return 0
+
+      const nowIso = new Date().toISOString()
+
+      for (const job of orphaned) {
+        const shouldFail = failJobTypes.includes(job.job_type)
+
+        this.db.prepare(`
+          UPDATE jobs
+          SET status = ?,
+              worker_id = NULL,
+              started_at = NULL,
+              last_error = ?,
+              completed_at = CASE WHEN ? = 'failed' THEN datetime('now') ELSE NULL END
+          WHERE id = ?
+        `).run(
+          shouldFail ? 'failed' : 'pending',
+          `Recovered orphaned job after ${timeoutMinutes}m timeout at ${nowIso}`,
+          shouldFail ? 'failed' : 'pending',
+          job.id
+        )
+
+        if (job.worker_id) {
+          this.db.prepare(`
+            UPDATE workers
+            SET status = 'idle',
+                current_job_id = NULL,
+                last_heartbeat = datetime('now')
+            WHERE worker_id = ?
+          `).run(job.worker_id)
+        }
+      }
+
+      return orphaned.length
+    })
+
+    return recover()
   }
 
   // =========================================================
@@ -435,6 +520,67 @@ export class JobQueue {
   getStat(key) {
     const row = this.db.prepare('SELECT value FROM stats WHERE key = ?').get(key)
     return row ? JSON.parse(row.value) : null
+  }
+
+  // =========================================================
+  // CONTROL OPERATIONS (pause/resume)
+  // =========================================================
+
+  /**
+   * Set control value
+   */
+  setControl(key, value) {
+    this.db.prepare(`
+      INSERT INTO control (key, value, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET
+        value = ?,
+        updated_at = datetime('now')
+    `).run(key, value, value)
+  }
+
+  /**
+   * Get control value
+   */
+  getControl(key) {
+    const row = this.db.prepare('SELECT value FROM control WHERE key = ?').get(key)
+    return row ? row.value : null
+  }
+
+  /**
+   * Check if worker type is paused
+   */
+  isPaused(workerType) {
+    const value = this.getControl(`pause_${workerType}`)
+    return value === 'true'
+  }
+
+  /**
+   * Pause worker type
+   */
+  pause(workerType) {
+    this.setControl(`pause_${workerType}`, 'true')
+    console.log(`[Queue] Paused ${workerType}`)
+  }
+
+  /**
+   * Resume worker type
+   */
+  resume(workerType) {
+    this.setControl(`pause_${workerType}`, 'false')
+    console.log(`[Queue] Resumed ${workerType}`)
+  }
+
+  /**
+   * Get pause status for all worker types
+   */
+  getPauseStatus() {
+    return {
+      osm_extract: this.isPaused('osm_extract'),
+      scrape: this.isPaused('scrape'),
+      classify: this.isPaused('classify'),
+      menu_parse: this.isPaused('menu_parse')
+    }
   }
 }
 

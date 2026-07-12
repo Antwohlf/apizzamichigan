@@ -9,7 +9,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS pizza_places (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id BIGINT PRIMARY KEY,
   name TEXT NOT NULL,
   lat DOUBLE PRECISION NOT NULL,
   lng DOUBLE PRECISION NOT NULL,
@@ -18,19 +18,44 @@ CREATE TABLE IF NOT EXISTS pizza_places (
   state TEXT,
   status TEXT DEFAULT 'unvisited' CHECK (status IN ('visited', 'unvisited', 'golden')),
   style TEXT,
-  price TEXT CHECK (price IN ('$', '$$', '$$$', '$$$$')),
+  price TEXT,
   rating NUMERIC,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
 
-  -- Enrichment columns
+  -- Enrichment columns (intended to be mirrored in Supabase before sync-back)
   address_source TEXT CHECK (address_source IN ('website', 'osm', 'geocoded')),
   price_range TEXT CHECK (price_range IN ('$', '$$', '$$$', '$$$$')),
   style_confidence TEXT CHECK (style_confidence IN ('confirmed', 'inferred')),
+
   website_url TEXT,
+  menu_url TEXT,
   phone TEXT,
+  email TEXT,
+  instagram_url TEXT,
+  facebook_url TEXT,
+  twitter_url TEXT,
+  whatsapp TEXT,
   hours JSONB,
+
+  delivery BOOLEAN,
+  takeaway BOOLEAN,
+  drive_through BOOLEAN,
+  outdoor_seating BOOLEAN,
+  indoor_seating BOOLEAN,
+  wheelchair TEXT,
+
+  brand TEXT,
+  brand_wikidata TEXT,
+  operator TEXT,
+  operator_wikidata TEXT,
+
+  osm_tags JSONB,
+  osm_last_fetched_at TIMESTAMPTZ,
+  osm_fetch_status TEXT,
+  osm_fetch_error TEXT,
+
   enrichment_status TEXT DEFAULT 'pending' CHECK (enrichment_status IN ('pending', 'enriched', 'failed')),
   last_enriched_at TIMESTAMPTZ,
   scrape_method TEXT CHECK (scrape_method IN ('fetch', 'failed')),
@@ -42,7 +67,7 @@ CREATE TABLE IF NOT EXISTS pizza_places (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS taco_places (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id BIGINT PRIMARY KEY,
   name TEXT NOT NULL,
   lat DOUBLE PRECISION NOT NULL,
   lng DOUBLE PRECISION NOT NULL,
@@ -51,19 +76,44 @@ CREATE TABLE IF NOT EXISTS taco_places (
   state TEXT,
   status TEXT DEFAULT 'unvisited' CHECK (status IN ('visited', 'unvisited', 'golden')),
   style TEXT,
-  price TEXT CHECK (price IN ('$', '$$', '$$$', '$$$$')),
+  price TEXT,
   rating NUMERIC,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
 
-  -- Enrichment columns
+  -- Enrichment columns (intended to be mirrored in Supabase before sync-back)
   address_source TEXT CHECK (address_source IN ('website', 'osm', 'geocoded')),
   price_range TEXT CHECK (price_range IN ('$', '$$', '$$$', '$$$$')),
   style_confidence TEXT CHECK (style_confidence IN ('confirmed', 'inferred')),
+
   website_url TEXT,
+  menu_url TEXT,
   phone TEXT,
+  email TEXT,
+  instagram_url TEXT,
+  facebook_url TEXT,
+  twitter_url TEXT,
+  whatsapp TEXT,
   hours JSONB,
+
+  delivery BOOLEAN,
+  takeaway BOOLEAN,
+  drive_through BOOLEAN,
+  outdoor_seating BOOLEAN,
+  indoor_seating BOOLEAN,
+  wheelchair TEXT,
+
+  brand TEXT,
+  brand_wikidata TEXT,
+  operator TEXT,
+  operator_wikidata TEXT,
+
+  osm_tags JSONB,
+  osm_last_fetched_at TIMESTAMPTZ,
+  osm_fetch_status TEXT,
+  osm_fetch_error TEXT,
+
   enrichment_status TEXT DEFAULT 'pending' CHECK (enrichment_status IN ('pending', 'enriched', 'failed')),
   last_enriched_at TIMESTAMPTZ,
   scrape_method TEXT CHECK (scrape_method IN ('fetch', 'failed')),

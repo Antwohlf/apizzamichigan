@@ -34,10 +34,11 @@ const WORKERS = {
 
 // Worker concurrency limits
 const WORKER_LIMITS = {
-  osm_extract: 2,   // 2 parallel OSM extractors
-  scrape: 3,        // 3 parallel scrapers
-  classify: 2,      // 2 parallel classifiers (limited by LLM rate)
-  sync: 1           // 1 sync agent
+  // Start conservatively to avoid Overpass 429s; raise once stable.
+  osm_extract: parseInt(process.env.OSM_EXTRACT_WORKERS || '1', 10),
+  scrape: parseInt(process.env.SCRAPE_WORKERS || '3', 10),
+  classify: parseInt(process.env.CLASSIFY_WORKERS || '2', 10),
+  sync: parseInt(process.env.SYNC_WORKERS || '1', 10)
 }
 
 // Configuration
@@ -166,6 +167,13 @@ class Coordinator {
       this.workers.delete(workerId)
       this.queue.unregisterWorker(workerId)
 
+      // Don't restart if worker type is paused
+      const pauseStatus = this.queue.getPauseStatus()
+      if (pauseStatus[workerType]) {
+        console.log(`Not restarting ${workerType} worker (paused)`)
+        return
+      }
+
       // Restart worker if still running and exit wasn't clean
       if (this.running && code !== 0) {
         console.log(`Restarting ${workerType} worker...`)
@@ -253,7 +261,21 @@ class Coordinator {
    * Ensure we have the right number of workers for each type
    */
   ensureWorkers() {
+    const pauseStatus = this.queue.getPauseStatus()
+
     for (const [type, limit] of Object.entries(WORKER_LIMITS)) {
+      // Skip if this worker type is paused
+      if (pauseStatus[type]) {
+        // Kill existing workers of this type if paused
+        for (const [workerId, worker] of this.workers) {
+          if (worker.type === type) {
+            console.log(`Stopping ${type} worker ${workerId} (paused)`)
+            worker.process.kill()
+          }
+        }
+        continue
+      }
+
       // Count current workers of this type
       let currentCount = 0
       for (const [, worker] of this.workers) {
