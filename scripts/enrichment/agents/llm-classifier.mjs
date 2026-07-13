@@ -31,7 +31,7 @@ const PIZZA_STYLES = [
 
 const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 
-const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b'
+const MODEL = process.env.OLLAMA_MODEL || 'llama3.2:latest'
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 const OLLAMA_TIMEOUT_MS = process.env.OLLAMA_TIMEOUT_MS ? parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) : 300000
 
