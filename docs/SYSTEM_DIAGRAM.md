@@ -33,7 +33,7 @@ graph TD
         OVERPASS["Overpass API<br/>(3 endpoints, round-robin)"]
         NOMINATIM["Nominatim<br/>(reverse geocode)"]
         WEBSITES["Restaurant Websites"]
-        OLLAMA["Ollama (local)<br/>qwen2.5:7b"]
+        OLLAMA["Ollama (local)<br/>llama3.2:latest default<br/>qwen2.5:7b optional"]
         SUPABASE["Supabase<br/>(daily sync target)"]
     end
 
@@ -111,7 +111,7 @@ graph TD
 1. **OSM Cache → SQLite Queue**: Coordinator loads ~5.8 MB of pre-indexed OSM IDs into the job queue, prioritized (Michigan=100, major US=95, international=50).
 2. **Extract**: OSM Extractor claims `osm_extract` jobs, batch-queries Overpass (10 at a time, 10-15s delay), reverse-geocodes via Nominatim, writes tags/address/coords to **local Postgres**.
 3. **Scrape**: Web Scraper claims `scrape` jobs, fetches restaurant URLs with cheerio, extracts menu hints/hours/descriptions → Postgres.
-4. **Classify**: LLM Classifier claims `classify` jobs. Fast path: deterministic chain/name inference (`style-inference.mjs`). Slow path: Ollama `qwen2.5:7b` with strict JSON schema. Writes style, price_range, brand, confidence → Postgres.
+4. **Classify**: LLM Classifier claims `classify` jobs. Fast path: deterministic chain/name inference (`style-inference.mjs`). Slow path: Ollama with strict JSON schema. The operational default is `llama3.2:latest` because home-server smoke tests completed with it while `qwen2.5:7b` repeatedly timed out; override with `OLLAMA_MODEL` when needed. Writes style, price_range, brand, confidence → Postgres.
 5. **Sync**: Daily sync pushes enriched rows to Supabase (production).
 
 ### Control Flow
