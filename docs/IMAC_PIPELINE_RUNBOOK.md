@@ -129,6 +129,13 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/sync-local-to-supabase.
 ssh example-host 'cd /srv/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --max-batches 1'
 ```
 
+Preferred guarded runner:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50 --apply'
+```
+
 Do not run a write sync until classification quality has been reviewed.
 
 ## Legacy Material
