@@ -16,6 +16,7 @@ import { getQueue } from '../queue.mjs'
 import pg from 'pg'
 import 'dotenv/config'
 import { inferStyleFromName, inferPriceFromChain, isKnownChain } from '../../lib/style-inference.mjs'
+import { hasStyleEvidence } from '../../lib/style-evidence.mjs'
 
 const PIZZA_STYLES = [
   'Traditional',
@@ -406,26 +407,11 @@ class LlmClassifier {
     const priceRange = normalizePrice(parsed.price_range)
     let styleConfidence = parsed.style_confidence === 'confirmed' ? 'confirmed' : 'inferred'
 
-    // Extra guardrail: if the LLM says a specific style but only "inferred",
-    // require that we actually see evidence in the scraped/OSM text.
-    if (style && styleConfidence === 'inferred') {
-      const haystack = `${JSON.stringify(row.osm_tags || {})} ${JSON.stringify(row.scrape_notes || {})}`.toLowerCase()
-      const evidence = {
-        Detroit: ['detroit'],
-        Chicago: ['chicago', 'deep dish', 'deep-dish', 'stuffed'],
-        'New York': ['new york', 'ny style', 'ny-style', 'brooklyn'],
-        Neapolitan: ['neapolitan', 'wood fired', 'wood-fired', 'brick oven', 'coal fired', 'napoletana'],
-        Sicilian: ['sicilian', 'grandma'],
-        Roman: ['roman', 'al taglio', 'taglio'],
-        Tavern: ['tavern', 'party cut'],
-        California: ['california'],
-      }[style] || []
-
-      const hasEvidence = evidence.length ? evidence.some(k => haystack.includes(k)) : false
-      if (!hasEvidence) {
-        style = null
-        styleConfidence = null
-      }
+    // Extra guardrail: require source evidence before writing any LLM style.
+    // A model may still provide price without enough evidence for pizza style.
+    if (style && !hasStyleEvidence(row, style)) {
+      style = null
+      styleConfidence = null
     }
 
     // Conservative write: nulls allowed; never write unknown values
