@@ -1,0 +1,127 @@
+export const OVERWRITE_COLS = [
+  'created_at',
+  'updated_at',
+  'enrichment_status',
+  'last_enriched_at',
+  'enrichment_agent',
+  'enrichment_run_id',
+  'address_source',
+  'website_url',
+  'menu_url',
+  'phone',
+  'email',
+  'instagram_url',
+  'facebook_url',
+  'twitter_url',
+  'whatsapp',
+  'hours',
+  'scrape_method',
+  'scrape_notes',
+  'delivery',
+  'takeaway',
+  'drive_through',
+  'outdoor_seating',
+  'indoor_seating',
+  'wheelchair',
+  'brand',
+  'brand_wikidata',
+  'operator',
+  'operator_wikidata',
+  'osm_tags',
+  'osm_last_fetched_at',
+  'osm_fetch_status',
+  'osm_fetch_error',
+  'menu_data',
+  'menu_parse_confidence',
+  'menu_parse_notes',
+  'menu_last_parsed_at',
+];
+
+export const FILL_IF_NULL_COLS = [
+  'style',
+  'price',
+  'price_range',
+  'style_confidence',
+];
+
+export const QA_DEFAULT_COLS = [
+  'qa_status',
+  'qa_schema_version',
+];
+
+export const LOCAL_CONTEXT_COLS = [
+  'id',
+  'name',
+  'state',
+  'google_place_id',
+];
+
+export const LOCAL_SYNC_COLS = [
+  ...LOCAL_CONTEXT_COLS,
+  ...FILL_IF_NULL_COLS,
+  ...OVERWRITE_COLS,
+];
+
+export const SUPABASE_SYNC_SELECT_COLS = [
+  'id',
+  ...FILL_IF_NULL_COLS,
+  ...QA_DEFAULT_COLS,
+];
+
+export const LOCAL_SYNC_VALUE_COLS = [
+  ...FILL_IF_NULL_COLS,
+  ...OVERWRITE_COLS,
+];
+
+export function localSyncSelectSql() {
+  return `
+        select
+          ${LOCAL_SYNC_COLS.join(',\n          ')}
+        from pizza_places
+        where id > $1
+          and (
+            ${LOCAL_SYNC_VALUE_COLS.map(col => `${col} is not null`).join('\n            or ')}
+          )
+        order by id asc
+        limit $2
+      `;
+}
+
+export function buildSupabasePayload(local, current, { nowIso = new Date().toISOString() } = {}) {
+  if (!current) return null;
+
+  const payload = { id: local.id };
+
+  for (const col of OVERWRITE_COLS) {
+    const value = local[col];
+    if (value !== null && value !== undefined) payload[col] = value;
+  }
+
+  for (const col of FILL_IF_NULL_COLS) {
+    const localValue = local[col];
+    const supabaseValue = current[col];
+    if ((supabaseValue === null || supabaseValue === undefined) && localValue !== null && localValue !== undefined) {
+      payload[col] = localValue;
+    }
+  }
+
+  if (current.qa_status == null) payload.qa_status = 'unreviewed';
+  if (current.qa_schema_version == null) payload.qa_schema_version = 1;
+
+  if (Object.keys(payload).length <= 1) return null;
+  if (!('updated_at' in payload)) payload.updated_at = nowIso;
+  return payload;
+}
+
+export function protectedFieldSkips(local, current) {
+  if (!current) return [];
+
+  return FILL_IF_NULL_COLS
+    .filter(col => local[col] !== null && local[col] !== undefined && current[col] !== null && current[col] !== undefined)
+    .map(col => ({
+      column: col,
+      local: local[col],
+      supabase: current[col],
+      differs: local[col] !== current[col],
+    }));
+}
