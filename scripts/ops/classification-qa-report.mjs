@@ -10,6 +10,7 @@ import pg from 'pg'
 import 'dotenv/config'
 import { execFileSync } from 'child_process'
 import { inferPriceFromChain, inferStyleFromName, isKnownChain } from '../lib/style-inference.mjs'
+import { hasPizzaSignal, hasStyleEvidence } from '../lib/style-evidence.mjs'
 
 const PIZZA_STYLES = [
   'Traditional',
@@ -25,33 +26,6 @@ const PIZZA_STYLES = [
 
 const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 const CONFIDENCES = ['confirmed', 'inferred']
-
-const STYLE_EVIDENCE = {
-  Detroit: ['detroit'],
-  Chicago: ['chicago', 'deep dish', 'deep-dish', 'stuffed'],
-  'New York': ['new york', 'ny style', 'ny-style', 'brooklyn'],
-  Neapolitan: ['neapolitan', 'wood fired', 'wood-fired', 'brick oven', 'coal fired', 'napoletana', 'napoli'],
-  Sicilian: ['sicilian', 'grandma'],
-  Roman: ['roman', 'al taglio', 'taglio'],
-  Tavern: ['tavern', 'party cut', 'thin crust', 'square cut'],
-  California: ['california'],
-  Traditional: ['pizza', 'pizzeria', 'pizzaria', 'pizzería', 'pizzas', 'domino', 'pizza hut', 'papa john', 'little caesars', 'sbarro']
-}
-
-const PIZZA_SIGNAL_TERMS = [
-  'pizza',
-  'pizzeria',
-  'pizzaria',
-  'pizzería',
-  'pizzas',
-  'pizz',
-  'slice',
-  'slices',
-  'pie',
-  'cuisine":"pizza',
-  'cuisine:pizza',
-  'italian'
-]
 
 function parseArgs(argv) {
   const out = {
@@ -123,40 +97,6 @@ function gitReport(root) {
 
 function errorMessage(error) {
   return error?.message || error?.code || String(error)
-}
-
-function toText(value) {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'string') return value
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-function evidenceText(row) {
-  return [
-    row.name,
-    row.website_url,
-    toText(row.osm_tags),
-    toText(row.scrape_notes)
-  ].filter(Boolean).join(' ').toLowerCase()
-}
-
-function hasAny(text, terms) {
-  return terms.some(term => text.includes(term))
-}
-
-function hasStyleEvidence(row) {
-  if (!row.style) return true
-  const text = evidenceText(row)
-  const terms = STYLE_EVIDENCE[row.style] || []
-  return terms.length ? hasAny(text, terms) : false
-}
-
-function hasPizzaSignal(row) {
-  return hasAny(evidenceText(row), PIZZA_SIGNAL_TERMS)
 }
 
 function expectedChain(row) {
