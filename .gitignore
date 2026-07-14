@@ -28,6 +28,7 @@
 /scripts/.job-queue.db-wal
 /scripts/.*-progress.json
 /scripts/.status_hourly.json
+/scripts/.supabase-sync-checkpoint*.json
 
 # OpenClaw / cron / watchdog local artifacts
 /logs/
