@@ -59,6 +59,7 @@ ssh example-host 'cd /srv/apizzamichigan && \
 Check status:
 
 ```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
 ssh example-host 'tail -100 /tmp/apizzamichigan/classifier.log'
 ```
