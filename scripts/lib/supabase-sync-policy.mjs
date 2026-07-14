@@ -73,18 +73,57 @@ export const LOCAL_SYNC_VALUE_COLS = [
   ...OVERWRITE_COLS,
 ];
 
-export function localSyncSelectSql() {
+export function normalizeSyncSelectorOptions(options = {}) {
+  return {
+    startAfter: Number.isFinite(options.startAfter) ? options.startAfter : 0,
+    batch: Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
+    changedSinceHours: options.changedSinceHours ?? null,
+    onlyClassified: Boolean(options.onlyClassified),
+  };
+}
+
+export function localSyncSelectQuery(options = {}) {
+  const selector = normalizeSyncSelectorOptions(options);
+  const params = [selector.startAfter, selector.batch];
+  const filters = [
+    'id > $1',
+    `(
+            ${LOCAL_SYNC_VALUE_COLS.map(col => `${col} is not null`).join('\n            or ')}
+          )`,
+  ];
+
+  if (selector.changedSinceHours !== null) {
+    params.push(String(selector.changedSinceHours));
+    filters.push(`last_enriched_at >= now() - ($${params.length}::text || ' hours')::interval`);
+  }
+
+  if (selector.onlyClassified) {
+    filters.push('(style is not null or price is not null or price_range is not null or style_confidence is not null)');
+  }
+
   return `
         select
           ${LOCAL_SYNC_COLS.join(',\n          ')}
         from pizza_places
-        where id > $1
-          and (
-            ${LOCAL_SYNC_VALUE_COLS.map(col => `${col} is not null`).join('\n            or ')}
-          )
+        where ${filters.join('\n          and ')}
         order by id asc
         limit $2
       `;
+}
+
+export function localSyncSelectSql(options = {}) {
+  return localSyncSelectQuery(options);
+}
+
+export function localSyncSelectParams(options = {}) {
+  return localSyncSelectQueryParams(options);
+}
+
+export function localSyncSelectQueryParams(options = {}) {
+  const selector = normalizeSyncSelectorOptions(options);
+  const params = [selector.startAfter, selector.batch];
+  if (selector.changedSinceHours !== null) params.push(String(selector.changedSinceHours));
+  return params;
 }
 
 export function buildSupabasePayload(local, current, { nowIso = new Date().toISOString() } = {}) {
