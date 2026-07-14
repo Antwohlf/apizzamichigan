@@ -59,6 +59,7 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && \
 Check status:
 
 ```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
 ssh apizza-imac 'tail -100 /tmp/apizzamichigan/classifier.log'
 ```
