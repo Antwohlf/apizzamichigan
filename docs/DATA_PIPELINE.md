@@ -1,104 +1,62 @@
-# Data Pipeline (Current)
+# Data Pipeline
 
-This document describes how APizzaMichigan/TacoBoutMichigan data is **imported**, **enriched**, and **maintained**.
+APizzaMichigan maintains public data in Supabase and enriches it locally on the
+Michigan iMac before controlled sync-back.
 
-> Source of truth for coverage numbers: `docs/world-coverage.md` and `public/data/dashboard-stats.json`.
+## Import Path
 
-## Overview
+OpenStreetMap imports populate Supabase using the root-level import scripts:
 
-We maintain two primary datasets in Supabase (PostgreSQL):
-
-- `pizza_places`
-- `taco_places`
-
-Data is sourced primarily from **OpenStreetMap (OSM)** via the **Overpass API**, then optionally enriched via a **local-first enrichment pipeline** (OSM deep tags + website scraping + local LLM classification) before syncing updates back to Supabase.
-
-## 1) Import: OSM → Supabase
-
-### Primary source: OpenStreetMap (Overpass)
-
-**Query approach (high level):**
-- Overpass API queries for `amenity=restaurant` and `amenity=fast_food`
-- Filter by cuisine tags (e.g. `cuisine=pizza`) and/or name patterns for global scripts
-- Extract at minimum: name, coordinates, OSM identifiers, and any available tags (address/website/phone/hours when present)
-
-### Import scripts
-
-**US state-by-state:**
 - `scripts/import-osm-pizza.mjs`
 - `scripts/import-osm-tacos.mjs`
-- `scripts/import-all-states.mjs`
-- `scripts/import-all-tacos-states.mjs`
+- region/global helpers such as `scripts/import-europe.mjs` and `scripts/import-pizzerias-by-name.mjs`
 
-**Region-based international imports:**
-- `scripts/import-international.mjs` (Canada + Mexico)
-- `scripts/import-europe.mjs`
-- `scripts/import-latin-america.mjs`
+Coverage details live in `docs/world-coverage.md`.
 
-**Global/country-level scripts (name/chains/cuisine heuristics):**
-- `scripts/import-pizzerias-by-name.mjs`
-- `scripts/import-chains.mjs`
-- `scripts/import-additional-cuisines.mjs`
-- `scripts/import-street-food.mjs`
-- `scripts/import-retry-failed.mjs`
+## Local Enrichment Path
 
-### Coverage
+The current local-first pipeline is:
 
-Coverage has expanded well beyond US-only.
+1. Seed or refresh local Postgres from Supabase with `scripts/enrichment/sync-from-supabase.mjs`.
+2. Use SQLite `scripts/.job-queue.db` for queue state and worker heartbeats.
+3. Enrich local Postgres through active agents:
+   - OSM deep extraction: `scripts/enrichment/agents/osm-extractor.mjs`
+   - website scraping: `scripts/enrichment/agents/web-scraper.mjs`
+   - classification: `scripts/enrichment/agents/llm-classifier.mjs`
+4. Sync approved local enrichment fields back to Supabase with `scripts/sync-local-to-supabase.mjs`.
 
-See:
-- `docs/world-coverage.md` (country-by-country)
+Current production rollout is classifier-first. OSM extraction, scraping,
+menu parse, QA, and Supabase write sync are manual until separately approved.
 
-## 2) Baseline enrichment (existing scripts)
+## Classifier Runtime
 
-These are “in-Supabase” enrichment steps that infer metadata from existing fields (name, chain match, etc.):
+The classifier runs locally against Ollama:
 
-- Pizza: `scripts/populate-pizza-metadata.mjs` using `scripts/lib/style-inference.mjs`
-- Tacos: `scripts/populate-taco-metadata.mjs` using `scripts/lib/type-inference-tacos.mjs`
+- default model: `llama3.2:latest`
+- override: `OLLAMA_MODEL`
+- conservative output cap: `OLLAMA_NUM_PREDICT=80`
+- conservative timeout: `OLLAMA_TIMEOUT_MS=240000`
 
-These are useful, but they are limited by what OSM provided during import.
+It writes style, price range, confidence, and `last_enriched_at` to local
+Postgres. Supabase is not updated until the manual sync path is run.
 
-## 3) Local-first enrichment pipeline (recommended path forward)
+## Operations
 
-For deeper enrichment (style/price/address/website/phone/hours confidence), we use a **local working database** and worker agents.
+Canonical iMac runbook:
 
-Canonical docs:
-- Architecture: `docs/data-enhancement-architecture.md`
-- Setup guide: `scripts/enrichment/SETUP.md`
+- `docs/IMAC_PIPELINE_RUNBOOK.md`
 
-### What it does
+Useful reports:
 
-1. **One-time seed:** pull Supabase tables down to local Postgres
-   - `scripts/enrichment/sync-from-supabase.mjs`
+```bash
+node scripts/ops/home-status-report.mjs
+node scripts/ops/classifier-batch-report.mjs --max-jobs 25 --timeout-ms 240000 --num-predict 80 --temperature 0
+node scripts/ops/stale-worker-cleanup.mjs
+```
 
-2. **Enrichment loop:**
-   - **OSM deep extract**: query Overpass by known OSM element IDs to fetch full tags
-   - **Website scrape**: simple fetch-based scrape when a website URL is present
-   - **LLM classification** (planned): run **Ollama** locally to classify into the project’s exact taxonomy
+## Archived Legacy Path
 
-3. **Sync back to Supabase** (planned): batch UPDATE enriched fields from local Postgres
-
-### Current implementation status
-
-Implemented foundation:
-- Queue + worker tracking: `scripts/enrichment/queue.mjs` (SQLite)
-- Local DB schemas: `scripts/enrichment/local-schema.sql`, `local-schema-v2.sql`
-- Agents: `scripts/enrichment/agents/coordinator.mjs`, `osm-extractor.mjs`, `web-scraper.mjs`
-
-Planned (not implemented yet):
-- `scripts/enrichment/agents/llm-classifier.mjs`
-- `scripts/enrichment/agents/sync-agent.mjs`
-
-## 4) Maintenance / operational cadence
-
-Recommended cadence:
-- **Imports:** quarterly (or as-needed for new regions)
-- **Metadata inference scripts:** after imports
-- **Local-first enrichment:** run continuously or in batches (MI → major US → broader)
-- **Sync back to Supabase:** daily batch (once implemented)
-
-## 5) Common issues
-
-- **OSM region name mismatch:** OSM boundaries often use native-language names (e.g. “Bayern”, not “Bavaria”).
-- **Overpass timeouts/429s:** use built-in retry/fallback endpoints and respect delays.
-- **Country/state code conflicts:** some global scripts use ISO country codes in the `state` field; this can collide with regional codes and affect dashboard counts. See `docs/world-coverage.md`.
+The older `scripts/enrichment/orchestrator.mjs`, watchdog, and
+`scripts/enrichment/workers/*` pipeline generation has been archived under
+`scripts/enrichment/archive/`. It used a different model and is not the current
+operational path.

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.apizzamichigan.classifier</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /srv/apizzamichigan &amp;&amp; /usr/local/bin/node scripts/enrichment/agents/llm-classifier.mjs --worker-id launchd-classify</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CLASSIFY_MAX_JOBS</key>
+    <string>0</string>
+    <key>OLLAMA_MODEL</key>
+    <string>llama3.2:latest</string>
+    <key>OLLAMA_TIMEOUT_MS</key>
+    <string>240000</string>
+    <key>OLLAMA_NUM_PREDICT</key>
+    <string>80</string>
+    <key>OLLAMA_TEMPERATURE</key>
+    <string>0</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/srv/apizzamichigan</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/apizzamichigan/classifier.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/apizzamichigan/classifier.log</string>
+</dict>
+</plist>

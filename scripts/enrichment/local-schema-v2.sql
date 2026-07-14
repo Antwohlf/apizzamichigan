@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS classification_cache (
   cache_key TEXT PRIMARY KEY,  -- hash of (name + address + hints)
   place_type TEXT NOT NULL CHECK (place_type IN ('pizza', 'taco')),
   classification JSONB NOT NULL,  -- { style, price_range, confidence, reasoning }
-  model TEXT NOT NULL,  -- 'ollama:llama3.2:8b', 'groq:llama-3.1-8b-instant'
+  model TEXT NOT NULL,  -- e.g. 'ollama:llama3.2:latest'
   prompt_tokens INTEGER,
   completion_tokens INTEGER,
   latency_ms INTEGER,
