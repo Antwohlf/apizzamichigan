@@ -40,6 +40,14 @@ Apply only after reviewing the dry-run:
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs --apply'
 ```
 
+## Pre-Sync QA
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
+```
+
+Do not run Supabase write syncs until the QA report has been reviewed.
+
 ## Service Control
 
 The first production service is the launchd-managed classifier:
