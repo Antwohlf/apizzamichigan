@@ -47,6 +47,7 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classification-qa-r
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --batch 50 --sample 20'
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --sample 20'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
 ```
 
