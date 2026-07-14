@@ -5,7 +5,7 @@
  * Manages the enrichment pipeline with multiple worker agents.
  * Handles job dispatch, monitoring, crash recovery, and graceful shutdown.
  *
- * Can be run standalone or as part of OpenClaw agent system.
+ * Can be run standalone. Production service management should use launchd.
  *
  * Usage:
  *   node scripts/enrichment/agents/coordinator.mjs
@@ -38,7 +38,8 @@ const WORKER_LIMITS = {
   osm_extract: parseInt(process.env.OSM_EXTRACT_WORKERS || '1', 10),
   scrape: parseInt(process.env.SCRAPE_WORKERS || '3', 10),
   classify: parseInt(process.env.CLASSIFY_WORKERS || '2', 10),
-  sync: parseInt(process.env.SYNC_WORKERS || '1', 10)
+  // Supabase sync is intentionally opt-in. Run manual dry-runs before enabling.
+  sync: parseInt(process.env.SYNC_WORKERS || '0', 10)
 }
 
 // Configuration
@@ -264,6 +265,10 @@ class Coordinator {
     const pauseStatus = this.queue.getPauseStatus()
 
     for (const [type, limit] of Object.entries(WORKER_LIMITS)) {
+      if (!Number.isFinite(limit) || limit <= 0) {
+        continue
+      }
+
       // Skip if this worker type is paused
       if (pauseStatus[type]) {
         // Kill existing workers of this type if paused
