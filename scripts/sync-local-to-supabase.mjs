@@ -19,6 +19,11 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import {
+  checkpointFromRow,
+  readSyncCheckpoint,
+  writeSyncCheckpoint,
+} from './lib/supabase-sync-checkpoint.mjs';
+import {
   buildSupabasePayload,
   localSyncSelectParams,
   localSyncSelectSql,
@@ -34,6 +39,7 @@ function parseArgs(argv) {
     verbose: false,
     changedSinceHours: null,
     onlyClassified: false,
+    checkpointPath: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -44,6 +50,7 @@ function parseArgs(argv) {
     else if (a === '--start-after') out.startAfter = parseInt(argv[++i], 10);
     else if (a === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
     else if (a === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
+    else if (a === '--checkpoint') out.checkpointPath = argv[++i];
     else if (a === '--help') {
       console.log(`Usage: node scripts/sync-local-to-supabase.mjs [options]
 
@@ -53,6 +60,7 @@ Options:
   --max-batches <n>           Stop after n batches (default 0 = unlimited)
   --changed-since-hours <n>   Only scan rows enriched in the last n hours
   --only-classified           Only scan rows with style/price classification output
+  --checkpoint <path>         Resume/save a last_enriched_at + id checkpoint
   --dry-run                   Print what would happen, do not write to Supabase
   --verbose                   Extra logging
 `);
@@ -107,6 +115,7 @@ async function main() {
   await client.connect();
 
   let cursor = args.startAfter;
+  let checkpointAfter = readSyncCheckpoint(args.checkpointPath);
   let batchNum = 0;
   let totalUpdates = 0;
   let totalRowsScanned = 0;
@@ -117,7 +126,12 @@ async function main() {
 
       // Pull a chunk of local rows that have anything worth syncing.
       // (We still include rows where only style/price are present so we can NULL-fill.)
-      const selector = { ...args, startAfter: cursor };
+      const selector = {
+        ...args,
+        startAfter: cursor,
+        checkpointMode: Boolean(args.checkpointPath),
+        checkpointAfter,
+      };
       const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
       if (!localRows.length) break;
 
@@ -161,10 +175,20 @@ async function main() {
           `start_after=${selector.startAfter}`,
           `changed_since_hours=${selector.changedSinceHours ?? 'none'}`,
           `only_classified=${selector.onlyClassified}`,
+          `checkpoint=${args.checkpointPath || 'none'}`,
+          `checkpoint_after=${checkpointAfter ? `${checkpointAfter.lastEnrichedAt}/${checkpointAfter.id}` : 'none'}`,
         ].join(' ');
         console.log(`[dry-run] batch ${batchNum}: local_rows=${localRows.length} supabase_rows=${(sbRows||[]).length} would_update=${wouldUpdate} cursor=${cursor} ${selectorText}`);
         if (args.verbose && updates.length) {
           console.log('sample update payload:', JSON.stringify(updates[0], null, 2));
+        }
+        const nextCheckpoint = checkpointFromRow(localRows[localRows.length - 1]);
+        if (args.checkpointPath && nextCheckpoint) {
+          checkpointAfter = {
+            lastEnrichedAt: nextCheckpoint.last_enriched_at,
+            id: nextCheckpoint.id,
+            source: args.checkpointPath,
+          };
         }
         continue;
       }
@@ -191,6 +215,15 @@ async function main() {
       }
 
       totalUpdates += updated;
+      const nextCheckpoint = checkpointFromRow(localRows[localRows.length - 1]);
+      if (args.checkpointPath && nextCheckpoint) {
+        writeSyncCheckpoint(args.checkpointPath, nextCheckpoint);
+        checkpointAfter = {
+          lastEnrichedAt: nextCheckpoint.last_enriched_at,
+          id: nextCheckpoint.id,
+          source: args.checkpointPath,
+        };
+      }
       console.log(`[ok] batch ${batchNum}: updated=${updated} local_rows=${localRows.length} cursor=${cursor}`);
     }
 
