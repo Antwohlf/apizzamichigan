@@ -15,6 +15,9 @@ This is the APizzaMichigan home-runner playbook for the Michigan iMac.
 OpenClaw may remain installed for unrelated local-agent work, but APizzaMichigan
 pipeline operation should not depend on OpenClaw, Discord, or GitHub Issues.
 
+APizzaMichigan OpenClaw cron jobs should remain disabled. The launchd classifier
+is the only approved always-on APizza process in this phase.
+
 ## Baseline Checks
 
 Run from the MacBook:
@@ -68,6 +71,36 @@ Stop service:
 
 ```bash
 ssh apizza-imac 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
+```
+
+## Retire Legacy OpenClaw Cron Jobs
+
+OpenClaw can stay running for unrelated local-agent work, but old APizza cron
+jobs must not restart the archived watchdog or coordinator.
+
+List OpenClaw cron jobs:
+
+```bash
+ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron list'
+```
+
+The retired APizza jobs are:
+
+- `092dc3b7-20ad-42a4-9dff-d5c417f4b90e` - `apizzamichigan watchdog keepalive`
+- `c92e0d70-6159-402b-8980-72784da8e936` - `apizzamichigan enrichment keepalive (restart coordinator if down)`
+
+If either appears enabled, disable it:
+
+```bash
+ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron disable 092dc3b7-20ad-42a4-9dff-d5c417f4b90e'
+ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron disable c92e0d70-6159-402b-8980-72784da8e936'
+```
+
+Then verify APizza has only the launchd classifier process:
+
+```bash
+ssh apizza-imac 'ps -axo pid,ppid,command | egrep "watchdog-keepalive|keepalive.mjs|coordinator.mjs|llm-classifier.mjs" | grep -v egrep || true'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ```
 
 ## Manual Sync Policy
