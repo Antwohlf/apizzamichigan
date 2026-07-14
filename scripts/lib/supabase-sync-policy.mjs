@@ -74,41 +74,68 @@ export const LOCAL_SYNC_VALUE_COLS = [
 ];
 
 export function normalizeSyncSelectorOptions(options = {}) {
+  const checkpointAfter = options.checkpointAfter || null;
+  const checkpointMode = Boolean(options.checkpointMode || checkpointAfter);
   return {
     startAfter: Number.isFinite(options.startAfter) ? options.startAfter : 0,
     batch: Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
     changedSinceHours: options.changedSinceHours ?? null,
     onlyClassified: Boolean(options.onlyClassified),
+    checkpointMode,
+    checkpointAfter,
   };
 }
 
-export function localSyncSelectQuery(options = {}) {
+export function localSyncSelect(options = {}) {
   const selector = normalizeSyncSelectorOptions(options);
-  const params = [selector.startAfter, selector.batch];
+  const params = [];
   const filters = [
-    'id > $1',
     `(
             ${LOCAL_SYNC_VALUE_COLS.map(col => `${col} is not null`).join('\n            or ')}
           )`,
   ];
+
+  if (selector.checkpointMode) {
+    filters.push('last_enriched_at is not null');
+  } else {
+    params.push(selector.startAfter);
+    filters.unshift(`id > $${params.length}`);
+  }
 
   if (selector.changedSinceHours !== null) {
     params.push(String(selector.changedSinceHours));
     filters.push(`last_enriched_at >= now() - ($${params.length}::text || ' hours')::interval`);
   }
 
+  if (selector.checkpointAfter) {
+    params.push(selector.checkpointAfter.lastEnrichedAt);
+    const tsParam = params.length;
+    params.push(selector.checkpointAfter.id);
+    const idParam = params.length;
+    filters.push(`(last_enriched_at, id) > ($${tsParam}::timestamptz, $${idParam}::int)`);
+  }
+
   if (selector.onlyClassified) {
     filters.push('(style is not null or price is not null or price_range is not null or style_confidence is not null)');
   }
 
-  return `
+  params.push(selector.batch);
+  const limitParam = params.length;
+  const orderBy = selector.checkpointMode ? 'last_enriched_at asc, id asc' : 'id asc';
+
+  const sql = `
         select
           ${LOCAL_SYNC_COLS.join(',\n          ')}
         from pizza_places
         where ${filters.join('\n          and ')}
-        order by id asc
-        limit $2
+        order by ${orderBy}
+        limit $${limitParam}
       `;
+  return { sql, params };
+}
+
+export function localSyncSelectQuery(options = {}) {
+  return localSyncSelect(options).sql;
 }
 
 export function localSyncSelectSql(options = {}) {
@@ -116,14 +143,11 @@ export function localSyncSelectSql(options = {}) {
 }
 
 export function localSyncSelectParams(options = {}) {
-  return localSyncSelectQueryParams(options);
+  return localSyncSelect(options).params;
 }
 
 export function localSyncSelectQueryParams(options = {}) {
-  const selector = normalizeSyncSelectorOptions(options);
-  const params = [selector.startAfter, selector.batch];
-  if (selector.changedSinceHours !== null) params.push(String(selector.changedSinceHours));
-  return params;
+  return localSyncSelect(options).params;
 }
 
 export function buildSupabasePayload(local, current, { nowIso = new Date().toISOString() } = {}) {
