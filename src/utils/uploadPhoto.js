@@ -77,6 +77,18 @@ async function downscaleToWebP(file, maxDimension = MAX_DIMENSION, quality = DEF
   return new File([blob], nextName, { type: 'image/webp' })
 }
 
+const blobToBase64 = blob =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const [, encoded = ''] = result.split(',')
+      resolve(encoded)
+    }
+    reader.onerror = () => reject(reader.error || new Error('Failed to read photo data'))
+    reader.readAsDataURL(blob)
+  })
+
 function sanitizeSegment(segment) {
   return String(segment || '')
     .trim()
@@ -123,6 +135,26 @@ export async function uploadReviewPhoto(file, { reviewId, bucket = REVIEW_PHOTO_
     size: processed.size,
     bucket,
     mimeType: processed.type,
+  }
+}
+
+export async function prepareReviewPhotoUpload(file, { reviewId, bucket = REVIEW_PHOTO_BUCKET, prefix } = {}) {
+  if (typeof File !== 'undefined' && !(file instanceof File)) {
+    throw new TypeError('Expected a File for prepareReviewPhotoUpload')
+  }
+
+  const processed = await downscaleToWebP(file)
+  const safePrefix = sanitizeSegment(prefix || reviewId || 'review')
+  const fileName = `${sanitizeSegment(processed.name.replace(/\.webp$/i, ''))}-${randomSuffix()}.webp`
+  const storagePath = `${safePrefix}/${fileName}`
+  const dataBase64 = await blobToBase64(processed)
+
+  return {
+    path: storagePath,
+    size: processed.size,
+    bucket,
+    mimeType: processed.type,
+    dataBase64,
   }
 }
 

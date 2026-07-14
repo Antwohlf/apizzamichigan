@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-const SMALL_THUMB_PARAMS = '?width=280&quality=70&format=webp'
+const SMALL_THUMB_PARAMS = 'width=280&quality=70&format=webp'
 const MAX_PHOTO_COUNT = 10
 
 const gridStyles = {
@@ -28,6 +28,15 @@ const arrayMove = (list, fromIndex, toIndex) => {
   const [item] = next.splice(fromIndex, 1)
   next.splice(toIndex, 0, item)
   return next
+}
+
+const appendQuery = (url, query) => {
+  if (!url) return ''
+  if (/^data:/.test(url) || /^blob:/.test(url) || !/^https?:/i.test(url)) {
+    return url
+  }
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}${query}`
 }
 
 function formatLabel(label, fallback = '—') {
@@ -286,7 +295,7 @@ export default function AdminReviewEditor({
         <div style={gridStyles}>
           {localPhotos.map((photo, index) => {
             const baseUrl = photo.publicUrl || photo.url || photo.path || ''
-            const previewUrl = baseUrl ? `${baseUrl}${photo.publicUrl ? SMALL_THUMB_PARAMS : ''}` : ''
+            const previewUrl = photo.publicUrl ? appendQuery(baseUrl, SMALL_THUMB_PARAMS) : baseUrl
             const altText = review?.name
               ? `${review.name} preview ${index + 1}`
               : `Gallery entry ${index + 1}`
