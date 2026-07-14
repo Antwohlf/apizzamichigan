@@ -91,6 +91,16 @@
   opacity: 0.75;
 }
 
+.marker-popup .review-gallery-wrap {
+  margin-top: 8px;
+}
+
+.marker-popup .review-gallery-wrap > div {
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)) !important;
+  gap: 6px !important;
+  margin-top: 0 !important;
+}
+
 .marker-popup .actions a {
   text-decoration: none;
   color: #38bdf8;

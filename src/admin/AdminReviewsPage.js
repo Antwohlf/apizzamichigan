@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import AdminReviewEditor from './AdminReviewEditor'
 import AdminSuggestionsPanel from './AdminSuggestionsPanel'
-import { REVIEW_PHOTO_BUCKET, uploadReviewPhoto } from '../utils/uploadPhoto'
-import { supabase } from '../supabaseClient'
+import { prepareReviewPhotoUpload } from '../utils/uploadPhoto'
 
 const MAX_PHOTOS = 10
 const ENTITY_OPTIONS = [
@@ -143,39 +142,30 @@ export default function AdminReviewsPage() {
         throw new Error('No valid images selected.')
       }
 
-      const uploadedPaths = []
-      try {
-        for (const file of uploadQueue) {
-          const { path } = await uploadReviewPhoto(file, { reviewId })
-          uploadedPaths.push(path)
-        }
-      } catch (err) {
-        if (uploadedPaths.length > 0) {
-          await supabase.storage.from(REVIEW_PHOTO_BUCKET).remove(uploadedPaths)
-        }
-        throw err
+      const preparedFiles = []
+      for (const file of uploadQueue) {
+        const prepared = await prepareReviewPhotoUpload(file, { reviewId })
+        preparedFiles.push({
+          path: prepared.path,
+          size: prepared.size,
+          mimeType: prepared.mimeType,
+          dataBase64: prepared.dataBase64,
+        })
       }
 
-      try {
-        const res = await fetch(`/api/admin/reviews/${reviewId}/photos`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ paths: uploadedPaths }),
-        })
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || 'Failed to attach photo metadata.')
-        }
-        const payload = await res.json()
-        updatePhotosState(reviewId, payload?.data)
-        return payload?.data
-      } catch (err) {
-        if (uploadedPaths.length > 0) {
-          await supabase.storage.from(REVIEW_PHOTO_BUCKET).remove(uploadedPaths)
-        }
-        throw err
+      const res = await fetch(`/api/admin/reviews/${reviewId}/photos/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ files: preparedFiles }),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || 'Failed to upload review photo.')
       }
+      const payload = await res.json()
+      updatePhotosState(reviewId, payload?.data)
+      return payload?.data
     },
     [reviews, updatePhotosState]
   )

@@ -1,5 +1,14 @@
 import { createRoot, type Root } from 'react-dom/client'
+import ReviewGallery from '../ReviewGallery'
 import { buildGoogleMapsUrl } from '../../lib/buildGoogleMapsUrl'
+
+type ReviewPhoto = {
+  id?: string | number
+  path?: string | null
+  publicUrl?: string | null
+  url?: string | null
+  sortOrder?: number | null
+}
 
 type Place = {
   id: string
@@ -20,6 +29,7 @@ type Place = {
   google_place_id?: string | null
   google_maps_url?: string | null
   favorited?: boolean | null
+  photos?: Array<ReviewPhoto | string> | null
 }
 
 const roots = new WeakMap<HTMLElement, Root>()
@@ -98,6 +108,9 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
             : null}
         </div>
       ) : null}
+      <div className="review-gallery-wrap">
+        <ReviewGallery photos={place.photos || []} placeName={place.name} />
+      </div>
       <div className="actions">
         <a
           target="_blank"
