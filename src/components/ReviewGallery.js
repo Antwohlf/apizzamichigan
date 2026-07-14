@@ -189,7 +189,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
             }}
             aria-label={`Open photo ${index + 1}${placeName ? ` for ${placeName}` : ''}`}
           >
-            <img src={photo.smallSrc} alt="" loading="lazy" style={thumbStyle} />
+            <img data-testid="review-gallery-thumbnail" src={photo.smallSrc} alt="" loading="lazy" style={thumbStyle} />
           </button>
         ))}
       </div>

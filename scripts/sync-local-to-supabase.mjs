@@ -18,6 +18,17 @@ import pg from 'pg';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
+import {
+  checkpointFromRow,
+  readSyncCheckpoint,
+  writeSyncCheckpoint,
+} from './lib/supabase-sync-checkpoint.mjs';
+import {
+  buildSupabasePayload,
+  localSyncSelectParams,
+  localSyncSelectSql,
+  SUPABASE_SYNC_SELECT_COLS,
+} from './lib/supabase-sync-policy.mjs';
 
 function parseArgs(argv) {
   const out = {
@@ -26,23 +37,32 @@ function parseArgs(argv) {
     maxBatches: 0, // 0 = unlimited
     dryRun: false,
     verbose: false,
+    changedSinceHours: null,
+    onlyClassified: false,
+    checkpointPath: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') out.dryRun = true;
     else if (a === '--verbose') out.verbose = true;
+    else if (a === '--only-classified') out.onlyClassified = true;
     else if (a === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (a === '--start-after') out.startAfter = parseInt(argv[++i], 10);
     else if (a === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
+    else if (a === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
+    else if (a === '--checkpoint') out.checkpointPath = argv[++i];
     else if (a === '--help') {
       console.log(`Usage: node scripts/sync-local-to-supabase.mjs [options]
 
 Options:
-  --batch <n>        Batch size (default 500)
-  --start-after <id> Start after this numeric id (default 0)
-  --max-batches <n>  Stop after n batches (default 0 = unlimited)
-  --dry-run          Print what would happen, do not write to Supabase
-  --verbose          Extra logging
+  --batch <n>                 Batch size (default 500)
+  --start-after <id>          Start after this numeric id (default 0)
+  --max-batches <n>           Stop after n batches (default 0 = unlimited)
+  --changed-since-hours <n>   Only scan rows enriched in the last n hours
+  --only-classified           Only scan rows with style/price classification output
+  --checkpoint <path>         Resume/save a last_enriched_at + id checkpoint
+  --dry-run                   Print what would happen, do not write to Supabase
+  --verbose                   Extra logging
 `);
       process.exit(0);
     }
@@ -50,6 +70,9 @@ Options:
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches < 0) throw new Error('Invalid --max-batches');
+  if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
+    throw new Error('Invalid --changed-since-hours');
+  }
   return out;
 }
 
@@ -67,76 +90,6 @@ function loadEnvLocal() {
     out[k] = v;
   }
   return out;
-}
-
-const OVERWRITE_COLS = [
-  // enrichment/meta
-  'created_at',
-  'updated_at',
-  'enrichment_status',
-  'last_enriched_at',
-  'enrichment_agent',
-  'enrichment_run_id',
-
-  // classification extras (these are metadata; safe to overwrite)
-  'address_source',
-
-  // website/contact/social
-  'website_url',
-  'menu_url',
-  'phone',
-  'email',
-  'instagram_url',
-  'facebook_url',
-  'twitter_url',
-  'whatsapp',
-
-  // hours
-  'hours',
-
-  // scraping
-  'scrape_method',
-  'scrape_notes',
-
-  // amenities
-  'delivery',
-  'takeaway',
-  'drive_through',
-  'outdoor_seating',
-  'indoor_seating',
-  'wheelchair',
-
-  // brand/operator
-  'brand',
-  'brand_wikidata',
-  'operator',
-  'operator_wikidata',
-
-  // OSM enrichment
-  'osm_tags',
-  'osm_last_fetched_at',
-  'osm_fetch_status',
-  'osm_fetch_error',
-
-  // menu parse
-  'menu_data',
-  'menu_parse_confidence',
-  'menu_parse_notes',
-  'menu_last_parsed_at',
-
-  // QA defaults (only set if supabase null; handled separately)
-];
-
-const FILL_IF_NULL_COLS = [
-  // user-facing derived fields
-  'style',
-  'price',
-  'price_range',
-  'style_confidence',
-];
-
-function hasAnyNonNull(obj, cols) {
-  return cols.some(c => obj[c] !== null && obj[c] !== undefined);
 }
 
 async function main() {
@@ -162,6 +115,7 @@ async function main() {
   await client.connect();
 
   let cursor = args.startAfter;
+  let checkpointAfter = readSyncCheckpoint(args.checkpointPath);
   let batchNum = 0;
   let totalUpdates = 0;
   let totalRowsScanned = 0;
@@ -172,105 +126,13 @@ async function main() {
 
       // Pull a chunk of local rows that have anything worth syncing.
       // (We still include rows where only style/price are present so we can NULL-fill.)
-      const q = `
-        select
-          id,
-          style,
-          price,
-          price_range,
-          style_confidence,
-
-          created_at,
-          updated_at,
-          enrichment_status,
-          last_enriched_at,
-          enrichment_agent,
-          enrichment_run_id,
-
-          address_source,
-
-          website_url,
-          menu_url,
-          phone,
-          email,
-          instagram_url,
-          facebook_url,
-          twitter_url,
-          whatsapp,
-
-          hours,
-
-          scrape_method,
-          scrape_notes,
-
-          delivery,
-          takeaway,
-          drive_through,
-          outdoor_seating,
-          indoor_seating,
-          wheelchair,
-
-          brand,
-          brand_wikidata,
-          operator,
-          operator_wikidata,
-
-          osm_tags,
-          osm_last_fetched_at,
-          osm_fetch_status,
-          osm_fetch_error,
-
-          menu_data,
-          menu_parse_confidence,
-          menu_parse_notes,
-          menu_last_parsed_at
-        from pizza_places
-        where id > $1
-          and (
-            style is not null
-            or price is not null
-            or price_range is not null
-            or style_confidence is not null
-            or website_url is not null
-            or menu_url is not null
-            or phone is not null
-            or email is not null
-            or instagram_url is not null
-            or facebook_url is not null
-            or twitter_url is not null
-            or whatsapp is not null
-            or hours is not null
-            or scrape_method is not null
-            or scrape_notes is not null
-            or osm_tags is not null
-            or osm_last_fetched_at is not null
-            or osm_fetch_status is not null
-            or osm_fetch_error is not null
-            or menu_data is not null
-            or menu_parse_confidence is not null
-            or menu_parse_notes is not null
-            or menu_last_parsed_at is not null
-            or enrichment_status is not null
-            or last_enriched_at is not null
-            or enrichment_agent is not null
-            or enrichment_run_id is not null
-            or address_source is not null
-            or delivery is not null
-            or takeaway is not null
-            or drive_through is not null
-            or outdoor_seating is not null
-            or indoor_seating is not null
-            or wheelchair is not null
-            or brand is not null
-            or brand_wikidata is not null
-            or operator is not null
-            or operator_wikidata is not null
-          )
-        order by id asc
-        limit $2
-      `;
-
-      const { rows: localRows } = await client.query(q, [cursor, args.batch]);
+      const selector = {
+        ...args,
+        startAfter: cursor,
+        checkpointMode: Boolean(args.checkpointPath),
+        checkpointAfter,
+      };
+      const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
       if (!localRows.length) break;
 
       batchNum++;
@@ -282,7 +144,7 @@ async function main() {
       // Fetch current supabase state for protected fields + QA.
       const { data: sbRows, error: sbErr } = await sb
         .from('pizza_places')
-        .select('id, style, price, price_range, style_confidence, qa_status, qa_schema_version')
+        .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
         .in('id', ids);
 
       if (sbErr) throw sbErr;
@@ -301,41 +163,32 @@ async function main() {
           continue;
         }
 
-        const payload = { id: local.id };
-
-        // Overwrite-style: set when local has a non-null value.
-        for (const col of OVERWRITE_COLS) {
-          const v = local[col];
-          if (v !== null && v !== undefined) payload[col] = v;
-        }
-
-        // NULL-fill style fields.
-        for (const col of FILL_IF_NULL_COLS) {
-          const localV = local[col];
-          const sbV = current[col];
-          if ((sbV === null || sbV === undefined) && localV !== null && localV !== undefined) {
-            payload[col] = localV;
-          }
-        }
-
-        // QA defaults: only fill if currently null.
-        if (current.qa_status == null) payload.qa_status = 'unreviewed';
-        if (current.qa_schema_version == null) payload.qa_schema_version = 1;
-
-        // If we're not changing anything, skip.
-        const keys = Object.keys(payload);
-        if (keys.length > 1) {
-          // Touch updated_at if we changed anything and local didn't provide one.
-          if (!('updated_at' in payload)) payload.updated_at = new Date().toISOString();
+        const payload = buildSupabasePayload(local, current);
+        if (payload) {
           updates.push(payload);
           wouldUpdate++;
         }
       }
 
       if (args.dryRun) {
-        console.log(`[dry-run] batch ${batchNum}: local_rows=${localRows.length} supabase_rows=${(sbRows||[]).length} would_update=${wouldUpdate} cursor=${cursor}`);
+        const selectorText = [
+          `start_after=${selector.startAfter}`,
+          `changed_since_hours=${selector.changedSinceHours ?? 'none'}`,
+          `only_classified=${selector.onlyClassified}`,
+          `checkpoint=${args.checkpointPath || 'none'}`,
+          `checkpoint_after=${checkpointAfter ? `${checkpointAfter.lastEnrichedAt}/${checkpointAfter.id}` : 'none'}`,
+        ].join(' ');
+        console.log(`[dry-run] batch ${batchNum}: local_rows=${localRows.length} supabase_rows=${(sbRows||[]).length} would_update=${wouldUpdate} cursor=${cursor} ${selectorText}`);
         if (args.verbose && updates.length) {
           console.log('sample update payload:', JSON.stringify(updates[0], null, 2));
+        }
+        const nextCheckpoint = checkpointFromRow(localRows[localRows.length - 1]);
+        if (args.checkpointPath && nextCheckpoint) {
+          checkpointAfter = {
+            lastEnrichedAt: nextCheckpoint.last_enriched_at,
+            id: nextCheckpoint.id,
+            source: args.checkpointPath,
+          };
         }
         continue;
       }
@@ -345,14 +198,33 @@ async function main() {
         continue;
       }
 
-      const { error: upErr } = await sb
-        .from('pizza_places')
-        .upsert(updates, { onConflict: 'id' });
+      let updated = 0;
+      for (const payload of updates) {
+        const { id, ...fields } = payload;
+        const { data, error: upErr } = await sb
+          .from('pizza_places')
+          .update(fields)
+          .eq('id', id)
+          .select('id');
 
-      if (upErr) throw upErr;
+        if (upErr) throw upErr;
+        if (!data?.length) {
+          throw new Error(`Supabase update matched no rows for id=${id}`);
+        }
+        updated++;
+      }
 
-      totalUpdates += updates.length;
-      console.log(`[ok] batch ${batchNum}: updated=${updates.length} local_rows=${localRows.length} cursor=${cursor}`);
+      totalUpdates += updated;
+      const nextCheckpoint = checkpointFromRow(localRows[localRows.length - 1]);
+      if (args.checkpointPath && nextCheckpoint) {
+        writeSyncCheckpoint(args.checkpointPath, nextCheckpoint);
+        checkpointAfter = {
+          lastEnrichedAt: nextCheckpoint.last_enriched_at,
+          id: nextCheckpoint.id,
+          source: args.checkpointPath,
+        };
+      }
+      console.log(`[ok] batch ${batchNum}: updated=${updated} local_rows=${localRows.length} cursor=${cursor}`);
     }
 
     console.log(`Done. batches=${batchNum} local_rows_scanned=${totalRowsScanned} supabase_rows_updated=${totalUpdates} last_cursor=${cursor}`);

@@ -12,34 +12,34 @@ function StatRow({ label, value, loading }) {
   )
 }
 
-// Fetch stats from database (lightweight query - only status and rating fields)
 async function fetchStats(table) {
-  const pageSize = 1000
-  let allData = []
-  let offset = 0
-
-  while (true) {
-    const { data, error } = await supabase
+  const [{ count: unvisited, error: unvisitedError }, { data: ratings, error: ratingsError }] = await Promise.all([
+    supabase
       .from(table)
-      .select('status, rating')
-      .range(offset, offset + pageSize - 1)
+      .select('id', { count: 'exact', head: true })
+      .ilike('status', 'unvisited'),
+    supabase
+      .from(table)
+      .select('rating')
+      .or('status.ilike.visited*,status.ilike.golden*')
+      .not('rating', 'is', null),
+  ])
 
-    if (error) throw error
-    if (!data || data.length === 0) break
+  if (unvisitedError) throw unvisitedError
+  if (ratingsError) throw ratingsError
 
-    allData = allData.concat(data)
-    if (data.length < pageSize) break
-    offset += pageSize
+  const numericRatings = (ratings || [])
+    .map(place => Number(place.rating))
+    .filter(rating => Number.isFinite(rating))
+  const average = numericRatings.length
+    ? (numericRatings.reduce((sum, rating) => sum + rating, 0) / numericRatings.length).toFixed(1)
+    : '—'
+
+  return {
+    tried: numericRatings.length,
+    unvisited: Number(unvisited || 0),
+    average,
   }
-
-  return allData
-}
-
-function normalizeStatus(value) {
-  if (typeof value !== 'string') return null
-  const normalized = value.trim().toLowerCase()
-  if (!normalized) return null
-  return normalized
 }
 
 export function StatsPanel({ table = 'pizza_places' }) {
@@ -52,33 +52,9 @@ export function StatsPanel({ table = 'pizza_places' }) {
     async function loadStats() {
       setLoading(true)
       try {
-        const data = await fetchStats(table)
-
+        const nextStats = await fetchStats(table)
         if (!isMounted) return
-
-        const withNormalizedStatus = data.map(place => ({
-          ...place,
-          _status: normalizeStatus(place.status),
-        }))
-
-        const tried = withNormalizedStatus.filter(
-          p =>
-            typeof p._status === 'string' &&
-            (p._status.startsWith('visited') || p._status.startsWith('golden')) &&
-            typeof p.rating === 'number' &&
-            !Number.isNaN(p.rating)
-        )
-        const unvisited = withNormalizedStatus.filter(p => p._status === 'unvisited')
-        const rated = tried.filter(p => typeof p.rating === 'number' && !Number.isNaN(p.rating))
-        const average = rated.length
-          ? rated.reduce((sum, place) => sum + (place.rating ?? 0), 0) / rated.length
-          : null
-
-        setStats({
-          tried: tried.length,
-          unvisited: unvisited.length,
-          average: average ? average.toFixed(1) : '—',
-        })
+        setStats(nextStats)
       } catch (err) {
         console.error('[StatsPanel] Failed to fetch stats:', err)
       } finally {
