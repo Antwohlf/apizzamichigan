@@ -20,6 +20,7 @@ import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import {
   buildSupabasePayload,
+  localSyncSelectParams,
   localSyncSelectSql,
   SUPABASE_SYNC_SELECT_COLS,
 } from './lib/supabase-sync-policy.mjs';
@@ -31,23 +32,29 @@ function parseArgs(argv) {
     maxBatches: 0, // 0 = unlimited
     dryRun: false,
     verbose: false,
+    changedSinceHours: null,
+    onlyClassified: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') out.dryRun = true;
     else if (a === '--verbose') out.verbose = true;
+    else if (a === '--only-classified') out.onlyClassified = true;
     else if (a === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (a === '--start-after') out.startAfter = parseInt(argv[++i], 10);
     else if (a === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
+    else if (a === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
     else if (a === '--help') {
       console.log(`Usage: node scripts/sync-local-to-supabase.mjs [options]
 
 Options:
-  --batch <n>        Batch size (default 500)
-  --start-after <id> Start after this numeric id (default 0)
-  --max-batches <n>  Stop after n batches (default 0 = unlimited)
-  --dry-run          Print what would happen, do not write to Supabase
-  --verbose          Extra logging
+  --batch <n>                 Batch size (default 500)
+  --start-after <id>          Start after this numeric id (default 0)
+  --max-batches <n>           Stop after n batches (default 0 = unlimited)
+  --changed-since-hours <n>   Only scan rows enriched in the last n hours
+  --only-classified           Only scan rows with style/price classification output
+  --dry-run                   Print what would happen, do not write to Supabase
+  --verbose                   Extra logging
 `);
       process.exit(0);
     }
@@ -55,6 +62,9 @@ Options:
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches < 0) throw new Error('Invalid --max-batches');
+  if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
+    throw new Error('Invalid --changed-since-hours');
+  }
   return out;
 }
 
@@ -107,7 +117,8 @@ async function main() {
 
       // Pull a chunk of local rows that have anything worth syncing.
       // (We still include rows where only style/price are present so we can NULL-fill.)
-      const { rows: localRows } = await client.query(localSyncSelectSql(), [cursor, args.batch]);
+      const selector = { ...args, startAfter: cursor };
+      const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
       if (!localRows.length) break;
 
       batchNum++;
@@ -146,7 +157,12 @@ async function main() {
       }
 
       if (args.dryRun) {
-        console.log(`[dry-run] batch ${batchNum}: local_rows=${localRows.length} supabase_rows=${(sbRows||[]).length} would_update=${wouldUpdate} cursor=${cursor}`);
+        const selectorText = [
+          `start_after=${selector.startAfter}`,
+          `changed_since_hours=${selector.changedSinceHours ?? 'none'}`,
+          `only_classified=${selector.onlyClassified}`,
+        ].join(' ');
+        console.log(`[dry-run] batch ${batchNum}: local_rows=${localRows.length} supabase_rows=${(sbRows||[]).length} would_update=${wouldUpdate} cursor=${cursor} ${selectorText}`);
         if (args.verbose && updates.length) {
           console.log('sample update payload:', JSON.stringify(updates[0], null, 2));
         }
