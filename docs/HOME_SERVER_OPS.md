@@ -44,6 +44,7 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops
 
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
 ```
 
 Do not run Supabase write syncs until the QA report has been reviewed.
