@@ -291,8 +291,8 @@ async function main() {
     } else {
       console.log('\nSync complete! You can now run the enrichment pipeline.')
       console.log('Next steps:')
-      console.log('  1. Verify: node scripts/enrichment/orchestrator.mjs --status')
-      console.log('  2. Start enrichment: node scripts/enrichment/orchestrator.mjs --full --type pizza')
+      console.log('  1. Verify: node scripts/ops/home-status-report.mjs')
+      console.log('  2. Start classifier service via docs/IMAC_PIPELINE_RUNBOOK.md')
     }
 
   } catch (error) {

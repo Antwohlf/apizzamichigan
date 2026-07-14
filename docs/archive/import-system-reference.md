@@ -5,7 +5,7 @@
 > Current docs:
 > - `docs/DATA_PIPELINE.md`
 > - `docs/world-coverage.md`
-> - `docs/data-enhancement-architecture.md`
+> - `docs/archive/local-first-architecture-draft.md`
 > - `scripts/enrichment/SETUP.md`
 
 
