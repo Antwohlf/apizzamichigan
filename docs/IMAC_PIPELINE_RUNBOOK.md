@@ -118,6 +118,7 @@ Preview the selected sync batch and protected-field behavior:
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --batch 50 --sample 20'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --sample 20'
 ```
 
 Dry-run first:
@@ -125,6 +126,7 @@ Dry-run first:
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --batch 25 --max-batches 1'
 ssh example-host 'cd /srv/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --batch 50 --max-batches 1'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --max-batches 1'
 ```
 
 Do not run a write sync until classification quality has been reviewed.
