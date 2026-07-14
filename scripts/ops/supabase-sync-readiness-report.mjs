@@ -18,6 +18,7 @@ import {
   QA_DEFAULT_COLS,
   SUPABASE_SYNC_SELECT_COLS,
   buildSupabasePayload,
+  localSyncSelectParams,
   localSyncSelectSql,
   protectedFieldSkips,
 } from '../lib/supabase-sync-policy.mjs';
@@ -27,6 +28,8 @@ function parseArgs(argv) {
     batch: 100,
     startAfter: 0,
     sample: 10,
+    changedSinceHours: null,
+    onlyClassified: false,
     json: false,
   };
 
@@ -35,15 +38,19 @@ function parseArgs(argv) {
     if (arg === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (arg === '--start-after') out.startAfter = parseInt(argv[++i], 10);
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
+    else if (arg === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
+    else if (arg === '--only-classified') out.onlyClassified = true;
     else if (arg === '--json') out.json = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-readiness-report.mjs [options]
 
 Options:
-  --batch <n>        Number of local rows to inspect (default 100)
-  --start-after <id> Start after this numeric id (default 0)
-  --sample <n>       Rows per detail table (default 10)
-  --json             Emit JSON instead of Markdown
+  --batch <n>                 Number of local rows to inspect (default 100)
+  --start-after <id>          Start after this numeric id (default 0)
+  --changed-since-hours <n>   Only inspect rows enriched in the last n hours
+  --only-classified           Only inspect rows with style/price classification output
+  --sample <n>                Rows per detail table (default 10)
+  --json                      Emit JSON instead of Markdown
 `);
       process.exit(0);
     } else {
@@ -54,6 +61,9 @@ Options:
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
+  if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
+    throw new Error('Invalid --changed-since-hours');
+  }
   return out;
 }
 
@@ -155,7 +165,7 @@ async function main() {
   await client.connect();
 
   try {
-    const { rows: localRows } = await client.query(localSyncSelectSql(), [options.startAfter, options.batch]);
+    const { rows: localRows } = await client.query(localSyncSelectSql(options), localSyncSelectParams(options));
     const ids = localRows.map(row => row.id);
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
@@ -247,7 +257,7 @@ async function main() {
     console.log('');
     console.log(`Generated: ${result.generatedAt}`);
     console.log(`Repo: \`${root}\``);
-    console.log(`Batch: start_after=${options.startAfter}, batch=${options.batch}`);
+    console.log(`Batch: start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}`);
     console.log('');
     console.log('## Summary');
     console.log(`- branch/head: \`${result.repo.branch}\` / \`${result.repo.head}\``);
