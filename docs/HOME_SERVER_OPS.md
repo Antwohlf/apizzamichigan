@@ -61,6 +61,28 @@ ssh apizza-imac 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
 
 See `docs/IMAC_PIPELINE_RUNBOOK.md` for install/start commands.
 
+## Legacy OpenClaw Cron Jobs
+
+OpenClaw may remain active for unrelated local-agent work, but APizzaMichigan
+should not be driven by OpenClaw cron jobs. The old APizza watchdog/coordinator
+cron jobs must stay disabled:
+
+```bash
+ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron list'
+```
+
+Retired APizza cron IDs:
+
+- `092dc3b7-20ad-42a4-9dff-d5c417f4b90e`
+- `c92e0d70-6159-402b-8980-72784da8e936`
+
+If either is enabled:
+
+```bash
+ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron disable 092dc3b7-20ad-42a4-9dff-d5c417f4b90e'
+ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron disable c92e0d70-6159-402b-8980-72784da8e936'
+```
+
 ## Safety Rules
 
 - Keep Supabase sync manual-only until explicitly approved.
