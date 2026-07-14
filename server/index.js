@@ -16,6 +16,9 @@ const REVIEW_PHOTO_BUCKET = 'review-photos'
 const SUGGESTED_PLACES_TABLE = 'suggested_places'
 const LOCATIONS_TABLE = 'locations'
 const REVIEW_PHOTO_TABLE = 'review-photos'
+const FALLBACK_SUPABASE_URL = 'https://htahyiuvqmalfpbgiizx.supabase.co'
+const MAX_REVIEW_PHOTOS = 10
+const MAX_REVIEW_PHOTO_BYTES = 8 * 1024 * 1024
 let reviewPhotosTableAvailable = true
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
@@ -23,7 +26,8 @@ const SUPABASE_URL =
   process.env.SUPABASE_URL ||
   process.env.REACT_APP_SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  process.env.VITE_SUPABASE_URL
+  process.env.VITE_SUPABASE_URL ||
+  FALLBACK_SUPABASE_URL
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 let serviceClient = null
@@ -36,7 +40,7 @@ if (SUPABASE_URL && SERVICE_ROLE_KEY) {
 }
 
 app.use(cookieParser())
-app.use(express.json())
+app.use(express.json({ limit: '12mb' }))
 app.set('trust proxy', true)
 
 function requireAdminAuth(req, res, next) {
@@ -95,6 +99,58 @@ async function fetchPhotosForPlace(placeId) {
     }
     throw error
   }
+}
+
+async function insertReviewPhotoRows(placeId, paths) {
+  const { count, error: countError } = await serviceClient
+    .from(REVIEW_PHOTO_TABLE)
+    .select('id', { count: 'exact', head: true })
+    .eq('place_id', placeId)
+
+  if (countError) {
+    if (countError?.code === 'PGRST205') {
+      reviewPhotosTableAvailable = false
+      const error = new Error('Review photos table is not available. Create the table to enable uploads.')
+      error.status = 503
+      throw error
+    }
+    throw countError
+  }
+
+  const baseOrder = typeof count === 'number' ? count : 0
+  if (baseOrder + paths.length > MAX_REVIEW_PHOTOS) {
+    const error = new Error(`Review photo limit is ${MAX_REVIEW_PHOTOS} per place.`)
+    error.status = 400
+    throw error
+  }
+
+  const inserts = paths.map((path, index) => ({
+    place_id: placeId,
+    storage_path: path,
+    sort_order: baseOrder + index + 1,
+  }))
+
+  const { error: insertError } = await serviceClient.from(REVIEW_PHOTO_TABLE).insert(inserts)
+  if (insertError) {
+    if (insertError?.code === 'PGRST205') {
+      reviewPhotosTableAvailable = false
+      const error = new Error('Review photos table is not available. Create the table to enable uploads.')
+      error.status = 503
+      throw error
+    }
+    throw insertError
+  }
+}
+
+function isSafeStoragePath(path) {
+  return (
+    typeof path === 'string' &&
+    path.length > 0 &&
+    path.length <= 512 &&
+    !path.startsWith('/') &&
+    !path.includes('..') &&
+    /^[A-Za-z0-9/_-]+\.webp$/.test(path)
+  )
 }
 
 app.post('/api/bug-report', async (req, res) => {
@@ -267,40 +323,76 @@ app.post('/api/admin/reviews/:id/photos', requireAdminAuth, async (req, res) => 
       return res.status(503).json({ error: 'Review photos table is not configured yet.' })
     }
 
-    const { count, error: countError } = await serviceClient
-      .from(REVIEW_PHOTO_TABLE)
-      .select('id', { count: 'exact', head: true })
-      .eq('place_id', placeId)
-
-    if (countError) {
-      if (countError?.code === 'PGRST205') {
-        reviewPhotosTableAvailable = false
-        return res.status(503).json({ error: 'Review photos table is not available. Create the table to enable uploads.' })
-      }
-      throw countError
-    }
-
-    const baseOrder = typeof count === 'number' ? count : 0
-    const inserts = paths.map((path, index) => ({
-      place_id: placeId,
-      storage_path: path,
-      sort_order: baseOrder + index + 1,
-    }))
-
-    const { error: insertError } = await serviceClient.from(REVIEW_PHOTO_TABLE).insert(inserts)
-    if (insertError) {
-      if (insertError?.code === 'PGRST205') {
-        reviewPhotosTableAvailable = false
-        return res.status(503).json({ error: 'Review photos table is not available. Create the table to enable uploads.' })
-      }
-      throw insertError
-    }
+    await insertReviewPhotoRows(placeId, paths)
 
     const photos = await fetchPhotosForPlace(placeId)
     return res.json({ data: photos })
   } catch (error) {
     console.error('[admin] create review photo error', error)
-    return res.status(500).json({ error: 'Failed to save review photo.' })
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to save review photo.' })
+  }
+})
+
+app.post('/api/admin/reviews/:id/photos/upload', requireAdminAuth, async (req, res) => {
+  const placeId = req.params.id
+  const files = Array.isArray(req.body?.files) ? req.body.files : []
+  const uploadedPaths = []
+
+  try {
+    if (!placeId) {
+      return res.status(400).json({ error: 'Missing review identifier.' })
+    }
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No photos provided.' })
+    }
+    if (!reviewPhotosTableAvailable) {
+      return res.status(503).json({ error: 'Review photos table is not configured yet.' })
+    }
+
+    const storage = getStorageClient()
+    for (const file of files) {
+      const storagePath = file?.path
+      const encoded = file?.dataBase64
+      const mimeType = file?.mimeType || 'image/webp'
+      if (!isSafeStoragePath(storagePath)) {
+        return res.status(400).json({ error: 'Invalid photo storage path.' })
+      }
+      if (mimeType !== 'image/webp') {
+        return res.status(400).json({ error: 'Review photos must be uploaded as WebP.' })
+      }
+      if (typeof encoded !== 'string' || encoded.length === 0) {
+        return res.status(400).json({ error: 'Photo data is missing.' })
+      }
+
+      const buffer = Buffer.from(encoded, 'base64')
+      if (buffer.length === 0 || buffer.length > MAX_REVIEW_PHOTO_BYTES) {
+        return res.status(413).json({ error: 'Photo is too large after processing.' })
+      }
+
+      const { error: uploadError } = await storage.upload(storagePath, buffer, {
+        cacheControl: '3600',
+        contentType: mimeType,
+        upsert: false,
+      })
+      if (uploadError) {
+        throw uploadError
+      }
+      uploadedPaths.push(storagePath)
+    }
+
+    await insertReviewPhotoRows(placeId, uploadedPaths)
+    const photos = await fetchPhotosForPlace(placeId)
+    return res.json({ data: photos })
+  } catch (error) {
+    if (uploadedPaths.length > 0) {
+      try {
+        await getStorageClient().remove(uploadedPaths)
+      } catch (cleanupError) {
+        console.warn('[admin] failed to clean up uploaded review photos', cleanupError)
+      }
+    }
+    console.error('[admin] upload review photo error', error)
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to upload review photo.' })
   }
 })
 
