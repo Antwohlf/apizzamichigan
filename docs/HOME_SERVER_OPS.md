@@ -20,8 +20,13 @@ Project root on the iMac:
 ## Standard Status
 
 ```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs'
 ```
+
+Use `classifier-health-report.mjs` for the normal "is the launchd classifier
+healthy and advancing?" check. Use `home-status-report.mjs` when you need the
+broader queue/Postgres/Ollama/process details.
 
 ## Standard Cleanup
 
@@ -40,6 +45,7 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops
 The first production service is the launchd-managed classifier:
 
 ```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
 ssh apizza-imac 'tail -100 /tmp/apizzamichigan/classifier.log'
 ssh apizza-imac 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
