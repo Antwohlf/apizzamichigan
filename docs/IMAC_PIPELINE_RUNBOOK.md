@@ -132,6 +132,7 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/syn
 Preferred guarded runner:
 
 ```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50 --apply'
 ```
