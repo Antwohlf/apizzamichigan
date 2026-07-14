@@ -1,56 +1,55 @@
-# Home Server Ops Handoff
+# Home Server Ops
 
-Use one pinned GitHub issue as the shared ops thread between Codex, the home-server agent, and the project owner. The issue is the control plane; Discord should only be used for human notifications.
+APizzaMichigan home-server operations now use direct Tailscale SSH to the
+Michigan iMac.
 
-## Roles
+## Access
 
-- Codex writes bounded command blocks, reviews reports, opens PRs, and decides the next safe step.
-- The home-server agent runs machine-local commands and posts the generated Markdown reports back to the ops issue.
-- The owner approves higher-risk actions such as long unattended runs, Supabase sync, credential changes, or service restarts.
-
-## Standard Reports
-
-Read-only system status:
+From the MacBook:
 
 ```bash
-node scripts/ops/home-status-report.mjs
+ssh apizza-imac
 ```
 
-Bounded classifier batch:
+Project root on the iMac:
 
 ```bash
-node scripts/ops/classifier-batch-report.mjs \
-  --max-jobs 25 \
-  --timeout-ms 240000 \
-  --num-predict 80 \
-  --temperature 0
+/Users/ant/clawd/projects/apizzamichigan
 ```
 
-The batch report runs only the classifier. It does not start scraper, sync, cron, keepalive, or coordinator.
+## Standard Status
 
-## Report Posting Format
-
-Post the script output as a comment on the pinned GitHub issue. Start comments with a short heading:
-
-```md
-## Home-server report: YYYY-MM-DD HH:MM UTC
-
-<paste script output>
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs'
 ```
+
+## Standard Cleanup
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs'
+```
+
+Apply only after reviewing the dry-run:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs --apply'
+```
+
+## Service Control
+
+The first production service is the launchd-managed classifier:
+
+```bash
+ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
+ssh apizza-imac 'tail -100 /tmp/apizzamichigan/classifier.log'
+ssh apizza-imac 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
+```
+
+See `docs/IMAC_PIPELINE_RUNBOOK.md` for install/start commands.
 
 ## Safety Rules
 
-- Keep `main` clean and fast-forwarded before local operations.
-- Prefer bounded `--max-jobs` classifier runs until the queue is proven stable.
-- Do not run Supabase sync until Codex has reviewed recent local classification quality.
-- Do not reset or delete queue state without an explicit command block.
+- Keep Supabase sync manual-only until explicitly approved.
+- Do not run scraper, OSM extraction, menu parse, or QA as services in this phase.
+- Before starting classifier service, confirm queue `processing=0`.
 - Do not commit runtime DBs, logs, token caches, `.env*`, or progress artifacts.
-
-## Canonical Pull Step
-
-```bash
-cd /Users/ant/clawd/projects/apizzamichigan
-git switch main
-git pull --ff-only origin main
-git status --short --branch
-```
