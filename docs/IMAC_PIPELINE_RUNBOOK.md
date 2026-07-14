@@ -74,6 +74,12 @@ ssh example-host 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"
 
 Supabase sync is manual-only in this phase.
 
+Run QA before any sync:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
+```
+
 Dry-run first:
 
 ```bash
