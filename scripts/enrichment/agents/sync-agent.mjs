@@ -5,12 +5,14 @@
  * Coordinator expects an "agent-style" long-running worker.
  * This agent:
  * - Registers/heartbeats with the SQLite queue
- * - Runs the existing daily sync worker in a controlled loop
+ * - Runs the canonical local-to-Supabase sync script in a controlled loop
  * - Never exits non-zero just because SUPABASE creds are missing (it will idle)
+ * - Defaults to dry-run batches unless SYNC_DRY_RUN=false is explicitly set
  *
  * Env:
  * - SUPABASE_SERVICE_ROLE_KEY: required to actually sync
  * - SYNC_INTERVAL_MS: how often to attempt a sync run (default 6h)
+ * - SYNC_DRY_RUN: set to false to write to Supabase
  */
 
 import { spawn } from 'child_process'
@@ -21,9 +23,12 @@ import { getQueue } from '../queue.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
-const SYNC_WORKER = join(repoRoot, 'scripts', 'enrichment', 'workers', 'daily-sync.mjs')
+const SYNC_WORKER = join(repoRoot, 'scripts', 'sync-local-to-supabase.mjs')
 
 const SYNC_INTERVAL_MS = process.env.SYNC_INTERVAL_MS ? parseInt(process.env.SYNC_INTERVAL_MS, 10) : 6 * 60 * 60 * 1000 // 6h
+const SYNC_BATCH = process.env.SYNC_BATCH || '500'
+const SYNC_MAX_BATCHES = process.env.SYNC_MAX_BATCHES || '1'
+const SYNC_DRY_RUN = process.env.SYNC_DRY_RUN !== 'false'
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms))
@@ -37,7 +42,9 @@ function runDailySyncOnce() {
       return
     }
 
-    const args = ['--all', '--limit', '2000']
+    const args = ['--batch', SYNC_BATCH, '--max-batches', SYNC_MAX_BATCHES]
+    if (SYNC_DRY_RUN) args.push('--dry-run')
+
     const child = spawn(process.execPath, [SYNC_WORKER, ...args], {
       stdio: 'inherit',
       env: process.env,
