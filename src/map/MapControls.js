@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import './MapControls.css'
 
+const placePrice = place => place?.price_range || place?.priceRange || place?.price || ''
+
 // Debounced search bar component
 function SearchBar({ value, onChange }) {
   const [localValue, setLocalValue] = useState(value || '')
@@ -150,10 +152,17 @@ export function MapControls({
                   onPlaceClick(place)
                 }}
               >
-                <span className="map-result-name">{place.name}</span>
-                {typeof place._distance === 'number' && (
-                  <span className="map-result-distance">{place._distance.toFixed(1)} mi</span>
-                )}
+                <span className="map-result-main">
+                  <span className="map-result-name">{place.name}</span>
+                  {(place.style || placePrice(place)) && (
+                    <span className="map-result-meta">
+                      {[place.style, placePrice(place)].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </span>
+                <span className="map-result-side">
+                  {typeof place._distance === 'number' ? `${place._distance.toFixed(1)} mi` : ''}
+                </span>
               </button>
             ))}
             {filteredPlaces.length > 50 && (
