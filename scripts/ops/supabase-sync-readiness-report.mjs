@@ -12,6 +12,7 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { execFileSync } from 'child_process';
+import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
   FILL_IF_NULL_COLS,
   OVERWRITE_COLS,
@@ -30,6 +31,7 @@ function parseArgs(argv) {
     sample: 10,
     changedSinceHours: null,
     onlyClassified: false,
+    checkpointPath: null,
     json: false,
   };
 
@@ -40,6 +42,7 @@ function parseArgs(argv) {
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
     else if (arg === '--only-classified') out.onlyClassified = true;
+    else if (arg === '--checkpoint') out.checkpointPath = argv[++i];
     else if (arg === '--json') out.json = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-readiness-report.mjs [options]
@@ -49,6 +52,7 @@ Options:
   --start-after <id>          Start after this numeric id (default 0)
   --changed-since-hours <n>   Only inspect rows enriched in the last n hours
   --only-classified           Only inspect rows with style/price classification output
+  --checkpoint <path>         Resume from a last_enriched_at + id checkpoint
   --sample <n>                Rows per detail table (default 10)
   --json                      Emit JSON instead of Markdown
 `);
@@ -165,7 +169,13 @@ async function main() {
   await client.connect();
 
   try {
-    const { rows: localRows } = await client.query(localSyncSelectSql(options), localSyncSelectParams(options));
+    const checkpointAfter = readSyncCheckpoint(options.checkpointPath);
+    const selector = {
+      ...options,
+      checkpointMode: Boolean(options.checkpointPath),
+      checkpointAfter,
+    };
+    const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
     const ids = localRows.map(row => row.id);
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
@@ -223,7 +233,10 @@ async function main() {
       generatedAt: new Date().toISOString(),
       state,
       repo: { root, ...gitReport(root) },
-      options,
+      options: {
+        ...options,
+        checkpointAfter,
+      },
       totals: {
         localRows: localRows.length,
         supabaseRows: sbRows?.length || 0,
@@ -257,7 +270,10 @@ async function main() {
     console.log('');
     console.log(`Generated: ${result.generatedAt}`);
     console.log(`Repo: \`${root}\``);
-    console.log(`Batch: start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}`);
+    console.log(`Batch: start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, checkpoint=${options.checkpointPath || 'none'}`);
+    if (checkpointAfter) {
+      console.log(`Checkpoint after: ${checkpointAfter.lastEnrichedAt} / id=${checkpointAfter.id}`);
+    }
     console.log('');
     console.log('## Summary');
     console.log(`- branch/head: \`${result.repo.branch}\` / \`${result.repo.head}\``);
