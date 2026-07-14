@@ -406,6 +406,8 @@ function SiteContainer({ themeKey }) {
       const favorited = computeFavorited(place, normalizedStatus)
       const placeType = computePlaceType(place, defaultPlaceType)
       const markerIconUrl = computeMarkerIconUrl(place)
+      const normalizedPrice = place.price || place.Price || ''
+      const normalizedPriceRange = place.price_range || place.priceRange || normalizedPrice
 
       return {
         ...place,
@@ -417,7 +419,9 @@ function SiteContainer({ themeKey }) {
             : place.style === 'Standard'
               ? 'Traditional'
               : place.style,
-        price: place.price || place.Price || '',
+        price: normalizedPrice,
+        price_range: normalizedPriceRange,
+        priceRange: normalizedPriceRange,
         status: normalizedStatus,
         statusRaw: typeof place.status === 'string' ? place.status.trim().toLowerCase() : null,
         favorited,
@@ -667,7 +671,7 @@ function SiteContainer({ themeKey }) {
         !Number.isNaN(place.rating)
       return (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
-        (filters.prices.length === 0 || filters.prices.includes(place.price)) &&
+        (filters.prices.length === 0 || filters.prices.includes(place.price_range || place.price)) &&
         (showAnthonysVisits ? isExplicitAnthonyVisit : effectiveStatusSet.has(placeStatus))
       )
     })

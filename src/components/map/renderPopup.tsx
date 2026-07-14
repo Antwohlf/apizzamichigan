@@ -8,6 +8,8 @@ type Place = {
   lng: number
   type: 'pizza' | 'taco'
   price?: string | null
+  price_range?: string | null
+  priceRange?: string | null
   status?: string | null
   rating?: number | null
   address?: string | null
@@ -22,6 +24,10 @@ type Place = {
 
 const roots = new WeakMap<HTMLElement, Root>()
 
+function displayPrice(place: Place) {
+  return place.price_range || place.priceRange || place.price || null
+}
+
 function getRoot(node: HTMLElement) {
   let root = roots.get(node)
   if (!root) {
@@ -33,6 +39,7 @@ function getRoot(node: HTMLElement) {
 
 export function renderPreview(node: HTMLElement, place: Place) {
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
+  const price = displayPrice(place)
   const classNames = ['popup-card']
   if (isGolden) {
     classNames.push('popup-card--favorited', 'golden-glow')
@@ -47,7 +54,7 @@ export function renderPreview(node: HTMLElement, place: Place) {
     >
       <div className="title">{place.name}</div>
       <div className="meta">
-        {place.price ? <span className="badge">{place.price}</span> : null}
+        {price ? <span className="badge">{price}</span> : null}
         {place.style ? <span className="badge badge--style">{place.style}</span> : null}
         {place.status && place.status !== 'visited' ? <span className="badge">{place.status}</span> : null}
         {isGolden ? <span className="badge badge--golden">Golden</span> : null}
@@ -58,6 +65,7 @@ export function renderPreview(node: HTMLElement, place: Place) {
 
 export function renderExpanded(node: HTMLElement, place: Place, onClose: () => void) {
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
+  const price = displayPrice(place)
   const classNames = ['popup-card']
   if (isGolden) {
     classNames.push('popup-card--favorited', 'golden-glow')
@@ -74,7 +82,11 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
         ×
       </button>
       <div className="title">{place.name}</div>
-      {place.style ? <div className="style-label">{place.style}</div> : null}
+      {(place.style || price) ? (
+        <div className="style-label">
+          {[place.style, price].filter(Boolean).join(' · ')}
+        </div>
+      ) : null}
       {typeof place.rating === 'number' ? (
         <div className="rating">★ {place.rating.toFixed(1)}</div>
       ) : null}
