@@ -158,14 +158,24 @@ async function main() {
         continue;
       }
 
-      const { error: upErr } = await sb
-        .from('pizza_places')
-        .upsert(updates, { onConflict: 'id' });
+      let updated = 0;
+      for (const payload of updates) {
+        const { id, ...fields } = payload;
+        const { data, error: upErr } = await sb
+          .from('pizza_places')
+          .update(fields)
+          .eq('id', id)
+          .select('id');
 
-      if (upErr) throw upErr;
+        if (upErr) throw upErr;
+        if (!data?.length) {
+          throw new Error(`Supabase update matched no rows for id=${id}`);
+        }
+        updated++;
+      }
 
-      totalUpdates += updates.length;
-      console.log(`[ok] batch ${batchNum}: updated=${updates.length} local_rows=${localRows.length} cursor=${cursor}`);
+      totalUpdates += updated;
+      console.log(`[ok] batch ${batchNum}: updated=${updated} local_rows=${localRows.length} cursor=${cursor}`);
     }
 
     console.log(`Done. batches=${batchNum} local_rows_scanned=${totalRowsScanned} supabase_rows_updated=${totalUpdates} last_cursor=${cursor}`);
