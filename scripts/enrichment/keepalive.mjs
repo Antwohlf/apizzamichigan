@@ -2,11 +2,12 @@
 /**
  * Keepalive: ensure the enrichment coordinator is running.
  *
- * This is meant to be called periodically (e.g. via OpenClaw cron).
+ * Legacy compatibility script. Production service management should use launchd.
  * If no coordinator is detected, it starts one in the background.
  *
- * Defaults to slow/throttled OSM extraction (pizza-only) and disables scrape/classify
- * unless enabled via env.
+ * Defaults to classifier-only operation. OSM extraction, scraping, and sync are
+ * opt-in so stale OpenClaw schedules cannot accidentally restart the full
+ * production pipeline.
  */
 
 import { execSync, spawn } from 'node:child_process'
@@ -33,13 +34,13 @@ function startCoordinator() {
 
   const env = {
     ...process.env,
-    // safe defaults: keep Overpass slow
-    OSM_EXTRACT_WORKERS: process.env.OSM_EXTRACT_WORKERS || '1',
+    // safe defaults: do not make external website/OSM/Supabase calls unless enabled
+    OSM_EXTRACT_WORKERS: process.env.OSM_EXTRACT_WORKERS || '0',
     OSM_BATCH_SIZE: process.env.OSM_BATCH_SIZE || '10',
     OSM_BATCH_DELAY_MS: process.env.OSM_BATCH_DELAY_MS || '15000',
-    // run the full local pipeline by default (OSM -> scrape -> classify)
-    SCRAPE_WORKERS: process.env.SCRAPE_WORKERS || '1',
+    SCRAPE_WORKERS: process.env.SCRAPE_WORKERS || '0',
     CLASSIFY_WORKERS: process.env.CLASSIFY_WORKERS || '1',
+    SYNC_WORKERS: process.env.SYNC_WORKERS || '0',
   }
 
   const child = spawn('node', ['scripts/enrichment/agents/coordinator.mjs'], {
