@@ -113,6 +113,12 @@ Run QA before any sync:
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
 ```
 
+Preview the selected sync batch and protected-field behavior:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
+```
+
 Dry-run first:
 
 ```bash

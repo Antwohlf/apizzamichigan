@@ -44,6 +44,7 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/stale-worker-cleanu
 
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
 ```
 
 Do not run Supabase write syncs until the QA report has been reviewed.

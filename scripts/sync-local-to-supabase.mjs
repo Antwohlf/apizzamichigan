@@ -18,6 +18,11 @@ import pg from 'pg';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
+import {
+  buildSupabasePayload,
+  localSyncSelectSql,
+  SUPABASE_SYNC_SELECT_COLS,
+} from './lib/supabase-sync-policy.mjs';
 
 function parseArgs(argv) {
   const out = {
@@ -69,76 +74,6 @@ function loadEnvLocal() {
   return out;
 }
 
-const OVERWRITE_COLS = [
-  // enrichment/meta
-  'created_at',
-  'updated_at',
-  'enrichment_status',
-  'last_enriched_at',
-  'enrichment_agent',
-  'enrichment_run_id',
-
-  // classification extras (these are metadata; safe to overwrite)
-  'address_source',
-
-  // website/contact/social
-  'website_url',
-  'menu_url',
-  'phone',
-  'email',
-  'instagram_url',
-  'facebook_url',
-  'twitter_url',
-  'whatsapp',
-
-  // hours
-  'hours',
-
-  // scraping
-  'scrape_method',
-  'scrape_notes',
-
-  // amenities
-  'delivery',
-  'takeaway',
-  'drive_through',
-  'outdoor_seating',
-  'indoor_seating',
-  'wheelchair',
-
-  // brand/operator
-  'brand',
-  'brand_wikidata',
-  'operator',
-  'operator_wikidata',
-
-  // OSM enrichment
-  'osm_tags',
-  'osm_last_fetched_at',
-  'osm_fetch_status',
-  'osm_fetch_error',
-
-  // menu parse
-  'menu_data',
-  'menu_parse_confidence',
-  'menu_parse_notes',
-  'menu_last_parsed_at',
-
-  // QA defaults (only set if supabase null; handled separately)
-];
-
-const FILL_IF_NULL_COLS = [
-  // user-facing derived fields
-  'style',
-  'price',
-  'price_range',
-  'style_confidence',
-];
-
-function hasAnyNonNull(obj, cols) {
-  return cols.some(c => obj[c] !== null && obj[c] !== undefined);
-}
-
 async function main() {
   const args = parseArgs(process.argv);
   const env = loadEnvLocal();
@@ -172,105 +107,7 @@ async function main() {
 
       // Pull a chunk of local rows that have anything worth syncing.
       // (We still include rows where only style/price are present so we can NULL-fill.)
-      const q = `
-        select
-          id,
-          style,
-          price,
-          price_range,
-          style_confidence,
-
-          created_at,
-          updated_at,
-          enrichment_status,
-          last_enriched_at,
-          enrichment_agent,
-          enrichment_run_id,
-
-          address_source,
-
-          website_url,
-          menu_url,
-          phone,
-          email,
-          instagram_url,
-          facebook_url,
-          twitter_url,
-          whatsapp,
-
-          hours,
-
-          scrape_method,
-          scrape_notes,
-
-          delivery,
-          takeaway,
-          drive_through,
-          outdoor_seating,
-          indoor_seating,
-          wheelchair,
-
-          brand,
-          brand_wikidata,
-          operator,
-          operator_wikidata,
-
-          osm_tags,
-          osm_last_fetched_at,
-          osm_fetch_status,
-          osm_fetch_error,
-
-          menu_data,
-          menu_parse_confidence,
-          menu_parse_notes,
-          menu_last_parsed_at
-        from pizza_places
-        where id > $1
-          and (
-            style is not null
-            or price is not null
-            or price_range is not null
-            or style_confidence is not null
-            or website_url is not null
-            or menu_url is not null
-            or phone is not null
-            or email is not null
-            or instagram_url is not null
-            or facebook_url is not null
-            or twitter_url is not null
-            or whatsapp is not null
-            or hours is not null
-            or scrape_method is not null
-            or scrape_notes is not null
-            or osm_tags is not null
-            or osm_last_fetched_at is not null
-            or osm_fetch_status is not null
-            or osm_fetch_error is not null
-            or menu_data is not null
-            or menu_parse_confidence is not null
-            or menu_parse_notes is not null
-            or menu_last_parsed_at is not null
-            or enrichment_status is not null
-            or last_enriched_at is not null
-            or enrichment_agent is not null
-            or enrichment_run_id is not null
-            or address_source is not null
-            or delivery is not null
-            or takeaway is not null
-            or drive_through is not null
-            or outdoor_seating is not null
-            or indoor_seating is not null
-            or wheelchair is not null
-            or brand is not null
-            or brand_wikidata is not null
-            or operator is not null
-            or operator_wikidata is not null
-          )
-        order by id asc
-        limit $2
-      `;
-
-      const { rows: localRows } = await client.query(q, [cursor, args.batch]);
+      const { rows: localRows } = await client.query(localSyncSelectSql(), [cursor, args.batch]);
       if (!localRows.length) break;
 
       batchNum++;
@@ -282,7 +119,7 @@ async function main() {
       // Fetch current supabase state for protected fields + QA.
       const { data: sbRows, error: sbErr } = await sb
         .from('pizza_places')
-        .select('id, style, price, price_range, style_confidence, qa_status, qa_schema_version')
+        .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
         .in('id', ids);
 
       if (sbErr) throw sbErr;
@@ -301,32 +138,8 @@ async function main() {
           continue;
         }
 
-        const payload = { id: local.id };
-
-        // Overwrite-style: set when local has a non-null value.
-        for (const col of OVERWRITE_COLS) {
-          const v = local[col];
-          if (v !== null && v !== undefined) payload[col] = v;
-        }
-
-        // NULL-fill style fields.
-        for (const col of FILL_IF_NULL_COLS) {
-          const localV = local[col];
-          const sbV = current[col];
-          if ((sbV === null || sbV === undefined) && localV !== null && localV !== undefined) {
-            payload[col] = localV;
-          }
-        }
-
-        // QA defaults: only fill if currently null.
-        if (current.qa_status == null) payload.qa_status = 'unreviewed';
-        if (current.qa_schema_version == null) payload.qa_schema_version = 1;
-
-        // If we're not changing anything, skip.
-        const keys = Object.keys(payload);
-        if (keys.length > 1) {
-          // Touch updated_at if we changed anything and local didn't provide one.
-          if (!('updated_at' in payload)) payload.updated_at = new Date().toISOString();
+        const payload = buildSupabasePayload(local, current);
+        if (payload) {
           updates.push(payload);
           wouldUpdate++;
         }
