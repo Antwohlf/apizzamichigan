@@ -9,6 +9,7 @@ approval for Supabase writes.
 - Supabase sync is manual-only until classification quality is reviewed.
 - The first launchd service runs classifier only.
 - Scraper, OSM extraction, menu parse, and QA are not daemonized in this phase.
+- OpenClaw cron jobs must not run APizza watchdog, keepalive, or coordinator processes.
 - Before starting services, queue `processing` must be `0`.
 - Stale worker registry rows are cleaned with `scripts/ops/stale-worker-cleanup.mjs`; jobs are not mutated by that cleanup.
 
