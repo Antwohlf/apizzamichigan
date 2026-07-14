@@ -34,11 +34,11 @@ const WORKERS = {
 
 // Worker concurrency limits
 const WORKER_LIMITS = {
-  // Start conservatively to avoid Overpass 429s; raise once stable.
-  osm_extract: parseInt(process.env.OSM_EXTRACT_WORKERS || '1', 10),
-  scrape: parseInt(process.env.SCRAPE_WORKERS || '3', 10),
-  classify: parseInt(process.env.CLASSIFY_WORKERS || '2', 10),
-  // Supabase sync is intentionally opt-in. Run manual dry-runs before enabling.
+  // The coordinator is not the production process manager. Keep every worker
+  // type opt-in so stale external schedules cannot restart the old full stack.
+  osm_extract: parseInt(process.env.OSM_EXTRACT_WORKERS || '0', 10),
+  scrape: parseInt(process.env.SCRAPE_WORKERS || '0', 10),
+  classify: parseInt(process.env.CLASSIFY_WORKERS || '0', 10),
   sync: parseInt(process.env.SYNC_WORKERS || '0', 10)
 }
 

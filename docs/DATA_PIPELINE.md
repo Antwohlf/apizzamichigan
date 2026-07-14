@@ -49,6 +49,7 @@ Canonical iMac runbook:
 Useful reports:
 
 ```bash
+node scripts/ops/classifier-health-report.mjs
 node scripts/ops/home-status-report.mjs
 node scripts/ops/classifier-batch-report.mjs --max-jobs 25 --timeout-ms 240000 --num-predict 80 --temperature 0
 node scripts/ops/stale-worker-cleanup.mjs
