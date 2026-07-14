@@ -87,6 +87,7 @@ graph TD
 |-----------|------|
 | iMac runbook | `docs/IMAC_PIPELINE_RUNBOOK.md` |
 | launchd templates | `infra/local/launchd/` |
+| classifier health report | `scripts/ops/classifier-health-report.mjs` |
 | status report | `scripts/ops/home-status-report.mjs` |
 | stale worker cleanup | `scripts/ops/stale-worker-cleanup.mjs` |
 | bounded classifier report | `scripts/ops/classifier-batch-report.mjs` |

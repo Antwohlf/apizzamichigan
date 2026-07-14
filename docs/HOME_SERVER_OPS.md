@@ -20,8 +20,13 @@ Project root on the iMac:
 ## Standard Status
 
 ```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/home-status-report.mjs'
 ```
+
+Use `classifier-health-report.mjs` for the normal "is the launchd classifier
+healthy and advancing?" check. Use `home-status-report.mjs` when you need the
+broader queue/Postgres/Ollama/process details.
 
 ## Standard Cleanup
 
@@ -40,6 +45,7 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/stale-worker-cleanu
 The first production service is the launchd-managed classifier:
 
 ```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
 ssh example-host 'tail -100 /tmp/apizzamichigan/classifier.log'
 ssh example-host 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
