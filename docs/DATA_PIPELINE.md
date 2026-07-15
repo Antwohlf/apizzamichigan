@@ -25,8 +25,9 @@ The current local-first pipeline is:
    - classification: `scripts/enrichment/agents/llm-classifier.mjs`
 4. Sync approved local enrichment fields back to Supabase with `scripts/sync-local-to-supabase.mjs`.
 
-Current production rollout is classifier-first. OSM extraction, scraping,
-menu parse, QA, and Supabase write sync are manual until separately approved.
+Current production rollout is classifier-first with guarded automated Supabase
+sync. OSM extraction, scraping, and menu parse remain manual/opt-in until their
+source and quality policies are tightened.
 
 ## Classifier Runtime
 
@@ -38,7 +39,16 @@ The classifier runs locally against Ollama:
 - conservative timeout: `OLLAMA_TIMEOUT_MS=240000`
 
 It writes style, price range, confidence, and `last_enriched_at` to local
-Postgres. Supabase is not updated until the manual sync path is run.
+Postgres. Supabase is updated by the guarded launchd sync service only after
+health, QA, readiness, dry-run, and protected-field gates pass.
+
+## Source Policy
+
+Data source and trust rules live in `docs/DATA_SOURCES.md`.
+
+Important operating rule:
+
+> Google Maps is an outbound navigation destination, not an ingestion source.
 
 ## Operations
 

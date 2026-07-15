@@ -87,6 +87,9 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       role="dialog"
       aria-modal="true"
       data-favorited={isGolden ? 'true' : 'false'}
+      onClick={event => event.stopPropagation()}
+      onMouseDown={event => event.stopPropagation()}
+      onPointerDown={event => event.stopPropagation()}
     >
       <button className="close" onClick={onClose} aria-label="Close">
         ×

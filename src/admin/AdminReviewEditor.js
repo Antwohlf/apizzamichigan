@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getUnsupportedReviewPhotoMessage, isSupportedReviewPhotoFile } from '../utils/uploadPhoto'
 
 const SMALL_THUMB_PARAMS = 'width=280&quality=70&format=webp'
 const MAX_PHOTO_COUNT = 10
@@ -95,9 +96,10 @@ export default function AdminReviewEditor({
   const handleFileInputChange = event => {
     const list = event?.target?.files
     if (!list) return
-    const files = Array.from(list).filter(file => file.type.startsWith('image/')).slice(0, remainingSlots)
+    const selected = Array.from(list)
+    const files = selected.filter(isSupportedReviewPhotoFile).slice(0, remainingSlots)
     if (files.length === 0) {
-      setError(remainingSlots === 0 ? 'Photo limit reached.' : 'No compatible images selected.')
+      setError(remainingSlots === 0 ? 'Photo limit reached.' : getUnsupportedReviewPhotoMessage(selected[0]))
       return
     }
     emitUpload(files)
@@ -128,9 +130,10 @@ export default function AdminReviewEditor({
     setIsDraggingOver(false)
     const list = event.dataTransfer?.files
     if (!list) return
-    const files = Array.from(list).filter(file => file.type.startsWith('image/')).slice(0, remainingSlots)
+    const dropped = Array.from(list)
+    const files = dropped.filter(isSupportedReviewPhotoFile).slice(0, remainingSlots)
     if (files.length === 0) {
-      setError(remainingSlots === 0 ? 'Photo limit reached.' : 'Only image files are supported.')
+      setError(remainingSlots === 0 ? 'Photo limit reached.' : getUnsupportedReviewPhotoMessage(dropped[0]))
       return
     }
     emitUpload(files)
@@ -280,7 +283,7 @@ export default function AdminReviewEditor({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           multiple
           onChange={handleFileInputChange}
           style={{ display: 'none' }}

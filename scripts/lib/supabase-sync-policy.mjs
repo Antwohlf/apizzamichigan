@@ -62,6 +62,8 @@ export const LOCAL_SYNC_COLS = [
   ...OVERWRITE_COLS,
 ];
 
+const LOCAL_SYNC_CHECKPOINT_COL = `to_char(last_enriched_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as sync_checkpoint_last_enriched_at`;
+
 export const SUPABASE_SYNC_SELECT_COLS = [
   'id',
   ...FILL_IF_NULL_COLS,
@@ -125,7 +127,8 @@ export function localSyncSelect(options = {}) {
 
   const sql = `
         select
-          ${LOCAL_SYNC_COLS.join(',\n          ')}
+          ${LOCAL_SYNC_COLS.join(',\n          ')},
+          ${LOCAL_SYNC_CHECKPOINT_COL}
         from pizza_places
         where ${filters.join('\n          and ')}
         order by ${orderBy}

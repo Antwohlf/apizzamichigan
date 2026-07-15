@@ -51,7 +51,8 @@ Values stored in `taco_places.style` (comma-separated when multiple):
 
 ## Price Tiers
 
-Values stored in `price` column for both tables:
+Values stored in `price_range` for enriched rows. Older/imported rows may still
+have values in `price`; new enrichment should prefer `price_range`.
 
 | Value | Description |
 |-------|-------------|
@@ -155,11 +156,27 @@ Some addresses may be incomplete (missing street number or ZIP).
 
 ---
 
-## OSM ID
+## External Place ID
 
-The `osm_id` column stores the OpenStreetMap identifier for the place, allowing:
+The current `google_place_id` column is a legacy external identifier field.
+Despite the name, many imported rows store OpenStreetMap identifiers in this
+format:
+
+```text
+osm:node/12345
+osm:way/12345
+osm:relation/12345
+```
+
+For rows with a real Google Place ID, the field may contain the Google ID.
+Do not assume every `google_place_id` value is valid for a Google Maps
+`place_id:` URL.
+
+This field currently supports:
 - Deduplication during imports
-- Linking back to OSM for updates
+- Linking back to OSM/other external systems for updates
 - Identifying data provenance
 
-Format: Numeric ID from OSM (node or way ID)
+Long term, split this into explicit source identity fields or an external IDs
+table, for example `source_system`, `source_id`, `verified_at`, and
+`source_url`.

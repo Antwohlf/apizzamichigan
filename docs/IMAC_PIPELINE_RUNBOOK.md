@@ -137,7 +137,17 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/guarded-supabase-sy
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50 --apply'
 ```
 
-Do not run a write sync until classification quality has been reviewed.
+The production sync service uses the same guarded runner through a launchd-safe
+wrapper:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/auto-guarded-supabase-sync.mjs'
+ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"'
+ssh example-host 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
+```
+
+The service applies at most one 100-row batch every 30 minutes. It should remain
+disabled if classification QA is not healthy.
 
 ## Legacy Material
 

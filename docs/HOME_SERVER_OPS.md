@@ -51,7 +51,16 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-statu
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
 ```
 
-Do not run Supabase write syncs until the QA report has been reviewed.
+The recurring production sync is launchd-managed and runs the same guarded
+path through `scripts/ops/auto-guarded-supabase-sync.mjs`:
+
+```bash
+ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"'
+ssh example-host 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
+```
+
+It applies at most one 100-row batch every 30 minutes and exits without writing
+if health, QA, readiness, or dry-run gates fail.
 
 ## Service Control
 

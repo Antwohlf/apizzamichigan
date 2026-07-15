@@ -8,11 +8,15 @@ const BUG_REPORT_RATE_WINDOW_MS = Number(process.env.BUG_REPORT_RATE_WINDOW_MS |
 
 let bugReportTransporter = null
 
+function isGooglePlaceId(value) {
+  return Boolean(value) && !String(value).startsWith('osm:')
+}
+
 function buildBugReportMapsUrl(selectedPlace = null, fallback = '') {
   if (!selectedPlace) {
     return fallback || ''
   }
-  if (selectedPlace.google_place_id) {
+  if (isGooglePlaceId(selectedPlace.google_place_id)) {
     return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(selectedPlace.google_place_id)}`
   }
   if (selectedPlace.google_maps_url) {
@@ -199,4 +203,3 @@ module.exports = {
   handleBugReport,
   buildBugReportMapsUrl,
 }
-
