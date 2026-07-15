@@ -32,6 +32,19 @@ const cardStyle = {
 
 const normalizeSearchText = value => String(value ?? '').trim().toLowerCase()
 
+const readErrorMessage = async (res, fallback) => {
+  const text = await res.text()
+  if (res.status === 413) {
+    return 'Photo upload is too large after processing. Try a smaller image or upload fewer photos at once.'
+  }
+  try {
+    const parsed = JSON.parse(text)
+    return parsed?.error || fallback
+  } catch (err) {
+    return text || fallback
+  }
+}
+
 export default function AdminReviewsPage() {
   const [authChecked, setAuthChecked] = useState(false)
   const [isAuthed, setIsAuthed] = useState(false)
@@ -151,30 +164,31 @@ export default function AdminReviewsPage() {
         throw new Error('No valid images selected.')
       }
 
-      const preparedFiles = []
+      let latestPhotos = Array.isArray(review.photos) ? review.photos : []
       for (const file of uploadQueue) {
         const prepared = await prepareReviewPhotoUpload(file, { reviewId })
-        preparedFiles.push({
-          path: prepared.path,
-          size: prepared.size,
-          mimeType: prepared.mimeType,
-          dataBase64: prepared.dataBase64,
+        const res = await fetch(`/api/admin/reviews/${reviewId}/photos/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            files: [{
+              path: prepared.path,
+              size: prepared.size,
+              mimeType: prepared.mimeType,
+              dataBase64: prepared.dataBase64,
+            }],
+          }),
         })
+        if (!res.ok) {
+          throw new Error(await readErrorMessage(res, 'Failed to upload review photo.'))
+        }
+        const payload = await res.json()
+        latestPhotos = Array.isArray(payload?.data) ? payload.data : latestPhotos
+        updatePhotosState(reviewId, latestPhotos)
       }
 
-      const res = await fetch(`/api/admin/reviews/${reviewId}/photos/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ files: preparedFiles }),
-      })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Failed to upload review photo.')
-      }
-      const payload = await res.json()
-      updatePhotosState(reviewId, payload?.data)
-      return payload?.data
+      return latestPhotos
     },
     [reviews, updatePhotosState]
   )
