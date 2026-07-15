@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import AdminReviewEditor from './AdminReviewEditor'
 import AdminSuggestionsPanel from './AdminSuggestionsPanel'
-import { prepareReviewPhotoUpload } from '../utils/uploadPhoto'
+import { isSupportedReviewPhotoFile, prepareReviewPhotoUpload } from '../utils/uploadPhoto'
 
 const MAX_PHOTOS = 10
 const ENTITY_OPTIONS = [
@@ -153,7 +153,7 @@ export default function AdminReviewsPage() {
     async (reviewId, files) => {
       const review = reviews.find(item => item.id === reviewId)
       if (!review) throw new Error('Review not found')
-      const safeFiles = Array.isArray(files) ? files : []
+      const safeFiles = Array.isArray(files) ? files.filter(isSupportedReviewPhotoFile) : []
       const currentCount = Array.isArray(review.photos) ? review.photos.length : 0
       const remaining = MAX_PHOTOS - currentCount
       if (remaining <= 0) {
