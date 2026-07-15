@@ -4,7 +4,8 @@ const REVIEW_PHOTO_BUCKET = 'review-photos'
 const MAX_DIMENSION = 1920
 const DEFAULT_QUALITY = 0.8
 const SUPPORTED_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
-const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['heic', 'heif', 'avif'])
+const HEIC_IMAGE_EXTENSIONS = new Set(['heic', 'heif'])
+const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['avif'])
 
 const getFileExtension = file => {
   const name = typeof file?.name === 'string' ? file.name : ''
@@ -16,17 +17,14 @@ export const isSupportedReviewPhotoFile = file => {
   if (!file) return false
   const type = typeof file.type === 'string' ? file.type.toLowerCase() : ''
   const extension = getFileExtension(file)
+  if (HEIC_IMAGE_EXTENSIONS.has(extension)) return true
   if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) return false
   if (type.startsWith('image/')) return true
   return SUPPORTED_IMAGE_EXTENSIONS.has(extension)
 }
 
 export const getUnsupportedReviewPhotoMessage = file => {
-  const extension = getFileExtension(file)
-  if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
-    return `${file.name || 'This photo'} is ${extension.toUpperCase()}, which this browser cannot convert. Export it as JPG or PNG first.`
-  }
-  return `${file?.name || 'This file'} is not a supported image. Use JPG, PNG, WebP, or GIF.`
+  return `${file?.name || 'This file'} is not a supported image. Use JPG, PNG, WebP, GIF, HEIC, or HEIF.`
 }
 
 const hasCanvasSupport = () => typeof document !== 'undefined' && typeof document.createElement === 'function'
@@ -74,22 +72,54 @@ async function loadImage(file) {
   })
 }
 
-async function downscaleToWebP(file, maxDimension = MAX_DIMENSION, quality = DEFAULT_QUALITY) {
+async function convertHeicToJpeg(file) {
   const extension = getFileExtension(file)
-  if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
-    throw new Error(`${file.name || 'This photo'} is ${extension.toUpperCase()}, which this browser cannot convert. Export it as JPG or PNG first.`)
+  if (!HEIC_IMAGE_EXTENSIONS.has(extension)) {
+    return file
   }
+
+  let heic2any
+  try {
+    const module = await import('heic2any')
+    heic2any = module.default || module
+  } catch (err) {
+    throw new Error('HEIC conversion support could not be loaded. Try again, or export this photo as JPG first.')
+  }
+
+  try {
+    const converted = await heic2any({
+      blob: file,
+      toType: 'image/jpeg',
+      quality: 0.92,
+    })
+    const blob = Array.isArray(converted) ? converted[0] : converted
+    if (!blob) {
+      throw new Error('HEIC conversion returned no image data')
+    }
+    const nextName = `${file.name.replace(/\.[^/.]+$/, '') || 'review-photo'}.jpg`
+    return new File([blob], nextName, { type: 'image/jpeg' })
+  } catch (err) {
+    throw new Error(`${file.name || 'This HEIC photo'} could not be converted. Export it as JPG or PNG first if it came from iCloud or Apple Photos.`)
+  }
+}
+
+async function downscaleToWebP(file, maxDimension = MAX_DIMENSION, quality = DEFAULT_QUALITY) {
   if (!isSupportedReviewPhotoFile(file)) {
-    throw new Error(`${file.name || 'This file'} is not a supported image. Use JPG, PNG, WebP, or GIF.`)
+    throw new Error(`${file.name || 'This file'} is not a supported image. Use JPG, PNG, WebP, GIF, HEIC, or HEIF.`)
   }
   if (!hasCanvasSupport()) {
     throw new Error('Canvas support is required to process review photos')
   }
 
   let image
+  let readableFile
   try {
-    image = await loadImage(file)
+    readableFile = await convertHeicToJpeg(file)
+    image = await loadImage(readableFile)
   } catch (err) {
+    if (err instanceof Error && err.message) {
+      throw err
+    }
     throw new Error(`${file.name || 'This photo'} could not be read by the browser. Use JPG or PNG if this came from Apple Photos or iCloud.`)
   }
   const maxSide = Math.max(image.width, image.height)
@@ -110,7 +140,7 @@ async function downscaleToWebP(file, maxDimension = MAX_DIMENSION, quality = DEF
   ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
   const blob = await toBlob(canvas, 'image/webp', quality)
 
-  const nextName = `${file.name.replace(/\.[^/.]+$/, '') || 'review-photo'}.webp`
+  const nextName = `${readableFile.name.replace(/\.[^/.]+$/, '') || 'review-photo'}.webp`
   return new File([blob], nextName, { type: 'image/webp' })
 }
 
