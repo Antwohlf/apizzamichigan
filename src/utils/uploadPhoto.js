@@ -3,6 +3,31 @@ import { supabase } from '../supabaseClient'
 const REVIEW_PHOTO_BUCKET = 'review-photos'
 const MAX_DIMENSION = 1920
 const DEFAULT_QUALITY = 0.8
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
+const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['heic', 'heif', 'avif'])
+
+const getFileExtension = file => {
+  const name = typeof file?.name === 'string' ? file.name : ''
+  const extension = name.split('.').pop()
+  return extension && extension !== name ? extension.toLowerCase() : ''
+}
+
+export const isSupportedReviewPhotoFile = file => {
+  if (!file) return false
+  const type = typeof file.type === 'string' ? file.type.toLowerCase() : ''
+  const extension = getFileExtension(file)
+  if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) return false
+  if (type.startsWith('image/')) return true
+  return SUPPORTED_IMAGE_EXTENSIONS.has(extension)
+}
+
+export const getUnsupportedReviewPhotoMessage = file => {
+  const extension = getFileExtension(file)
+  if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+    return `${file.name || 'This photo'} is ${extension.toUpperCase()}, which this browser cannot convert. Export it as JPG or PNG first.`
+  }
+  return `${file?.name || 'This file'} is not a supported image. Use JPG, PNG, WebP, or GIF.`
+}
 
 const hasCanvasSupport = () => typeof document !== 'undefined' && typeof document.createElement === 'function'
 
@@ -43,18 +68,30 @@ async function loadImage(file) {
     }
     image.onerror = error => {
       URL.revokeObjectURL(url)
-      reject(error)
+      reject(error instanceof Error ? error : new Error('Unable to decode image file'))
     }
     image.src = url
   })
 }
 
 async function downscaleToWebP(file, maxDimension = MAX_DIMENSION, quality = DEFAULT_QUALITY) {
+  const extension = getFileExtension(file)
+  if (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+    throw new Error(`${file.name || 'This photo'} is ${extension.toUpperCase()}, which this browser cannot convert. Export it as JPG or PNG first.`)
+  }
+  if (!isSupportedReviewPhotoFile(file)) {
+    throw new Error(`${file.name || 'This file'} is not a supported image. Use JPG, PNG, WebP, or GIF.`)
+  }
   if (!hasCanvasSupport()) {
     throw new Error('Canvas support is required to process review photos')
   }
 
-  const image = await loadImage(file)
+  let image
+  try {
+    image = await loadImage(file)
+  } catch (err) {
+    throw new Error(`${file.name || 'This photo'} could not be read by the browser. Use JPG or PNG if this came from Apple Photos or iCloud.`)
+  }
   const maxSide = Math.max(image.width, image.height)
   const scale = maxSide > maxDimension ? maxDimension / maxSide : 1
 
