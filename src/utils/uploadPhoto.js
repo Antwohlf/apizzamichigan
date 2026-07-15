@@ -1,8 +1,8 @@
 import { supabase } from '../supabaseClient'
 
 const REVIEW_PHOTO_BUCKET = 'review-photos'
-const MAX_DIMENSION = 2560
-const DEFAULT_QUALITY = 0.82
+const MAX_DIMENSION = 1920
+const DEFAULT_QUALITY = 0.8
 
 const hasCanvasSupport = () => typeof document !== 'undefined' && typeof document.createElement === 'function'
 
