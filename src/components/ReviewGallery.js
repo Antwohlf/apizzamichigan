@@ -34,6 +34,10 @@ const normalizePhoto = (photo, index) => {
   }
 }
 
+const stopMapEvent = event => {
+  event.stopPropagation()
+}
+
 export default function ReviewGallery({ photos = [], placeName }) {
   const normalizedPhotos = useMemo(() => {
     const entries = Array.isArray(photos) ? photos : []
@@ -206,7 +210,18 @@ export default function ReviewGallery({ photos = [], placeName }) {
     : `Review detail ${activeIndex + 1} of ${normalizedPhotos.length}`
 
   const lightbox = isOpen && activePhoto && (
-    <div style={overlayStyle} role="dialog" aria-modal="true" aria-label={captionText} onClick={close}>
+    <div
+      style={overlayStyle}
+      role="dialog"
+      aria-modal="true"
+      aria-label={captionText}
+      onClick={event => {
+        event.stopPropagation()
+        close()
+      }}
+      onMouseDown={stopMapEvent}
+      onPointerDown={stopMapEvent}
+    >
       <div style={dialogStyle} onClick={event => event.stopPropagation()}>
         <div style={headerStyle}>
           <div style={captionStyle}>{captionText}</div>
@@ -238,7 +253,12 @@ export default function ReviewGallery({ photos = [], placeName }) {
           <button
             key={photo.id}
             type="button"
-            onClick={() => openAt(index)}
+            onClick={event => {
+              event.stopPropagation()
+              openAt(index)
+            }}
+            onMouseDown={stopMapEvent}
+            onPointerDown={stopMapEvent}
             style={{
               padding: 0,
               border: '1px solid var(--app-border)',
