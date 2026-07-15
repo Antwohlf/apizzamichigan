@@ -251,7 +251,8 @@ app.get('/api/admin/reviews', requireAdminAuth, async (req, res) => {
 
     const { data: reviews, error } = await serviceClient
       .from(table)
-      .select('id, name, review, notes, rating, status, style, type')
+      .select('id, name, notes, rating, status, style')
+      .or('notes.not.is.null,rating.not.is.null')
       .order('name', { ascending: true })
 
     if (error) {
