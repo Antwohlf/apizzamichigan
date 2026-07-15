@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const SMALL_TRANSFORM = 'width=480&quality=70&format=webp'
 const LARGE_TRANSFORM = 'width=1600&quality=75&format=webp'
@@ -103,6 +104,9 @@ export default function ReviewGallery({ photos = [], placeName }) {
     return null
   }
 
+  const activePhoto = normalizedPhotos[activeIndex]
+  const hasMultiplePhotos = normalizedPhotos.length > 1
+
   const gridStyle = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
@@ -124,28 +128,59 @@ export default function ReviewGallery({ photos = [], placeName }) {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '1.5rem',
-    zIndex: 1400,
+    padding: 'clamp(12px, 3vw, 32px)',
+    zIndex: 10000,
   }
 
   const dialogStyle = {
-    background: '#0f172a',
-    borderRadius: '12px',
-    maxWidth: 'min(960px, 92vw)',
-    maxHeight: '90vh',
-    padding: '1rem',
+    position: 'relative',
+    width: 'min(1040px, calc(100vw - 32px))',
+    maxHeight: 'calc(100vh - 32px)',
+    background: '#0b1220',
+    border: '1px solid rgba(148, 163, 184, 0.28)',
+    borderRadius: '10px',
+    padding: '12px',
     boxSizing: 'border-box',
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.75rem',
+    gap: '10px',
     boxShadow: '0 32px 120px rgba(15, 23, 42, 0.55)',
   }
 
-  const fullImageStyle = {
-    maxHeight: '70vh',
-    maxWidth: '86vw',
-    objectFit: 'contain',
+  const headerStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+    minHeight: '36px',
+  }
+
+  const captionStyle = {
+    color: '#dbeafe',
+    fontSize: '0.9rem',
+    fontWeight: 650,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  }
+
+  const imageFrameStyle = {
+    minHeight: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#020617',
     borderRadius: '8px',
+    overflow: 'hidden',
+  }
+
+  const fullImageStyle = {
+    display: 'block',
+    width: '100%',
+    height: 'auto',
+    maxHeight: hasMultiplePhotos ? 'calc(100vh - 160px)' : 'calc(100vh - 108px)',
+    objectFit: 'contain',
     background: '#0b1220',
   }
 
@@ -160,7 +195,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
     padding: '0.5rem 0.9rem',
     borderRadius: '6px',
     border: '1px solid rgba(148, 163, 184, 0.4)',
-    background: 'rgba(30, 41, 59, 0.9)',
+    background: 'rgba(15, 23, 42, 0.94)',
     color: '#e2e8f0',
     cursor: 'pointer',
     fontWeight: 600,
@@ -169,6 +204,32 @@ export default function ReviewGallery({ photos = [], placeName }) {
   const captionText = placeName
     ? `${placeName} detail ${activeIndex + 1} of ${normalizedPhotos.length}`
     : `Review detail ${activeIndex + 1} of ${normalizedPhotos.length}`
+
+  const lightbox = isOpen && activePhoto && (
+    <div style={overlayStyle} role="dialog" aria-modal="true" aria-label={captionText} onClick={close}>
+      <div style={dialogStyle} onClick={event => event.stopPropagation()}>
+        <div style={headerStyle}>
+          <div style={captionStyle}>{captionText}</div>
+          <button type="button" onClick={close} style={controlButtonStyle} aria-label="Close photo viewer">
+            Close
+          </button>
+        </div>
+        <div style={imageFrameStyle}>
+          <img src={activePhoto.largeSrc} alt={captionText} loading="eager" style={fullImageStyle} />
+        </div>
+        {hasMultiplePhotos && (
+          <div style={controlsStyle}>
+            <button type="button" onClick={showPrev} style={controlButtonStyle}>
+              Prev
+            </button>
+            <button type="button" onClick={showNext} style={controlButtonStyle}>
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 
   return (
     <>
@@ -194,32 +255,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
         ))}
       </div>
 
-      {isOpen && normalizedPhotos[activeIndex] && (
-        <div style={overlayStyle} role="dialog" aria-modal="true" aria-label={captionText} onClick={close}>
-          <div style={dialogStyle} onClick={event => event.stopPropagation()}>
-            <img
-              src={normalizedPhotos[activeIndex].largeSrc}
-              alt={captionText}
-              loading="lazy"
-              style={fullImageStyle}
-            />
-            <div style={controlsStyle}>
-              <button type="button" onClick={showPrev} style={controlButtonStyle}>
-                Prev
-              </button>
-              <div style={{ color: '#cbd5f5', fontSize: '0.85rem', fontWeight: 500 }}>{captionText}</div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button type="button" onClick={close} style={controlButtonStyle}>
-                  Close
-                </button>
-                <button type="button" onClick={showNext} style={controlButtonStyle}>
-                  Next
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {lightbox && typeof document !== 'undefined' ? createPortal(lightbox, document.body) : lightbox}
     </>
   )
 }
