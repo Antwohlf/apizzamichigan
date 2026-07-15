@@ -34,3 +34,29 @@ Before starting, verify:
 node scripts/ops/home-status-report.mjs
 node scripts/ops/stale-worker-cleanup.mjs
 ```
+
+## Supabase Sync Service
+
+The Supabase sync service runs the guarded local Postgres -> Supabase path every
+30 minutes. Each interval applies at most one 100-row batch after health, QA,
+readiness, dry-run, and checkpoint gates pass.
+
+Install:
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.supabase-sync.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.supabase-sync.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.supabase-sync.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.supabase-sync.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.supabase-sync"
+launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.supabase-sync"
+```
+
+Operate:
+
+```bash
+launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"
+launchctl bootout "gui/$(id -u)/com.apizzamichigan.supabase-sync"
+tail -f /tmp/apizzamichigan/supabase-sync.log
+```

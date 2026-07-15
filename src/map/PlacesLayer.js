@@ -21,7 +21,6 @@ const CLUSTER_ICONS = {
   taco: { visited: tacoIconColored, unvisited: tacoIconGrey, golden: tacoIconGold },
 }
 
-const DEFAULT_CENTER = [44.3148, -85.6024]
 const DEFAULT_ZOOM = 6
 const MIN_MARKERS_ZOOM = 7 // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
 
@@ -101,7 +100,7 @@ function MapClickCloser({ close }) {
   return null
 }
 
-const FOCUSED_ZOOM = 12
+const FOCUSED_ZOOM = 15
 
 const NEAR_ME_ZOOM = 10 // City-level view for Near Me
 
@@ -340,10 +339,7 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
       }
     }
 
-    if (lastFocusedPlaceRef.current) {
-      map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { duration: 0.75 })
-      lastFocusedPlaceRef.current = null
-    }
+    lastFocusedPlaceRef.current = null
   }, [map, openEntry, places, flyToPlace])
 
   useEffect(() => {

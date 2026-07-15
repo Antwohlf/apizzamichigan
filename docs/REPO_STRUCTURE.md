@@ -47,7 +47,8 @@ Avoid moving the CRA app until the frontend build tool decision is explicit.
 
 - Keep behavior changes separate from large file moves where practical.
 - Do not stage `.env`, logs, queue DBs, progress JSON, status JSON, caches, or auth files.
-- Do not run Supabase write syncs as part of structural changes.
+- Do not run direct Supabase write syncs as part of structural changes.
+- Keep data ingestion changes aligned with `docs/DATA_SOURCES.md`.
 - Verify active scripts after pipeline edits:
 
 ```bash

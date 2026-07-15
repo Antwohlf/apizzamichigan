@@ -8,7 +8,8 @@ graph TD
 
     subgraph "iMac Process Control"
         LAUNCHD["launchd<br/>com.apizzamichigan.classifier"]
-        MANUAL["Manual SSH Commands<br/>scrape / OSM / sync / QA"]
+        SYNC_SVC["launchd<br/>com.apizzamichigan.supabase-sync"]
+        MANUAL["Manual SSH Commands<br/>scrape / OSM / QA"]
     end
 
     subgraph "Active Classifier Service"
@@ -20,7 +21,7 @@ graph TD
         SCR["Web Scraper<br/>web-scraper.mjs"]
         MP["Menu Parse Slowlane"]
         QA["QA Scripts"]
-        SYNC["Manual Supabase Sync<br/>sync-local-to-supabase.mjs"]
+        SYNC["Guarded Supabase Sync<br/>auto-guarded-supabase-sync.mjs"]
     end
 
     subgraph "Local State"
@@ -37,8 +38,10 @@ graph TD
     end
 
     OP --> LAUNCHD
+    OP --> SYNC_SVC
     OP --> MANUAL
     LAUNCHD --> CLS
+    SYNC_SVC --> SYNC
     CLS --> SQLITE
     CLS --> PG
     CLS --> OLLAMA
@@ -70,7 +73,8 @@ graph TD
 2. The iMac maintains local Postgres (`pizza_enrichment`) as the enrichment working database.
 3. SQLite `scripts/.job-queue.db` tracks enrichment jobs and worker state.
 4. The first launchd-managed service runs only classification jobs.
-5. Supabase sync is a manual dry-run-first operation until explicitly approved.
+5. Supabase sync is launchd-managed through guarded health, QA, readiness,
+   dry-run, and protected-field gates.
 
 ## Operational Defaults
 
@@ -78,7 +82,7 @@ graph TD
 - Classifier model: `llama3.2:latest`
 - Classifier output cap: `OLLAMA_NUM_PREDICT=80`
 - Classifier timeout: `OLLAMA_TIMEOUT_MS=240000`
-- Sync workers: disabled by default (`SYNC_WORKERS=0`)
+- Sync service: `com.apizzamichigan.supabase-sync`, one guarded 100-row batch every 30 minutes
 - Scrape/OSM services: manual only in this phase
 
 ## Key Files
@@ -94,5 +98,6 @@ graph TD
 | bounded classifier report | `scripts/ops/classifier-batch-report.mjs` |
 | classifier | `scripts/enrichment/agents/llm-classifier.mjs` |
 | queue | `scripts/enrichment/queue.mjs` |
-| manual sync | `scripts/sync-local-to-supabase.mjs` |
+| guarded sync | `scripts/ops/auto-guarded-supabase-sync.mjs` |
+| direct sync engine | `scripts/sync-local-to-supabase.mjs` |
 | archived legacy pipeline | `scripts/enrichment/archive/` |
