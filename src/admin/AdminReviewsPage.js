@@ -30,6 +30,8 @@ const cardStyle = {
   width: 'min(720px, 95vw)',
 }
 
+const normalizeSearchText = value => String(value ?? '').trim().toLowerCase()
+
 export default function AdminReviewsPage() {
   const [authChecked, setAuthChecked] = useState(false)
   const [isAuthed, setIsAuthed] = useState(false)
@@ -41,6 +43,8 @@ export default function AdminReviewsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState('photos')
+  const [reviewSearch, setReviewSearch] = useState('')
+  const [photoFilter, setPhotoFilter] = useState('all')
 
   useEffect(() => {
     let cancelled = false
@@ -96,6 +100,11 @@ export default function AdminReviewsPage() {
       fetchReviews(entity)
     }
   }, [entity, isAuthed, fetchReviews, activeTab])
+
+  useEffect(() => {
+    setReviewSearch('')
+    setPhotoFilter('all')
+  }, [entity])
 
   const handleLogin = async event => {
     event.preventDefault()
@@ -216,6 +225,36 @@ export default function AdminReviewsPage() {
   const headerSubtitle = isPhotosTab
     ? 'Manage Supabase-hosted photos for each review. Drag to reorder, or remove any photo that needs to be replaced.'
     : 'Review community suggestions and decide what should move onto the official map.'
+  const filteredReviews = useMemo(() => {
+    const terms = normalizeSearchText(reviewSearch).split(/\s+/).filter(Boolean)
+    return reviews.filter(review => {
+      const photoCount = Array.isArray(review.photos) ? review.photos.length : 0
+      if (photoFilter === 'needsPhotos' && photoCount > 0) return false
+      if (photoFilter === 'hasPhotos' && photoCount === 0) return false
+      if (terms.length === 0) return true
+
+      const haystack = normalizeSearchText([
+        review.name,
+        review.notes,
+        review.rating,
+        review.status,
+        review.style,
+      ].filter(Boolean).join(' '))
+      return terms.every(term => haystack.includes(term))
+    })
+  }, [photoFilter, reviewSearch, reviews])
+
+  const photoStats = useMemo(() => {
+    return reviews.reduce(
+      (acc, review) => {
+        const hasPhotos = Array.isArray(review.photos) && review.photos.length > 0
+        if (hasPhotos) acc.withPhotos += 1
+        else acc.needsPhotos += 1
+        return acc
+      },
+      { withPhotos: 0, needsPhotos: 0 }
+    )
+  }, [reviews])
 
   if (!authChecked) {
     return (
@@ -339,10 +378,109 @@ export default function AdminReviewsPage() {
           <>
             {loading && <p style={{ color: '#fbbf24' }}>Loading {entityLabel.toLowerCase()}…</p>}
             {error && !loading && <p style={{ color: '#f87171' }}>{error}</p>}
+            {!loading && !error && reviews.length > 0 && (
+              <div
+                style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 5,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.75rem',
+                  alignItems: 'center',
+                  marginBottom: '1rem',
+                  padding: '0.9rem',
+                  border: '1px solid rgba(148, 163, 184, 0.18)',
+                  borderRadius: 12,
+                  background: 'rgba(17, 19, 21, 0.96)',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.24)',
+                }}
+              >
+                <label htmlFor="review-search" style={{ display: 'grid', gap: '0.35rem', flex: '1 1 280px', minWidth: 0 }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                    Find Review
+                  </span>
+                  <input
+                    id="review-search"
+                    type="search"
+                    value={reviewSearch}
+                    onChange={event => setReviewSearch(event.target.value)}
+                    placeholder="Search name, style, rating, or notes"
+                    style={{
+                      width: '100%',
+                      minWidth: 0,
+                      boxSizing: 'border-box',
+                      padding: '0.7rem 0.8rem',
+                      borderRadius: 8,
+                      border: '1px solid #374151',
+                      background: '#0f172a',
+                      color: '#f8fafc',
+                      fontSize: '0.95rem',
+                    }}
+                  />
+                </label>
+                <label htmlFor="photo-filter" style={{ display: 'grid', gap: '0.35rem', flex: '0 1 180px' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                    Photos
+                  </span>
+                  <select
+                    id="photo-filter"
+                    value={photoFilter}
+                    onChange={event => setPhotoFilter(event.target.value)}
+                    style={{
+                      padding: '0.7rem 0.8rem',
+                      borderRadius: 8,
+                      border: '1px solid #374151',
+                      background: '#0f172a',
+                      color: '#f8fafc',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <option value="all">All reviews</option>
+                    <option value="needsPhotos">Needs photos</option>
+                    <option value="hasPhotos">Has photos</option>
+                  </select>
+                </label>
+                <div style={{ display: 'flex', alignItems: 'end', gap: '0.75rem', alignSelf: 'stretch' }}>
+                  <div style={{ alignSelf: 'center', color: '#cbd5e1', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    {filteredReviews.length}/{reviews.length}
+                  </div>
+                  {reviewSearch || photoFilter !== 'all' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReviewSearch('')
+                        setPhotoFilter('all')
+                      }}
+                      style={{
+                        alignSelf: 'center',
+                        border: '1px solid #475569',
+                        borderRadius: 8,
+                        background: 'transparent',
+                        color: '#cbd5e1',
+                        padding: '0.65rem 0.8rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                <div style={{ flex: '1 0 100%', display: 'flex', gap: '1rem', flexWrap: 'wrap', color: '#94a3b8', fontSize: '0.85rem' }}>
+                  <span>{photoStats.needsPhotos} need photos</span>
+                  <span>{photoStats.withPhotos} have photos</span>
+                </div>
+              </div>
+            )}
             {!loading && !error && reviews.length === 0 && (
               <p style={{ color: '#94a3b8' }}>No reviews found for this dataset yet.</p>
             )}
-            {reviews.map(review => (
+            {!loading && !error && reviews.length > 0 && filteredReviews.length === 0 && (
+              <p style={{ color: '#94a3b8' }}>No reviews match the current search.</p>
+            )}
+            {filteredReviews.map(review => (
               <AdminReviewEditor
                 key={review.id}
                 review={review}
