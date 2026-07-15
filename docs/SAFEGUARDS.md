@@ -1,13 +1,14 @@
 # Enrichment Pipeline Safeguards
 
 The APizzaMichigan iMac pipeline is moving to a production-safe model:
-Tailscale SSH for operator access, launchd for service supervision, and manual
-approval for Supabase writes.
+Tailscale SSH for operator access, launchd for service supervision, and guarded
+Supabase writes.
 
 ## Current Safety Rules
 
-- Supabase sync is manual-only until classification quality is reviewed.
-- The first launchd service runs classifier only.
+- Supabase sync runs through `com.apizzamichigan.supabase-sync` and must keep
+  using the guarded runner.
+- The classifier runs through `com.apizzamichigan.classifier`.
 - Scraper, OSM extraction, menu parse, and QA are not daemonized in this phase.
 - OpenClaw cron jobs must not run APizza watchdog, keepalive, or coordinator processes.
 - Before starting services, queue `processing` must be `0`.
@@ -56,14 +57,21 @@ blindly.
 
 ## Sync Guardrail
 
-Dry-run only unless explicitly approved:
+The recurring sync service must use the guarded wrapper:
+
+```bash
+ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"'
+ssh apizza-imac 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
+```
+
+The direct sync engine should still be dry-run first when invoked manually:
 
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --batch 25 --max-batches 1'
 ```
 
-Write sync must be a separate, explicit operation after reviewing sample local
-rows and protected-field behavior.
+The source policy is documented in `docs/DATA_SOURCES.md`. Google Maps is an
+outbound navigation destination, not an ingestion source.
 
 ## Archived Safeguards
 

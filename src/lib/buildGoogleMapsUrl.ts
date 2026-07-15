@@ -7,6 +7,14 @@ type PlaceLike = {
   state?: string | null
 }
 
+export function isGooglePlaceId(value: string | null | undefined): boolean {
+  if (!value) {
+    return false
+  }
+
+  return !value.startsWith('osm:')
+}
+
 export function buildGoogleMapsUrl(place: PlaceLike | null | undefined): string {
   if (!place) {
     return 'https://www.google.com/maps'
@@ -14,7 +22,7 @@ export function buildGoogleMapsUrl(place: PlaceLike | null | undefined): string 
 
   const { google_place_id, google_maps_url, name, address, city, state } = place
 
-  if (google_place_id) {
+  if (isGooglePlaceId(google_place_id)) {
     return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(google_place_id)}`
   }
 
