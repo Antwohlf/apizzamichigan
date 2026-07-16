@@ -211,6 +211,10 @@ not need a field-level provenance table until we feel real pain from ambiguity.
 7. Add ambiguous and likely-new candidates to `source_review_queue` for durable
    local review.
 8. Promote only clearly useful canonical fields after reviewing source quality.
+   The current automated path is fill-if-null contact data only
+   (`website_url`, `phone`) from eligible `place_sources` evidence with
+   `match_confidence >= 0.9` by default. Identity fields such as `address`,
+   `name`, `lat`, `lng`, and `state` remain manual-review only.
 9. Keep `place_sources` and `source_review_queue` local-only for now. Supabase
    should receive canonical product fields, not raw source evidence, until a
    public/admin provenance feature requires it. `scripts/lib/supabase-sync-policy.mjs`

@@ -196,7 +196,7 @@ When promotion tooling is added later, use these defaults:
 
 | Field Group | Auto-Promote? | Rule |
 | --- | --- | --- |
-| `website_url`, `phone` | Fill-if-null only | Accepted source match, first-party or high-confidence source, no manual value present. |
+| `website_url`, `phone` | Fill-if-null only | Accepted source match, eligible match method, `match_confidence >= 0.9` by default, no manual value present. |
 | `hours`, social links, service flags | Fill-if-null only | Store source evidence first; promote only factual values with clear source ownership. |
 | `name`, `address`, `lat`, `lng`, `state` | No | Identity fields need review because bad merges are expensive. |
 | `style`, `price_range`, `style_confidence` | No from source adapters | These remain classifier/manual/editorial fields. |
@@ -215,7 +215,9 @@ contact data from accepted local source evidence:
 node scripts/ops/promote-source-contact-fields.mjs \
   --entity pizza \
   --sources all_the_places,osm \
-  --fields website_url,phone
+  --fields website_url,phone \
+  --min-confidence 0.9 \
+  --match-methods exact_name_nearby,strong_spatial_name,imported_primary
 ```
 
 Default mode is dry-run. To apply:
@@ -225,6 +227,7 @@ node scripts/ops/promote-source-contact-fields.mjs \
   --entity pizza \
   --sources all_the_places,osm \
   --fields website_url,phone \
+  --min-confidence 0.9 \
   --apply
 ```
 
@@ -232,6 +235,11 @@ The script only fills blank `website_url` and/or `phone` values. It does not
 change identity fields, style, price, rating, notes, status, photos,
 `place_sources`, `source_review_queue`, or Supabase. Normal local-to-Supabase
 sync is responsible for moving canonical field changes after review.
+
+Requests to auto-promote identity fields such as `address`, `name`, `lat`,
+`lng`, or `state` fail fast with a policy error. Those changes must go through
+manual/admin review because a wrong identity merge is much more expensive than a
+missing contact field.
 
 ## Source Notes
 

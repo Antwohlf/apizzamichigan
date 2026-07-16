@@ -30,11 +30,21 @@ const FIELD_CONFIGS = {
   },
 };
 
+const BLOCKED_FIELDS = {
+  address: 'address is an identity field; review source_review_queue candidates before changing it.',
+  name: 'name is an identity field; review source_review_queue candidates before changing it.',
+  lat: 'lat is an identity field; review source_review_queue candidates before changing it.',
+  lng: 'lng is an identity field; review source_review_queue candidates before changing it.',
+  state: 'state is an identity field; review source_review_queue candidates before changing it.',
+};
+
 function parseArgs(argv) {
   const args = {
     entity: 'pizza',
     sources: ['all_the_places', 'osm'],
     fields: ['website_url', 'phone'],
+    matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary'],
+    minConfidence: 0.9,
     limit: 50,
     apply: false,
   };
@@ -44,6 +54,8 @@ function parseArgs(argv) {
     if (arg === '--entity') args.entity = argv[++i];
     else if (arg === '--sources') args.sources = argv[++i].split(',').map(value => value.trim()).filter(Boolean);
     else if (arg === '--fields') args.fields = argv[++i].split(',').map(value => value.trim()).filter(Boolean);
+    else if (arg === '--match-methods') args.matchMethods = argv[++i].split(',').map(value => value.trim()).filter(Boolean);
+    else if (arg === '--min-confidence') args.minConfidence = parseFloat(argv[++i]);
     else if (arg === '--limit') args.limit = parseInt(argv[++i], 10);
     else if (arg === '--apply') args.apply = true;
     else if (arg === '--help') {
@@ -56,8 +68,16 @@ function parseArgs(argv) {
 
   if (!ENTITY_TABLES[args.entity]) throw new Error('Invalid --entity. Use pizza or taco.');
   if (!args.sources.length) throw new Error('At least one --sources value is required.');
+  const blockedField = args.fields.find(field => BLOCKED_FIELDS[field]);
+  if (blockedField) {
+    throw new Error(`Refusing to auto-promote ${blockedField}: ${BLOCKED_FIELDS[blockedField]}`);
+  }
   if (!args.fields.length || args.fields.some(field => !FIELD_CONFIGS[field])) {
     throw new Error(`Invalid --fields. Use any of: ${Object.keys(FIELD_CONFIGS).join(',')}`);
+  }
+  if (!args.matchMethods.length) throw new Error('At least one --match-methods value is required.');
+  if (!Number.isFinite(args.minConfidence) || args.minConfidence < 0 || args.minConfidence > 1) {
+    throw new Error('Invalid --min-confidence. Use a number from 0 to 1.');
   }
   if (!Number.isFinite(args.limit) || args.limit < 0) throw new Error('Invalid --limit');
 
@@ -73,6 +93,10 @@ Options:
                                  (default all_the_places,osm)
   --fields <a,b>                 Fields to promote: website_url,phone
                                  (default website_url,phone)
+  --match-methods <a,b>          Eligible match methods
+                                 (default exact_name_nearby,strong_spatial_name,imported_primary)
+  --min-confidence <n>           Minimum source match confidence, 0-1
+                                 (default 0.9)
   --limit <n>                    Candidate sample size to print (default 50)
   --apply                        Fill empty canonical fields
 
@@ -168,6 +192,11 @@ function sourceValue(data, config) {
   return null;
 }
 
+function eligibleEvidenceRow(row, args) {
+  const confidence = Number(row.match_confidence);
+  return args.matchMethods.includes(row.match_method) && Number.isFinite(confidence) && confidence >= args.minConfidence;
+}
+
 async function ensurePlaceSources(client) {
   const result = await client.query(`
     SELECT EXISTS (
@@ -212,6 +241,8 @@ function promotionCandidates(rows, args) {
   const byFieldPlace = new Map();
 
   for (const row of rows) {
+    if (!eligibleEvidenceRow(row, args)) continue;
+
     for (const field of args.fields) {
       const config = FIELD_CONFIGS[field];
       const currentValue = field === 'website_url' ? row.current_website_url : row.current_phone;
@@ -306,7 +337,10 @@ async function main() {
     console.log(`Entity: ${args.entity}`);
     console.log(`Sources: ${args.sources.join(', ')}`);
     console.log(`Fields: ${args.fields.join(', ')}`);
+    console.log(`Match methods: ${args.matchMethods.join(', ')}`);
+    console.log(`Minimum confidence: ${args.minConfidence}`);
     console.log(`Evidence rows read: ${rows.length}`);
+    console.log(`Eligible evidence rows: ${rows.filter(row => eligibleEvidenceRow(row, args)).length}`);
     console.log(`Promotion candidates: ${candidates.length}`);
     console.log(`Places updated: ${result.placesUpdated}`);
     console.log(`Fields updated: ${result.fieldsUpdated}`);
