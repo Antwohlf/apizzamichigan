@@ -37,7 +37,7 @@ The source-of-record rule is:
 | Source | Canonical Use | Persistence | Current Priority | Implementation Status |
 | --- | --- | --- | --- | --- |
 | OSM / Overpass | Existing broad place backbone and OSM evidence | Durable, with OSM attribution/ODbL obligations | Active | Already imported, enriched locally, and backfilled into `place_sources` for pizza rows |
-| Foursquare OS Places | Second broad open POI backbone | Durable under Apache 2.0 notice/license compliance | High | Next prototype source |
+| Foursquare OS Places | Second broad open POI backbone | Durable under Apache 2.0 notice/license compliance | High | Read-only sample comparison tooling added; no imports yet |
 | All the Places | Chain and official location-finder supplement | Durable according to project output license; retain spider/source URL | High | Prototype after FSQ slice |
 | Overture Places | External IDs, dedupe, confidence/source metadata | Generally durable, but release/theme attribution must be checked | Medium | Evaluate after FSQ/ATP overlap measurement |
 | Wikidata | Chain/notable-place enrichment and external IDs | Durable under CC0 structured data | Medium | Add as enrichment after external IDs table exists |
@@ -51,7 +51,8 @@ The source-of-record rule is:
 1. Keep OSM as the current production backbone.
 2. Add the shared `place_sources` provenance table before importing another broad source.
    The first implementation phase is pizza-only; do not backfill TacoBout yet.
-3. Prototype a Michigan or North America slice of Foursquare OS Places.
+3. Prototype a Michigan or North America slice of Foursquare OS Places with a
+   read-only exported sample.
 4. Measure FSQ overlap and gaps against current OSM-derived `pizza_places`.
 5. Prototype All the Places for pizza/taco chains and regional restaurant groups.
 6. Evaluate Overture only after FSQ and ATP show their incremental coverage.
@@ -110,6 +111,7 @@ Near-term migrations should be additive and should not block the current local
 enrichment and guarded sync pipeline.
 
 The simplified provenance table design lives in `docs/SOURCE_PROVENANCE_SCHEMA.md`.
+The FSQ sample-first workflow lives in `docs/FSQ_OS_PLACES_PROTOTYPE.md`.
 
 ## Primary References
 
