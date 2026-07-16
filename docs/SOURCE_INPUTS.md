@@ -5,14 +5,15 @@ schema or importing unreviewed facts.
 
 The rule is:
 
-> Every new source starts as a read-only sample input.
+> Every new source starts as a dry-run sample input.
 
-No source below should write to `pizza_places`, `place_sources`, or Supabase
-until a sample report shows useful coverage and acceptable ambiguity.
+No source below should write to `pizza_places` or Supabase from the input
+adapter. Accepted matches may be written to `place_sources` only after a dry-run
+shows useful coverage and acceptable ambiguity.
 
 ## Current Input Adapter
 
-Use the generic read-only source report:
+Use the generic source input report:
 
 ```bash
 node scripts/ops/source-input-sample-report.mjs \
@@ -38,9 +39,26 @@ Current adapters:
 - `denue`
 - `official_website`
 
-The report accepts GeoJSON, JSON arrays, JSON objects with `rows` or `places`,
+The adapter accepts GeoJSON, JSON arrays, JSON objects with `rows` or `places`,
 NDJSON / JSONL, and CSV. It compares source records to the local canonical table
-by coordinates and normalized name. It does not write anything.
+by coordinates and normalized name.
+
+Default mode is dry-run. To persist strong matches as source evidence:
+
+```bash
+node scripts/ops/source-input-sample-report.mjs \
+  --source all_the_places \
+  --input data/source-samples/all-the-places-example.geojson \
+  --entity pizza \
+  --apply
+```
+
+The apply path writes only to `place_sources` for matched existing canonical
+rows. It does not write `pizza_places`, `taco_places`, or Supabase.
+
+By default, only `exact_name_nearby` and `strong_spatial_name` matches are
+eligible for persistence. `weak_spatial_name` rows stay review-only unless the
+operator explicitly adds `--include-weak`.
 
 ## Source Input Matrix
 
@@ -56,15 +74,15 @@ by coordinates and normalized name. It does not write anything.
 
 ## Promotion Rules
 
-Read-only sample reports produce three buckets:
+Dry-run sample reports produce three buckets:
 
 | Bucket | Meaning | Next Action |
 | --- | --- | --- |
-| Matched existing places | Source likely describes a row already in `pizza_places`. | Candidate for `place_sources` only. |
+| Matched existing places | Source likely describes a row already in `pizza_places`. | Can be written to `place_sources` with `--apply`. |
 | Ambiguous review candidates | Nearby source record exists but name confidence is weak. | Manual review before source record import. |
 | Likely new/unmatched candidates | No nearby current row inside the configured radius. | Candidate for future import review, not automatic canonical insert. |
 
-When a source graduates from sample report to persistence:
+When a source graduates from dry-run to persistence:
 
 1. Write source evidence to `place_sources`, not directly to `pizza_places`.
 2. Use the stable source key from this document.

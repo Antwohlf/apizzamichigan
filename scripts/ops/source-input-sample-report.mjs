@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Read-only coverage report for approved source input samples.
+ * Coverage report and controlled place_sources importer for approved samples.
  *
  * This is the generic version of the FSQ sample workflow. It normalizes small
  * source exports, filters pizza-ish records, and compares them to the current
- * canonical place table without writing to Postgres or Supabase.
+ * canonical place table. It writes only when --apply is passed, and only to
+ * place_sources for matched existing canonical rows.
  */
 
 import pg from 'pg';
@@ -124,6 +125,8 @@ function parseArgs(argv) {
     limit: 1000,
     sample: 20,
     includeNonPizza: false,
+    includeWeak: false,
+    apply: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -135,6 +138,8 @@ function parseArgs(argv) {
     else if (arg === '--limit') out.limit = parseInt(argv[++i], 10);
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--include-non-pizza') out.includeNonPizza = true;
+    else if (arg === '--include-weak') out.includeWeak = true;
+    else if (arg === '--apply') out.apply = true;
     else if (arg === '--list-sources') {
       for (const [key, config] of Object.entries(SOURCE_CONFIGS)) {
         console.log(`${key}\t${config.label}`);
@@ -168,10 +173,13 @@ Options:
   --limit <n>               Maximum source rows to inspect (default 1000)
   --sample <n>              Detail rows to print per bucket (default 20)
   --include-non-pizza       Compare all active records, not just pizza-ish rows
+  --include-weak            Include weak_spatial_name matches in import set
+  --apply                   Upsert accepted matched records into place_sources
   --list-sources            Print supported source adapters
 
-This report is read-only. It does not import records, write place_sources, or
-sync to Supabase.
+Default mode is dry-run. With --apply, this writes source evidence only to
+place_sources for matched existing rows. It never writes pizza_places or
+Supabase.
 `);
 }
 
@@ -422,6 +430,19 @@ function matchMethod(distanceM, score) {
   return 'no_match';
 }
 
+function matchConfidence(match) {
+  const distanceScore = Math.max(0, 1 - (match.distance_m / 100));
+  const confidence = (match.name_score * 0.75) + (distanceScore * 0.25);
+  return Math.max(0.0001, Math.min(1, confidence));
+}
+
+function acceptedForImport(match, { includeWeak }) {
+  if (!match) return false;
+  if (match.match_method === 'exact_name_nearby') return true;
+  if (match.match_method === 'strong_spatial_name') return true;
+  return includeWeak && match.match_method === 'weak_spatial_name';
+}
+
 async function nearbyPlaces(client, tableName, candidate, maxDistanceM) {
   const latSpan = maxDistanceM / 111320;
   const lngSpan = maxDistanceM / (111320 * Math.max(Math.cos(candidate.lat * Math.PI / 180), 0.01));
@@ -490,6 +511,106 @@ function sourceData(candidate) {
   };
 }
 
+function sourceUrl(candidate) {
+  if (candidate.source_url) return candidate.source_url;
+  if (candidate.website) return candidate.website;
+  if (candidate.source === 'wikidata' && candidate.source_id) {
+    return `https://www.wikidata.org/wiki/${candidate.source_id}`;
+  }
+  return null;
+}
+
+function sourceRecordData(candidate, match) {
+  return {
+    source_label: candidate.source_label,
+    source_id: candidate.source_id,
+    name: candidate.name,
+    lat: candidate.lat,
+    lng: candidate.lng,
+    address: candidate.address,
+    locality: candidate.locality,
+    region: candidate.region,
+    postcode: candidate.postcode,
+    country: candidate.country,
+    website: candidate.website,
+    phone: candidate.phone,
+    categories: candidate.categories,
+    spider: candidate.spider,
+    source_url: sourceUrl(candidate),
+    confidence: Number.isFinite(candidate.confidence) ? candidate.confidence : null,
+    matched_place: {
+      id: match.id,
+      name: match.name,
+      google_place_id: match.google_place_id,
+      distance_m: Number(match.distance_m.toFixed(3)),
+      name_score: Number(match.name_score.toFixed(4)),
+    },
+  };
+}
+
+async function ensurePlaceSourcesTable(client) {
+  const result = await client.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = 'place_sources'
+    ) AS exists
+  `);
+  if (!result.rows[0].exists) {
+    throw new Error('place_sources table does not exist. Run backfill-place-sources.mjs --apply-schema first.');
+  }
+}
+
+async function upsertPlaceSources(client, { args, config, importable }) {
+  if (!importable.length) return 0;
+  await ensurePlaceSourcesTable(client);
+
+  let written = 0;
+  for (const { candidate, match } of importable) {
+    if (!candidate.source_id) continue;
+    const result = await client.query(`
+      INSERT INTO place_sources (
+        entity_type,
+        place_id,
+        source,
+        source_id,
+        source_url,
+        license,
+        attribution,
+        data,
+        match_confidence,
+        match_method,
+        retrieved_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, NOW())
+      ON CONFLICT (entity_type, source, source_id) DO UPDATE SET
+        place_id = EXCLUDED.place_id,
+        source_url = EXCLUDED.source_url,
+        license = EXCLUDED.license,
+        attribution = EXCLUDED.attribution,
+        data = EXCLUDED.data,
+        match_confidence = EXCLUDED.match_confidence,
+        match_method = EXCLUDED.match_method,
+        retrieved_at = EXCLUDED.retrieved_at,
+        updated_at = NOW()
+    `, [
+      args.entity,
+      match.id,
+      args.source,
+      candidate.source_id,
+      sourceUrl(candidate),
+      config.license,
+      config.attribution,
+      JSON.stringify(sourceRecordData(candidate, match)),
+      matchConfidence(match),
+      match.match_method,
+    ]);
+    written += result.rowCount;
+  }
+  return written;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const config = SOURCE_CONFIGS[args.source];
@@ -505,6 +626,8 @@ async function main() {
   const matched = [];
   const ambiguous = [];
   const unmatched = [];
+  let rowsWritten = 0;
+  let importable = [];
 
   try {
     for (const candidate of candidates) {
@@ -517,6 +640,15 @@ async function main() {
       } else {
         matched.push({ candidate, match: best });
       }
+    }
+
+    importable = matched.filter(({ candidate, match }) => (
+      candidate.source_id &&
+      acceptedForImport(match, { includeWeak: args.includeWeak })
+    ));
+
+    if (args.apply) {
+      rowsWritten = await upsertPlaceSources(client, { args, config, importable });
     }
   } finally {
     await client.end();
@@ -555,7 +687,8 @@ async function main() {
   console.log(`Input: ${args.input}`);
   console.log(`License expectation: ${config.license}`);
   console.log(`Attribution expectation: ${config.attribution}`);
-  console.log(`Writes performed: no`);
+  console.log(`Mode: ${args.apply ? 'apply' : 'dry-run'}`);
+  console.log(`Writes performed: ${rowsWritten}`);
   console.log('');
   console.log('## Counts');
   console.log(table(['metric', 'count'], [
@@ -565,6 +698,8 @@ async function main() {
     { metric: 'matched existing places', count: matched.length },
     { metric: 'ambiguous/review candidates', count: ambiguous.length },
     { metric: 'likely new/unmatched candidates', count: unmatched.length },
+    { metric: 'accepted for place_sources import', count: importable.length },
+    { metric: 'place_sources rows written', count: rowsWritten },
   ]));
   console.log('');
   console.log('## Matched Sample');
