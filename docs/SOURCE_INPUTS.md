@@ -215,6 +215,29 @@ Run repeatable ATP spider batches with:
 node scripts/ops/import-atp-spiders.mjs --default-spiders
 ```
 
+Discover current spider names from the latest ATP run before adding new chains:
+
+```bash
+node scripts/ops/discover-atp-spiders.mjs \
+  --terms howie,jet,domino,marco,papa,pizza \
+  --validate-output
+```
+
+The discovery command is read-only. It searches ATP run stats, reports feature
+counts/errors, and can optionally validate that matched GeoJSON URLs exist. If a
+brand is absent from the stats, keep it out of `import-atp-spiders` until a real
+spider appears. As of the July 2026 run, Hungry Howie's has no matching ATP
+spider and `jet` matches fuel/convenience spiders rather than Jet's Pizza.
+
+After reviewing the displayed names, generate an import command for the visible
+zero-error matches with:
+
+```bash
+node scripts/ops/discover-atp-spiders.mjs \
+  --terms domino,marco,papa \
+  --print-import-command
+```
+
 Add `--apply` only after the dry-run summary looks acceptable:
 
 ```bash
