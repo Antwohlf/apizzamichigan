@@ -108,7 +108,9 @@ function processReport() {
     .filter(Boolean)
     .filter(line => !line.startsWith(String(process.pid)))
 
-  const classifier = rows.filter(row => row.includes('llm-classifier.mjs'))
+  const classifier = rows.filter(row =>
+    /^\d+\s+(?:\S*\/)?node\s+scripts\/enrichment\/agents\/llm-classifier\.mjs\b/.test(row)
+  )
   const unexpected = rows.filter(row =>
     row.includes('coordinator.mjs') ||
     row.includes('watchdog.mjs') ||

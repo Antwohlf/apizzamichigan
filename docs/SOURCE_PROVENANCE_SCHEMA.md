@@ -1,221 +1,135 @@
-# Source Provenance Schema Design
+# Source Provenance Contract
 
-This is a design document, not an applied migration. The next ingestion sources
-should not write directly into overloaded columns like `google_place_id`.
+This is the current simple provenance model. It has been applied to the iMac
+local Postgres database for APizzaMichigan pizza rows only. It has not been
+applied to Supabase, and TacoBoutMichigan rows have not been backfilled.
 
-The goal is to let one place carry several source identities and several
-candidate values for the same field while keeping the current production tables
-stable.
+The near-term model is intentionally small:
 
-## Goals
+> One canonical place row, many source records.
 
-- Preserve source-specific external IDs without overloading one column.
-- Track source license, attribution, retrieval time, and retention policy.
-- Store field-level provenance for values like website, phone, hours, style, and
-  coordinates.
-- Keep canonical `pizza_places` and `taco_places` serving production while new
-  source evaluation happens in additive tables.
-- Support future sources such as FSQ OS Places, All the Places, Overture,
-  Wikidata, DENUE, and government datasets.
+The current `pizza_places` and `taco_places` tables continue serving the app.
+New source evidence goes into one shared table: `place_sources`.
+Ambiguous and likely-new source rows go into one local operator table:
+`source_review_queue`.
 
-## Proposed Tables
+## Current Table Count
 
-### `data_sources`
+The near-term model manages two product tables and two provenance/review tables:
 
-Registry of source systems and their reuse policy.
+| Table | Scope | Supabase Sync |
+| --- | --- | --- |
+| `pizza_places` | Canonical APizzaMichigan product rows | Yes, guarded canonical row sync only |
+| `taco_places` | Canonical TacoBoutMichigan product rows | Not active in the current APizza sync |
+| `place_sources` | Shared source evidence for pizza and taco places | No, local-only |
+| `source_review_queue` | Shared ambiguous/likely-new review workflow | No, local-only |
+
+Do not double the provenance tables for TacoBoutMichigan. `place_sources` and
+`source_review_queue` are shared by `entity_type`.
+
+`scripts/lib/supabase-sync-policy.mjs` is the machine-readable source of truth
+for the current Supabase boundary: only `pizza_places` can sync, while
+`place_sources` and `source_review_queue` are local-only.
+
+## Why This Exists
+
+The current `google_place_id` column is overloaded. Many rows contain OSM IDs
+such as `osm:node/12064802655`, while some user-suggestion/admin flows may use
+real Google Place IDs.
+
+Before adding Foursquare OS Places, All the Places, Overture, Wikidata, DENUE,
+or government records, we need somewhere to store each source's view of a place
+without adding columns for every source.
+
+## Current Tables
+
+### `place_sources`
+
+One row per source record attached to an existing pizza or taco place.
 
 ```sql
-CREATE TABLE data_sources (
+CREATE TABLE place_sources (
   id BIGSERIAL PRIMARY KEY,
-  source_system TEXT NOT NULL UNIQUE,
-  display_name TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK (
-    source_type IN (
-      'open_poi',
-      'open_government',
-      'official_website',
-      'manual',
-      'user_suggestion',
-      'ai_inference',
-      'navigation_only',
-      'licensed_api'
-    )
-  ),
-  license_id TEXT,
-  license_url TEXT,
-  attribution_text TEXT,
-  permanent_storage_allowed BOOLEAN NOT NULL DEFAULT false,
-  redistribution_allowed BOOLEAN NOT NULL DEFAULT false,
-  commercial_use_allowed BOOLEAN NOT NULL DEFAULT false,
-  ingestion_allowed BOOLEAN NOT NULL DEFAULT false,
-  notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
 
-Seed examples:
-
-```sql
-INSERT INTO data_sources (
-  source_system,
-  display_name,
-  source_type,
-  license_id,
-  license_url,
-  attribution_text,
-  permanent_storage_allowed,
-  redistribution_allowed,
-  commercial_use_allowed,
-  ingestion_allowed,
-  notes
-) VALUES
-  (
-    'osm',
-    'OpenStreetMap',
-    'open_poi',
-    'ODbL-1.0',
-    'https://www.openstreetmap.org/copyright',
-    'Data copyright OpenStreetMap contributors',
-    true,
-    true,
-    true,
-    true,
-    'Track ODbL attribution/share-alike obligations separately before broad redistribution.'
-  ),
-  (
-    'fsq_os_places',
-    'Foursquare OS Places',
-    'open_poi',
-    'Apache-2.0',
-    'https://opensource.foursquare.com/places-notice-txt/',
-    'Copyright Foursquare Labs, Inc.',
-    true,
-    true,
-    true,
-    true,
-    'Use open dataset releases, not commercial Places API, for canonical ingestion.'
-  ),
-  (
-    'google_maps',
-    'Google Maps',
-    'navigation_only',
-    NULL,
-    'https://cloud.google.com/maps-platform/terms',
-    NULL,
-    false,
-    false,
-    false,
-    false,
-    'Outbound navigation only. Do not ingest as durable source of record.'
-  );
-```
-
-### `place_external_ids`
-
-External identifiers for existing canonical places. This avoids pretending that
-`google_place_id` can represent OSM, FSQ, ATP, Overture, Wikidata, and Google at
-the same time.
-
-```sql
-CREATE TABLE place_external_ids (
-  id BIGSERIAL PRIMARY KEY,
   entity_type TEXT NOT NULL CHECK (entity_type IN ('pizza', 'taco')),
   place_id BIGINT NOT NULL,
-  source_system TEXT NOT NULL REFERENCES data_sources(source_system),
-  external_id TEXT NOT NULL,
+
+  source TEXT NOT NULL,
+  source_id TEXT,
   source_url TEXT,
-  source_record JSONB,
+
+  license TEXT,
+  attribution TEXT,
+
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+
   match_confidence NUMERIC(5, 4),
-  match_method TEXT CHECK (
-    match_method IN (
-      'imported_primary',
-      'exact_external_id',
-      'exact_name_address',
-      'spatial_name',
-      'manual_confirmed',
-      'candidate'
-    )
-  ),
-  verified_at TIMESTAMPTZ,
+  match_method TEXT,
+
   retrieved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (entity_type, source_system, external_id),
-  UNIQUE (entity_type, place_id, source_system, external_id)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (entity_type, source, source_id)
 );
 
-CREATE INDEX idx_place_external_ids_place
-  ON place_external_ids(entity_type, place_id);
+CREATE INDEX idx_place_sources_place
+  ON place_sources(entity_type, place_id);
 
-CREATE INDEX idx_place_external_ids_source
-  ON place_external_ids(source_system, external_id);
+CREATE INDEX idx_place_sources_source
+  ON place_sources(source, source_id);
 ```
 
-### `place_field_sources`
+This table is shared by APizzaMichigan and TacoBoutMichigan. It should not be
+duplicated into pizza-specific and taco-specific versions.
 
-Field-level source evidence. A single canonical field can have multiple source
-values and one chosen normalized value.
+### `source_review_queue`
+
+One row per ambiguous or likely-new source record awaiting an operator decision.
 
 ```sql
-CREATE TABLE place_field_sources (
+CREATE TABLE source_review_queue (
   id BIGSERIAL PRIMARY KEY,
+
   entity_type TEXT NOT NULL CHECK (entity_type IN ('pizza', 'taco')),
-  place_id BIGINT NOT NULL,
-  field_name TEXT NOT NULL,
-  source_system TEXT NOT NULL REFERENCES data_sources(source_system),
-  source_external_id TEXT,
+  review_kind TEXT NOT NULL CHECK (review_kind IN ('ambiguous', 'likely_new')),
+
+  source TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_name TEXT,
   source_url TEXT,
-  source_value JSONB,
-  normalized_value JSONB,
-  evidence_text TEXT,
-  trust_level TEXT NOT NULL CHECK (
-    trust_level IN ('manual', 'official', 'open_data', 'source_derived', 'ai_inferred', 'unreviewed')
-  ),
-  confidence NUMERIC(5, 4),
-  permanent_storage_allowed BOOLEAN NOT NULL DEFAULT false,
-  redistribution_allowed BOOLEAN NOT NULL DEFAULT false,
-  commercial_use_allowed BOOLEAN NOT NULL DEFAULT false,
-  retrieved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+  source_data JSONB NOT NULL DEFAULT '{}'::jsonb,
 
-CREATE INDEX idx_place_field_sources_place
-  ON place_field_sources(entity_type, place_id, field_name);
+  nearest_place_id BIGINT,
+  nearest_google_place_id TEXT,
+  nearest_place_name TEXT,
+  nearest_distance_m NUMERIC(10, 3),
+  nearest_name_score NUMERIC(8, 4),
+  review_reason TEXT,
 
-CREATE INDEX idx_place_field_sources_source
-  ON place_field_sources(source_system, source_external_id);
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'accepted', 'linked', 'rejected', 'ignored')),
+  decision TEXT,
+  canonical_place_id BIGINT,
+  reviewer_notes TEXT,
+  reviewed_at TIMESTAMPTZ,
+  reviewed_by TEXT,
 
-CREATE INDEX idx_place_field_sources_expiry
-  ON place_field_sources(expires_at)
-  WHERE expires_at IS NOT NULL;
-```
+  report_file TEXT,
+  report_generated_at TIMESTAMPTZ,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-### `source_import_runs`
-
-Audit trail for source downloads and import attempts.
-
-```sql
-CREATE TABLE source_import_runs (
-  id BIGSERIAL PRIMARY KEY,
-  source_system TEXT NOT NULL REFERENCES data_sources(source_system),
-  source_dataset_name TEXT,
-  source_dataset_version TEXT,
-  source_url TEXT,
-  license_url TEXT,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_at TIMESTAMPTZ,
-  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
-  records_read INTEGER NOT NULL DEFAULT 0,
-  records_matched INTEGER NOT NULL DEFAULT 0,
-  records_inserted INTEGER NOT NULL DEFAULT 0,
-  records_flagged INTEGER NOT NULL DEFAULT 0,
-  summary JSONB,
-  error_message TEXT
+  UNIQUE (entity_type, source, source_id, review_kind)
 );
 ```
 
-## Initial Source System Names
+This is local workflow state. It should not be synced to Supabase unless an
+admin review product needs it there. It does not imply that a source row should
+be imported into `pizza_places` or linked into `place_sources`; it only records
+that the row needs a decision.
+
+## Stable Source Names
 
 Use stable source keys in code and database records:
 
@@ -234,44 +148,158 @@ Use stable source keys in code and database records:
 | `ai_classifier` | Local LLM-derived classification |
 | `google_maps` | Navigation-only link target |
 
+## Example Rows
+
+OSM source record:
+
+```json
+{
+  "entity_type": "pizza",
+  "place_id": 123,
+  "source": "osm",
+  "source_id": "node/12064802655",
+  "source_url": "https://www.openstreetmap.org/node/12064802655",
+  "license": "ODbL-1.0",
+  "attribution": "Data copyright OpenStreetMap contributors",
+  "data": {
+    "name": "Piperno",
+    "website_url": "https://example.com",
+    "phone": "+1 734 555 1212",
+    "osm_tags": {
+      "amenity": "restaurant",
+      "cuisine": "pizza"
+    }
+  },
+  "match_confidence": 1.0,
+  "match_method": "imported_primary"
+}
+```
+
+Foursquare OS Places candidate:
+
+```json
+{
+  "entity_type": "pizza",
+  "place_id": 123,
+  "source": "fsq_os_places",
+  "source_id": "fsq_abc123",
+  "license": "Apache-2.0",
+  "attribution": "Copyright Foursquare Labs, Inc.",
+  "data": {
+    "name": "Piperno",
+    "address": "Example Street",
+    "categories": ["Pizzeria"]
+  },
+  "match_confidence": 0.93,
+  "match_method": "spatial_name"
+}
+```
+
+## Relationship To Canonical Tables
+
+`pizza_places` and `taco_places` hold the current best product values:
+
+- `name`
+- `lat`
+- `lng`
+- `address`
+- `website_url`
+- `phone`
+- `style`
+- `price_range`
+
+`place_sources` holds supporting evidence and external identities.
+
+For now, canonical field promotion happens through explicit policy code or
+manual review. We do not need a field-level provenance table until real
+ambiguity in production makes it worth the added complexity.
+
+`scripts/lib/source-promotion-policy.mjs` is the machine-readable source of
+truth for source-to-canonical promotion. Current policy:
+
+- `website_url` and `phone` may be auto-promoted only as fill-if-blank contact
+  fields from eligible high-confidence source evidence. Apply mode is bounded
+  by `--max-updates` so contact promotion runs as inspected batches, not broad
+  table sweeps.
+- `menu_url`, social/contact extras, hours, service flags, and accessibility
+  flags remain evidence-only.
+- `name`, `address`, `lat`, `lng`, `state`, `google_place_id`, brand/operator
+  fields, classifier fields, ratings, notes, status, and photos are not
+  auto-promoted from source adapters.
+
 ## Migration Strategy
 
-1. Create these tables in local Postgres first.
-2. Backfill `place_external_ids` from current `google_place_id`:
-   - `osm:%` values become `source_system='osm'`.
-   - non-OSM values become candidates for `source_system='google_maps'` only if
-     manually verified as real Google Place IDs.
-3. Do not remove or rename `google_place_id` until app and sync code no longer
-   depend on it.
-4. Prototype FSQ OS Places into staging tables, then write matched IDs into
-   `place_external_ids`.
-5. Only promote new canonical facts into `pizza_places`/`taco_places` after the
-   field source row exists.
+1. Create `place_sources` in local Postgres first. Completed on the iMac on
+   2026-07-16.
+2. Backfill OSM rows from current `pizza_places.google_place_id` values.
+   Completed on the iMac on 2026-07-16:
+   - `google_place_id='osm:node/123'` becomes:
+     - `source='osm'`
+     - `source_id='node/123'`
+3. Do not backfill `taco_places` in the first phase. Current status: not done.
+4. Keep `google_place_id` in place until app and sync code no longer depend on it.
+5. Prototype new source families with read-only sample reports first.
+6. Add accepted matches to `place_sources`, not directly to `pizza_places`.
+7. Add ambiguous and likely-new candidates to `source_review_queue` for durable
+   local review.
+8. Promote only clearly useful canonical fields after reviewing source quality.
+   The current automated path is fill-if-null contact data only
+   (`website_url`, `phone`) from eligible `place_sources` evidence with
+   `match_confidence >= 0.9` by default. `--limit` controls dry-run sample
+   display; `--max-updates` controls the apply batch size. Future factual fields
+   such as `menu_url`, social links, hours, and service flags remain evidence-only
+   until source-specific rules exist. Identity fields such as `address`,
+   `name`, `lat`, `lng`, `state`, and `google_place_id` remain manual-review
+   only.
+9. Keep `place_sources` and `source_review_queue` local-only for now. Supabase
+   should receive canonical product fields, not raw source evidence, until a
+   public/admin provenance feature requires it. `scripts/lib/supabase-sync-policy.mjs`
+   enforces the current sync target as `pizza_places` and names those two tables
+   as local-only.
 
-## Field Promotion Rules
+The first-phase tooling is:
 
-Canonical fields should be promoted from source evidence with explicit rules:
+```bash
+node scripts/ops/backfill-place-sources.mjs
+node scripts/ops/backfill-place-sources.mjs --apply-schema
+node scripts/ops/backfill-place-sources.mjs --apply-backfill
+```
 
-| Field | Preferred Source Order |
-| --- | --- |
-| `name` | manual/admin, official website, government/open data, OSM, FSQ/ATP |
-| `lat`/`lng` | manual/admin, government/open data, OSM, FSQ/Overture |
-| `address` | manual/admin, government/open data, official website, OSM, FSQ/ATP |
-| `website_url` | manual/admin, official website, OSM, FSQ/ATP, Wikidata |
-| `phone` | manual/admin, official website, government/open data, OSM, FSQ/ATP |
-| `hours` | manual/admin, official website, OSM, FSQ/ATP |
-| `style` | manual/admin, official website/menu evidence, AI classifier |
-| `price_range` | manual/admin, menu/website evidence, AI classifier |
+The source input adapter is:
 
-Fields from Google Maps should not be promoted into canonical storage under the
-current source policy.
+```bash
+node scripts/ops/source-input-sample-report.mjs --list-sources
+node scripts/ops/source-input-sample-report.mjs --source all_the_places --input data/source-samples/example.geojson
+node scripts/ops/import-source-review-queue.mjs --input-dir reports/source-review
+node scripts/ops/import-source-review-queue.mjs --apply-schema --apply
+```
 
-## Open Questions
+## What We Are Not Adding Yet
 
-- Whether provenance tables should live in Supabase as well as local Postgres.
-- Whether public UI needs to expose source attribution per field or only at a
-  dataset level.
-- Whether ODbL-derived rows require a separate public attribution surface before
-  non-OSM datasets are merged.
-- Whether `place_id` should eventually point to a new shared `places` table
-  instead of separate `pizza_places` and `taco_places` tables.
+Do not add these tables now:
+
+- `data_sources`
+- `place_external_ids`
+- `place_field_sources`
+- `source_import_runs`
+
+Those may become useful later, but they are overkill for the current stage.
+
+## Explicit Non-Goals
+
+- Do not mirror `place_sources` or `source_review_queue` to Supabase until a
+  concrete public/admin feature needs them.
+- Do not add `data_sources`, `place_external_ids`, `place_field_sources`, or
+  `source_import_runs` during this phase.
+- Do not auto-promote identity, editorial, classifier, rating, status, or photo
+  fields from source adapters.
+- Do not create separate pizza/taco copies of the provenance tables.
+- Do not move to a shared `places` table until APizzaMichigan's source/review
+  workflow has proven the simpler model insufficient.
+
+## Still To Decide Later
+
+- Which provenance summaries should be exposed in admin UI.
+- Whether public attribution should be dataset-level, row-level, or both.
+- Whether ODbL-derived source records need special separation before FSQ/ATP are
+  merged into broader production outputs.

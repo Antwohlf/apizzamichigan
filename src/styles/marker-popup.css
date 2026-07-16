@@ -23,11 +23,16 @@
 }
 
 .marker-popup [data-mode='expanded'] {
-  width: 320px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 96px));
   min-height: 150px;
   transform: translateY(-8px) scale(1);
   opacity: 1;
   pointer-events: auto;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  overflow: hidden;
 }
 
 .marker-popup .close {
@@ -44,6 +49,14 @@
 .marker-popup .title {
   font-weight: 700;
   margin-right: 24px;
+  overflow-wrap: anywhere;
+}
+
+.marker-popup .popup-card__body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
 }
 
 .marker-popup .meta,
@@ -89,16 +102,36 @@
   margin-top: 4px;
   font-size: 0.85rem;
   opacity: 0.75;
+  overflow-wrap: anywhere;
 }
 
 .marker-popup .review-gallery-wrap {
   margin-top: 8px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .marker-popup .review-gallery-wrap > div {
-  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)) !important;
+  display: grid !important;
+  grid-auto-flow: column;
+  grid-auto-columns: 72px;
+  grid-template-columns: none !important;
   gap: 6px !important;
   margin-top: 0 !important;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding: 2px 2px 6px;
+  scroll-snap-type: x proximity;
+}
+
+.marker-popup .review-gallery__thumb {
+  width: 72px;
+  min-height: 72px;
+  scroll-snap-align: start;
+}
+
+.marker-popup .review-gallery__thumb-image {
+  aspect-ratio: 1 / 1;
 }
 
 .marker-popup .actions a {
@@ -128,4 +161,11 @@
 
 .marker-popup-shell .leaflet-popup-content {
   margin: 0;
+}
+
+@media (max-width: 480px) {
+  .marker-popup [data-mode='expanded'] {
+    width: min(320px, calc(100vw - 20px));
+    max-height: min(460px, calc(100vh - 80px));
+  }
 }

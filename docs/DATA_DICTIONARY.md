@@ -120,6 +120,9 @@ Plus: DC (District of Columbia), PR (Puerto Rico)
 | Pizza Hut | Traditional | $ |
 | Little Caesars | Traditional | $ |
 | Papa John's | Traditional | $ |
+| B.C. Pizza | Traditional | $$ |
+| Fox's Pizza | Traditional | $$ |
+| Pizza Ranch | Traditional | $$ |
 | Jet's Pizza | Detroit | $$ |
 | Buddy's Pizza | Detroit | $$ |
 | Lou Malnati's | Chicago | $$ |

@@ -1,0 +1,206 @@
+.review-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+  margin-top: 0.75rem;
+}
+
+.review-gallery__thumb {
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-card);
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+}
+
+.review-gallery__thumb:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.review-gallery__thumb-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.review-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  padding: clamp(8px, 1.6vw, 18px);
+  background: rgba(2, 6, 23, 0.94);
+  backdrop-filter: blur(6px);
+}
+
+.review-lightbox__dialog {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  width: min(1280px, calc(100vw - 16px));
+  max-height: min(900px, calc(100vh - 16px));
+  padding: 0;
+  box-sizing: border-box;
+  background: rgba(2, 6, 23, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  box-shadow: 0 32px 120px rgba(0, 0, 0, 0.56);
+  overflow: hidden;
+}
+
+.review-lightbox__header,
+.review-lightbox__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-lightbox__header {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 10px;
+  z-index: 2;
+  min-height: 34px;
+  justify-content: space-between;
+  padding-left: 0;
+  pointer-events: none;
+}
+
+.review-lightbox__caption {
+  min-width: 0;
+  overflow: hidden;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(70vw, 720px);
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.7);
+  pointer-events: auto;
+}
+
+.review-lightbox__image-frame {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #020617;
+  border-radius: 0;
+  border: 0;
+}
+
+.review-lightbox__image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(860px, calc(100vh - 64px));
+  object-fit: contain;
+}
+
+.review-lightbox__image--with-controls {
+  max-height: min(820px, calc(100vh - 92px));
+}
+
+.review-lightbox__controls {
+  min-height: 34px;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.review-lightbox__arrow,
+.review-lightbox__icon-button {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.94);
+  color: #e2e8f0;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.review-lightbox__arrow {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 54px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 42px;
+  line-height: 1;
+  transform: translateY(-50%);
+  opacity: 0.9;
+}
+
+.review-lightbox__arrow--prev {
+  left: 12px;
+}
+
+.review-lightbox__arrow--next {
+  right: 12px;
+}
+
+.review-lightbox__arrow:hover,
+.review-lightbox__icon-button:hover {
+  border-color: rgba(226, 232, 240, 0.55);
+  background: rgba(30, 41, 59, 0.96);
+}
+
+.review-lightbox__icon-button {
+  pointer-events: auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 24px;
+  line-height: 26px;
+}
+
+.review-lightbox__arrow:focus-visible,
+.review-lightbox__icon-button:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .review-lightbox {
+    padding: 8px;
+  }
+
+  .review-lightbox__dialog {
+    width: 100%;
+    max-height: calc(100vh - 16px);
+  }
+
+  .review-lightbox__caption {
+    max-width: calc(100vw - 72px);
+  }
+
+  .review-lightbox__arrow {
+    width: 38px;
+    height: 48px;
+    font-size: 36px;
+  }
+
+  .review-lightbox__arrow--prev {
+    left: 8px;
+  }
+
+  .review-lightbox__arrow--next {
+    right: 8px;
+  }
+}

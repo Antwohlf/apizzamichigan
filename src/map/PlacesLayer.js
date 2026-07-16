@@ -15,14 +15,20 @@ import pizzaIconGold from '../icons/pizza/marker-pizza-gold.svg'
 import tacoIconColored from '../icons/taco/marker-taco-colored.svg'
 import tacoIconGrey from '../icons/taco/marker-taco-grey.svg'
 import tacoIconGold from '../icons/taco/marker-taco-gold.svg'
+import {
+  DEFAULT_MAP_ZOOM,
+  FOCUSED_PLACE_ZOOM,
+  MIN_INDIVIDUAL_MARKERS_ZOOM,
+  focusedPlaceZoom,
+} from './viewport'
 
 const CLUSTER_ICONS = {
   pizza: { visited: pizzaIconColored, unvisited: pizzaIconGrey, golden: pizzaIconGold },
   taco: { visited: tacoIconColored, unvisited: tacoIconGrey, golden: tacoIconGold },
 }
 
-const DEFAULT_ZOOM = 6
-const MIN_MARKERS_ZOOM = 7 // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
+const DEFAULT_ZOOM = DEFAULT_MAP_ZOOM
+const MIN_MARKERS_ZOOM = MIN_INDIVIDUAL_MARKERS_ZOOM // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
 
 const createClusterIcon = (site, showCounts) => (cluster) => {
   const count = cluster.getChildCount()
@@ -81,6 +87,8 @@ function MapClickCloser({ close }) {
     const handler = event => {
       const target = event?.originalEvent?.target
       if (target && typeof target.closest === 'function') {
+        const lightbox = target.closest('.review-lightbox')
+        if (lightbox) return
         const shell = target.closest('.marker-popup')
         if (shell) return
         const marker = target.closest('.leaflet-marker-icon')
@@ -100,11 +108,20 @@ function MapClickCloser({ close }) {
   return null
 }
 
-const FOCUSED_ZOOM = 15
+const FOCUSED_ZOOM = FOCUSED_PLACE_ZOOM
 
 const NEAR_ME_ZOOM = 10 // City-level view for Near Me
 
-export function PlacesLayer({ site, places, showClusterCounts = true, stateAggregates = [], onStateClick, flyToLocation, resetKey }) {
+export function PlacesLayer({
+  site,
+  places,
+  showClusterCounts = true,
+  stateAggregates = [],
+  onStateClick,
+  flyToLocation,
+  resetKey,
+  forceIndividualMarkers = false,
+}) {
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
   const lastFocusedPlaceRef = useRef(null)
@@ -253,12 +270,17 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
 
       try {
         const maxZoom = map.getMaxZoom() ?? FOCUSED_ZOOM
-        const targetZoom = Math.min(FOCUSED_ZOOM, maxZoom || FOCUSED_ZOOM)
         const currentZoom = typeof map.getZoom === 'function' ? map.getZoom() : DEFAULT_ZOOM
-        const zoomDelta = Math.abs((currentZoom ?? DEFAULT_ZOOM) - targetZoom)
         const mapBounds = typeof map.getBounds === 'function' ? map.getBounds() : null
         const latLng = [lat, lng]
         const isOutsideView = mapBounds ? !mapBounds.contains(latLng) : false
+        const targetZoom = focusedPlaceZoom({
+          currentZoom,
+          maxZoom,
+          isOutsideView,
+          preserveZoomIfVisible: Boolean(options.preserveZoomIfVisible),
+        })
+        const zoomDelta = Math.abs((currentZoom ?? DEFAULT_ZOOM) - targetZoom)
 
         const snapFirst = options.snapFirst ?? (zoomDelta > 3 || isOutsideView)
         if (snapFirst) {
@@ -332,7 +354,7 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
           lastFocusedPlaceRef.current.lng === targetPlace.lng
 
         if (!alreadyFocused) {
-          flyToPlace(coords[0], coords[1], { duration: 0.85 })
+          flyToPlace(coords[0], coords[1], { duration: 0.85, preserveZoomIfVisible: true })
           lastFocusedPlaceRef.current = { id: targetPlace.id, lat: targetPlace.lat, lng: targetPlace.lng }
         }
         return
@@ -425,14 +447,12 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
             eventHandlers={{
               click: event => {
                 if (!placeId) return
-                if (lat !== null && lng !== null) {
-                  flyToPlace(lat, lng, { duration: 0.85 })
-                }
                 const markerInstance = markerRefs.current.get(markerKey)
                 const node = markerInstance?.getElement?.() || event?.target?.getElement?.()
                 if (node) {
                   node.focus?.()
                 }
+                lastFocusedPlaceRef.current = { id: place.id, lat, lng }
                 open(site, placeId, node)
               },
               mouseover: event => {
@@ -492,7 +512,7 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
           />
         )
       }),
-    [places, site, popup, open, buildHref, getMarkerKey, flyToPlace]
+    [places, site, popup, open, buildHref, getMarkerKey]
   )
 
   useEffect(() => {
@@ -509,8 +529,8 @@ export function PlacesLayer({ site, places, showClusterCounts = true, stateAggre
   }
 
   // Only render individual markers when zoomed in enough AND there are places to show
-  const showIndividualMarkers = currentZoom >= MIN_MARKERS_ZOOM && places.length > 0
-  const showStateAggregates = currentZoom < MIN_MARKERS_ZOOM
+  const showIndividualMarkers = (forceIndividualMarkers || currentZoom >= MIN_MARKERS_ZOOM) && places.length > 0
+  const showStateAggregates = !forceIndividualMarkers && currentZoom < MIN_MARKERS_ZOOM
 
   return (
     <>

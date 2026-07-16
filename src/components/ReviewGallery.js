@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import './ReviewGallery.css'
 
 const SMALL_TRANSFORM = 'width=480&quality=70&format=webp'
 const LARGE_TRANSFORM = 'width=1600&quality=75&format=webp'
@@ -35,10 +36,13 @@ const normalizePhoto = (photo, index) => {
 }
 
 const stopMapEvent = event => {
+  event.preventDefault?.()
   event.stopPropagation()
+  event.nativeEvent?.stopImmediatePropagation?.()
 }
 
 export default function ReviewGallery({ photos = [], placeName }) {
+  const eventShieldRef = useRef(null)
   const normalizedPhotos = useMemo(() => {
     const entries = Array.isArray(photos) ? photos : []
     return entries
@@ -56,11 +60,39 @@ export default function ReviewGallery({ photos = [], placeName }) {
   const [isOpen, setIsOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
 
+  const clearEventShield = useCallback(() => {
+    const shield = eventShieldRef.current
+    if (!shield) return
+    shield.events.forEach(eventName => {
+      document.removeEventListener(eventName, shield.handler, true)
+    })
+    clearTimeout(shield.timeoutId)
+    eventShieldRef.current = null
+  }, [])
+
+  const blockUnderlyingMapEvents = useCallback(() => {
+    if (process.env.NODE_ENV === 'test') return
+    if (typeof document === 'undefined') return
+    clearEventShield()
+    const events = ['click', 'dblclick', 'pointerup', 'mouseup', 'touchend', 'wheel']
+    const handler = event => {
+      event.preventDefault?.()
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
+    }
+    events.forEach(eventName => {
+      document.addEventListener(eventName, handler, true)
+    })
+    const timeoutId = setTimeout(clearEventShield, 350)
+    eventShieldRef.current = { events, handler, timeoutId }
+  }, [clearEventShield])
+
   useEffect(() => {
     if (!isOpen) return undefined
     const handleKey = event => {
       if (event.key === 'Escape') {
         event.preventDefault()
+        blockUnderlyingMapEvents()
         setIsOpen(false)
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()
@@ -72,7 +104,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [isOpen, normalizedPhotos.length])
+  }, [blockUnderlyingMapEvents, isOpen, normalizedPhotos.length])
 
   useEffect(() => {
     if (!isOpen || typeof document === 'undefined') return undefined
@@ -94,7 +126,12 @@ export default function ReviewGallery({ photos = [], placeName }) {
     [normalizedPhotos.length]
   )
 
-  const close = useCallback(() => setIsOpen(false), [])
+  const close = useCallback(() => {
+    blockUnderlyingMapEvents()
+    setIsOpen(false)
+  }, [blockUnderlyingMapEvents])
+
+  useEffect(() => clearEventShield, [clearEventShield])
 
   const showPrev = useCallback(() => {
     setActiveIndex(prev => (prev - 1 + normalizedPhotos.length) % normalizedPhotos.length)
@@ -111,135 +148,109 @@ export default function ReviewGallery({ photos = [], placeName }) {
   const activePhoto = normalizedPhotos[activeIndex]
   const hasMultiplePhotos = normalizedPhotos.length > 1
 
-  const gridStyle = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
-    gap: '8px',
-    marginTop: '0.75rem',
-  }
-
-  const thumbStyle = {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    borderRadius: '6px',
-  }
-
-  const overlayStyle = {
-    position: 'fixed',
-    inset: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.78)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 'clamp(12px, 3vw, 32px)',
-    zIndex: 10000,
-  }
-
-  const dialogStyle = {
-    position: 'relative',
-    width: 'min(1040px, calc(100vw - 32px))',
-    maxHeight: 'calc(100vh - 32px)',
-    background: '#0b1220',
-    border: '1px solid rgba(148, 163, 184, 0.28)',
-    borderRadius: '10px',
-    padding: '12px',
-    boxSizing: 'border-box',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    boxShadow: '0 32px 120px rgba(15, 23, 42, 0.55)',
-  }
-
-  const headerStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '12px',
-    minHeight: '36px',
-  }
-
-  const captionStyle = {
-    color: '#dbeafe',
-    fontSize: '0.9rem',
-    fontWeight: 650,
-    minWidth: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  }
-
-  const imageFrameStyle = {
-    minHeight: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#020617',
-    borderRadius: '8px',
-    overflow: 'hidden',
-  }
-
-  const fullImageStyle = {
-    display: 'block',
-    width: '100%',
-    height: 'auto',
-    maxHeight: hasMultiplePhotos ? 'calc(100vh - 160px)' : 'calc(100vh - 108px)',
-    objectFit: 'contain',
-    background: '#0b1220',
-  }
-
-  const controlsStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '0.75rem',
-  }
-
-  const controlButtonStyle = {
-    padding: '0.5rem 0.9rem',
-    borderRadius: '6px',
-    border: '1px solid rgba(148, 163, 184, 0.4)',
-    background: 'rgba(15, 23, 42, 0.94)',
-    color: '#e2e8f0',
-    cursor: 'pointer',
-    fontWeight: 600,
-  }
-
   const captionText = placeName
     ? `${placeName} detail ${activeIndex + 1} of ${normalizedPhotos.length}`
     : `Review detail ${activeIndex + 1} of ${normalizedPhotos.length}`
 
   const lightbox = isOpen && activePhoto && (
     <div
-      style={overlayStyle}
+      className="review-lightbox"
       role="dialog"
       aria-modal="true"
       aria-label={captionText}
+      onClickCapture={event => {
+        if (event.target === event.currentTarget) {
+          stopMapEvent(event)
+          close()
+        }
+      }}
       onClick={event => {
-        event.stopPropagation()
+        stopMapEvent(event)
         close()
       }}
+      onContextMenu={stopMapEvent}
+      onDoubleClick={stopMapEvent}
       onMouseDown={stopMapEvent}
+      onMouseUp={stopMapEvent}
       onPointerDown={stopMapEvent}
+      onPointerUp={stopMapEvent}
+      onTouchStart={stopMapEvent}
+      onTouchEnd={stopMapEvent}
+      onWheel={stopMapEvent}
     >
-      <div style={dialogStyle} onClick={event => event.stopPropagation()}>
-        <div style={headerStyle}>
-          <div style={captionStyle}>{captionText}</div>
-          <button type="button" onClick={close} style={controlButtonStyle} aria-label="Close photo viewer">
-            Close
+      <div
+        className="review-lightbox__dialog"
+        onClick={stopMapEvent}
+        onContextMenu={stopMapEvent}
+        onDoubleClick={stopMapEvent}
+        onMouseDown={stopMapEvent}
+        onMouseUp={stopMapEvent}
+        onPointerDown={stopMapEvent}
+        onPointerUp={stopMapEvent}
+        onTouchStart={stopMapEvent}
+        onTouchEnd={stopMapEvent}
+        onWheel={stopMapEvent}
+      >
+        <div className="review-lightbox__header">
+          <div className="review-lightbox__caption">{captionText}</div>
+          <button
+            type="button"
+            className="review-lightbox__icon-button"
+            onClick={event => {
+              stopMapEvent(event)
+              close()
+            }}
+            onMouseDown={stopMapEvent}
+            onPointerDown={stopMapEvent}
+            onTouchStart={stopMapEvent}
+            aria-label="Close photo viewer"
+          >
+            ×
           </button>
         </div>
-        <div style={imageFrameStyle}>
-          <img src={activePhoto.largeSrc} alt={captionText} loading="eager" style={fullImageStyle} />
+        <div className="review-lightbox__image-frame">
+          <img
+            className={`review-lightbox__image${hasMultiplePhotos ? ' review-lightbox__image--with-controls' : ''}`}
+            src={activePhoto.largeSrc}
+            alt={captionText}
+            loading="eager"
+          />
+          {hasMultiplePhotos && (
+            <>
+              <button
+                type="button"
+                className="review-lightbox__arrow review-lightbox__arrow--prev"
+                onClick={event => {
+                  stopMapEvent(event)
+                  showPrev()
+                }}
+                onMouseDown={stopMapEvent}
+                onPointerDown={stopMapEvent}
+                onTouchStart={stopMapEvent}
+                aria-label="Previous photo"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="review-lightbox__arrow review-lightbox__arrow--next"
+                onClick={event => {
+                  stopMapEvent(event)
+                  showNext()
+                }}
+                onMouseDown={stopMapEvent}
+                onPointerDown={stopMapEvent}
+                onTouchStart={stopMapEvent}
+                aria-label="Next photo"
+              >
+                ›
+              </button>
+            </>
+          )}
         </div>
         {hasMultiplePhotos && (
-          <div style={controlsStyle}>
-            <button type="button" onClick={showPrev} style={controlButtonStyle}>
-              Prev
-            </button>
-            <button type="button" onClick={showNext} style={controlButtonStyle}>
-              Next
-            </button>
+          <div className="review-lightbox__controls">
+            <span>{activeIndex + 1} / {normalizedPhotos.length}</span>
           </div>
         )}
       </div>
@@ -248,29 +259,32 @@ export default function ReviewGallery({ photos = [], placeName }) {
 
   return (
     <>
-      <div style={gridStyle}>
+      <div className="review-gallery">
         {normalizedPhotos.map((photo, index) => (
           <button
             key={photo.id}
             type="button"
+            className="review-gallery__thumb"
             onClick={event => {
-              event.stopPropagation()
+              stopMapEvent(event)
               openAt(index)
             }}
+            onDoubleClick={stopMapEvent}
             onMouseDown={stopMapEvent}
+            onMouseUp={stopMapEvent}
             onPointerDown={stopMapEvent}
-            style={{
-              padding: 0,
-              border: '1px solid var(--app-border)',
-              borderRadius: '6px',
-              background: 'var(--app-card)',
-              cursor: 'pointer',
-              overflow: 'hidden',
-              aspectRatio: '1 / 1',
-            }}
+            onPointerUp={stopMapEvent}
+            onTouchStart={stopMapEvent}
+            onTouchEnd={stopMapEvent}
             aria-label={`Open photo ${index + 1}${placeName ? ` for ${placeName}` : ''}`}
           >
-            <img data-testid="review-gallery-thumbnail" src={photo.smallSrc} alt="" loading="lazy" style={thumbStyle} />
+            <img
+              data-testid="review-gallery-thumbnail"
+              className="review-gallery__thumb-image"
+              src={photo.smallSrc}
+              alt=""
+              loading="lazy"
+            />
           </button>
         ))}
       </div>

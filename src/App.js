@@ -49,6 +49,143 @@ async function fetchPlacesForState(table, stateCode) {
   return allData
 }
 
+const GENERIC_SEARCH_TERMS = new Set([
+  'pizza',
+  'pizzeria',
+  'slice',
+  'slices',
+  'taco',
+  'tacos',
+  'taqueria',
+  'restaurant',
+  'restaurants',
+])
+const SEARCH_TERM_ALIASES = {
+  aa: ['ann arbor'],
+  annarbor: ['ann arbor'],
+  nyc: ['new york'],
+  philly: ['philadelphia'],
+}
+const STATE_SEARCH_ALIASES = {
+  alabama: 'AL',
+  alaska: 'AK',
+  arizona: 'AZ',
+  arkansas: 'AR',
+  california: 'CA',
+  colorado: 'CO',
+  connecticut: 'CT',
+  delaware: 'DE',
+  florida: 'FL',
+  georgia: 'GA',
+  hawaii: 'HI',
+  idaho: 'ID',
+  illinois: 'IL',
+  indiana: 'IN',
+  iowa: 'IA',
+  kansas: 'KS',
+  kentucky: 'KY',
+  louisiana: 'LA',
+  maine: 'ME',
+  maryland: 'MD',
+  massachusetts: 'MA',
+  michigan: 'MI',
+  minnesota: 'MN',
+  mississippi: 'MS',
+  missouri: 'MO',
+  montana: 'MT',
+  nebraska: 'NE',
+  nevada: 'NV',
+  'new hampshire': 'NH',
+  'new jersey': 'NJ',
+  'new mexico': 'NM',
+  'new york': 'NY',
+  'north carolina': 'NC',
+  'north dakota': 'ND',
+  ohio: 'OH',
+  oklahoma: 'OK',
+  oregon: 'OR',
+  pennsylvania: 'PA',
+  rhodeisland: 'RI',
+  'rhode island': 'RI',
+  'south carolina': 'SC',
+  'south dakota': 'SD',
+  tennessee: 'TN',
+  texas: 'TX',
+  utah: 'UT',
+  vermont: 'VT',
+  virginia: 'VA',
+  washington: 'WA',
+  'west virginia': 'WV',
+  wisconsin: 'WI',
+  wyoming: 'WY',
+  dc: 'DC',
+  'washington dc': 'DC',
+}
+const US_STATE_CODES = new Set(Object.values(STATE_SEARCH_ALIASES))
+
+const supabaseIlikePattern = term => `%${String(term || '').trim().replace(/[%_]/g, value => `\\${value}`)}%`
+const SEARCH_LOOKUP_LIMIT = 250
+
+async function fetchPlacesForSearch(table, searchTerms, originalQuery = '') {
+  const terms = [...new Set((Array.isArray(searchTerms) ? searchTerms : [searchTerms])
+    .map(term => String(term || '').trim())
+    .filter(term => term.length >= 2))]
+  if (!terms.length) return []
+
+  const responses = await Promise.all(terms.map(async term => {
+    const pattern = supabaseIlikePattern(term)
+    const searchableColumns = [
+      'name',
+      'address',
+      'city',
+      'state',
+      'style',
+      ...(table === 'pizza_places' ? ['brand', 'operator'] : []),
+    ]
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .or(searchableColumns.map(column => `${column}.ilike.${pattern}`).join(','))
+      .limit(SEARCH_LOOKUP_LIMIT)
+
+    if (error) throw error
+    return data || []
+  }))
+
+  const stateCodes = stateCodesForSearch(originalQuery)
+  if (stateCodes.length) {
+    const stateScopedTerms = stateScopedNameTerms(originalQuery)
+    const stateSearchColumns = [
+      'name',
+      'address',
+      'city',
+      'style',
+      ...(table === 'pizza_places' ? ['brand', 'operator'] : []),
+    ]
+    const stateResponses = await Promise.all(stateCodes.flatMap(stateCode =>
+      stateScopedTerms.map(async term => {
+        const pattern = supabaseIlikePattern(term)
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .eq('state', stateCode)
+          .or(stateSearchColumns.map(column => `${column}.ilike.${pattern}`).join(','))
+          .limit(SEARCH_LOOKUP_LIMIT)
+
+        if (error) throw error
+        return data || []
+      })
+    ))
+    responses.push(...stateResponses)
+  }
+
+  const byId = new Map()
+  for (const row of responses.flat()) {
+    byId.set(row.id ?? `${row.google_place_id || ''}:${row.name || ''}:${row.address || ''}`, row)
+  }
+  return [...byId.values()]
+}
+
 // Helper to fetch state counts for aggregate markers, with optional filtering/progressive updates
 async function fetchStateCounts(table, {
   includeStates,
@@ -114,6 +251,232 @@ async function fetchStateCounts(table, {
 }
 
 const MapView = lazy(() => import('./map'))
+
+const normalizeSearchText = value =>
+  String(value ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+const searchablePlaceText = place => normalizeSearchText([
+  place?.name,
+  place?.address,
+  place?.city,
+  place?.state,
+  place?.style,
+  place?.type,
+  place?.price_range,
+  place?.price,
+  place?.status,
+].filter(Boolean).join(' '))
+
+const searchWords = value => normalizeSearchText(value).split(/\s+/).filter(Boolean)
+
+const compactSearchText = value => normalizeSearchText(value).replace(/\s+/g, '')
+
+export const stateCodesForSearch = value => {
+  const normalized = normalizeSearchText(value)
+  if (!normalized) return []
+  const terms = normalized.split(/\s+/).filter(Boolean)
+  const codes = new Set()
+
+  for (const term of terms) {
+    const upper = term.toUpperCase()
+    if (US_STATE_CODES.has(upper)) codes.add(upper)
+    if (STATE_SEARCH_ALIASES[term]) codes.add(STATE_SEARCH_ALIASES[term])
+  }
+
+  for (const [alias, code] of Object.entries(STATE_SEARCH_ALIASES)) {
+    if (alias.includes(' ') && normalized.includes(alias)) {
+      codes.add(code)
+    }
+  }
+
+  return [...codes]
+}
+
+const stateAliasTermsForSearch = value => {
+  const normalized = normalizeSearchText(value)
+  if (!normalized) return new Set()
+  const aliases = new Set()
+  const inputTerms = new Set(normalized.split(/\s+/).filter(Boolean))
+
+  for (const [alias, code] of Object.entries(STATE_SEARCH_ALIASES)) {
+    const matched = alias.includes(' ')
+      ? normalized.includes(alias)
+      : inputTerms.has(alias)
+    if (matched) {
+      alias.split(/\s+/).forEach(term => aliases.add(term))
+      aliases.add(code.toLowerCase())
+    }
+  }
+
+  for (const term of inputTerms) {
+    if (US_STATE_CODES.has(term.toUpperCase())) aliases.add(term)
+  }
+
+  return aliases
+}
+
+export const stateScopedNameTerms = value => {
+  const stateTerms = stateAliasTermsForSearch(value)
+  const terms = searchWords(value)
+    .filter(term => term.length >= 2)
+    .filter(term => !stateTerms.has(term))
+  const usableTerms = meaningfulSearchTerms(terms)
+    .filter(term => !stateTerms.has(term))
+    .filter(term => !GENERIC_SEARCH_TERMS.has(term))
+
+  return [...new Set(usableTerms.flatMap(searchTermVariants))]
+    .filter(term => term.length >= 2)
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 5)
+}
+
+const searchTermVariants = term => {
+  const variants = [term]
+  if (/^[a-z0-9]{4,}s$/.test(term)) {
+    variants.push(term.slice(0, -1))
+  }
+  if (/^l[a-z0-9]{4,}$/.test(term)) {
+    variants.push(term.slice(1))
+  }
+  if (SEARCH_TERM_ALIASES[term]) {
+    variants.push(...SEARCH_TERM_ALIASES[term])
+  }
+  return variants
+}
+
+const termMatchesText = (text, term) =>
+  searchTermVariants(term).some(variant => text.includes(variant))
+
+const meaningfulSearchTerms = terms => {
+  const specificTerms = terms.filter(term => !GENERIC_SEARCH_TERMS.has(term))
+  return specificTerms.length ? specificTerms : terms
+}
+
+const adjacentSearchPhrases = terms => {
+  const phrases = []
+  for (let index = 0; index < terms.length - 1; index += 1) {
+    const leftVariants = searchTermVariants(terms[index])
+    const rightVariants = searchTermVariants(terms[index + 1])
+    for (const left of leftVariants) {
+      for (const right of rightVariants) {
+        phrases.push(`${left} ${right}`)
+      }
+    }
+  }
+  return phrases
+}
+
+export const remoteSearchTerms = query => {
+  const terms = searchWords(query).filter(term => term.length >= 2)
+  if (!terms.length) return []
+
+  const usableTerms = meaningfulSearchTerms(terms)
+  const adjacentPhrases = [
+    ...adjacentSearchPhrases(terms),
+    ...adjacentSearchPhrases(usableTerms),
+  ]
+  const expandedTerms = usableTerms.flatMap(searchTermVariants)
+  const phrase = normalizeSearchText(query)
+  return [...new Set([
+    phrase.length >= 3 && phrase.includes(' ') ? phrase : '',
+    ...[...new Set(adjacentPhrases)].sort((a, b) => b.length - a.length).slice(0, 4),
+    ...expandedTerms.slice().sort((a, b) => b.length - a.length).slice(0, 5),
+  ].filter(Boolean))]
+}
+
+export const placeSearchRank = (place, query, terms = searchWords(query)) => {
+  if (!query || terms.length === 0) return 0
+  const name = normalizeSearchText(place?.name)
+  const compactName = compactSearchText(place?.name)
+  const compactQuery = compactSearchText(query)
+  const address = normalizeSearchText(place?.address)
+  const cityState = normalizeSearchText([place?.city, place?.state].filter(Boolean).join(' '))
+  const stateCode = normalizeSearchText(place?.state).toUpperCase()
+  const locationText = normalizeSearchText([place?.address, place?.city, place?.state].filter(Boolean).join(' '))
+  const fullText = searchablePlaceText(place)
+  const nameWords = searchWords(place?.name)
+  const meaningfulTerms = meaningfulSearchTerms(terms)
+  const assumedLocationTerm = meaningfulTerms.length >= 2 ? meaningfulTerms[meaningfulTerms.length - 1] : ''
+  const assumedNameTerms = assumedLocationTerm ? meaningfulTerms.slice(0, -1) : []
+
+  if (name === query) return 0
+  if (compactName === compactQuery) return 0.5
+  if (name.startsWith(query)) return 1
+  if (compactName.startsWith(compactQuery)) return 1.5
+  if (name.includes(query)) return 2
+  if (compactQuery.length >= 4 && compactName.includes(compactQuery)) return 2.5
+  if (terms.every(term => nameWords.includes(term))) return 3
+  if (terms.every(term => nameWords.some(word => word.startsWith(term)))) return 4
+  if (
+    assumedNameTerms.length > 0 &&
+    assumedNameTerms.every(term => termMatchesText(name, term)) &&
+    (termMatchesText(cityState, assumedLocationTerm) || stateCodesForSearch(assumedLocationTerm).includes(stateCode))
+  ) return 5
+  if (meaningfulTerms.length >= 3) {
+    for (let splitIndex = 1; splitIndex < meaningfulTerms.length; splitIndex += 1) {
+      const nameTerms = meaningfulTerms.slice(0, splitIndex)
+      const locationTerms = meaningfulTerms.slice(splitIndex)
+      if (
+        nameTerms.every(term => termMatchesText(name, term)) &&
+        locationTerms.every(term => termMatchesText(cityState, term) || stateCodesForSearch(term).includes(stateCode))
+      ) return 5
+    }
+  }
+  if (meaningfulTerms.length >= 2) {
+    const hasNameLocationSplit = meaningfulTerms.some((locationTerm, index) => {
+      if (!termMatchesText(cityState, locationTerm) && !stateCodesForSearch(locationTerm).includes(stateCode)) return false
+      const nameTerms = meaningfulTerms.filter((_, termIndex) => termIndex !== index)
+      return nameTerms.length > 0 && nameTerms.every(term => termMatchesText(name, term))
+    })
+    if (hasNameLocationSplit) return 5
+  }
+  if (
+    meaningfulTerms.some(term => nameWords.includes(term) || termMatchesText(name, term)) &&
+    meaningfulTerms.every(term => termMatchesText(name, term) || termMatchesText(locationText, term))
+  ) return 6
+  if (terms.every(term => name.includes(term))) return 6
+  if (address.includes(query)) return 6
+  if (cityState.includes(query)) return 7
+  if (terms.every(term => termMatchesText(address, term))) return 8
+  if (terms.every(term => termMatchesText(cityState, term))) return 9
+  if (terms.every(term => termMatchesText(fullText, term))) return 10
+  return 99
+}
+
+export const isAnthonyReviewedPlace = place => {
+  const statusRaw = String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
+  return (
+    (statusRaw.startsWith('visited') || statusRaw.startsWith('golden')) &&
+    typeof place?.rating === 'number' &&
+    !Number.isNaN(place.rating)
+  )
+}
+
+export const searchResultPriority = place => {
+  if (isAnthonyReviewedPlace(place)) return 0
+  if (typeof place?.rating === 'number' && !Number.isNaN(place.rating)) return 1
+  if (Array.isArray(place?.photos) && place.photos.length > 0) return 2
+  if (place?.photo) return 2
+  return 3
+}
+
+export const compareSearchResults = (a, b) => {
+  const rankDelta = (a?._searchRank ?? 99) - (b?._searchRank ?? 99)
+  if (rankDelta !== 0) return rankDelta
+
+  const priorityDelta = searchResultPriority(a) - searchResultPriority(b)
+  if (priorityDelta !== 0) return priorityDelta
+
+  const ratingDelta = (Number(b?.rating) || 0) - (Number(a?.rating) || 0)
+  if (ratingDelta !== 0) return ratingDelta
+
+  return String(a?.name || '').localeCompare(String(b?.name || ''))
+}
 
 const PLACE_TABLE_BY_THEME = {
   [ThemeKeys.PIZZA]: 'pizza_places',
@@ -286,6 +649,9 @@ function SiteContainer({ themeKey }) {
 
   // Search and Near Me state
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchPlaces, setSearchPlaces] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState(null)
   const [userLocation, setUserLocation] = useState(null)
   const [nearMeActive, setNearMeActive] = useState(false)
   const [nearMeRadius, setNearMeRadius] = useState(25)
@@ -593,6 +959,57 @@ function SiteContainer({ themeKey }) {
     }
   }, [regionStates, isPizza, themeKey, normalizePlaceData])
 
+  useEffect(() => {
+    let isMounted = true
+    const lookupTerms = remoteSearchTerms(searchQuery)
+
+    if (!lookupTerms.length) {
+      setSearchPlaces([])
+      setSearchError(null)
+      setSearchLoading(false)
+      return () => {
+        isMounted = false
+      }
+    }
+
+    async function loadSearchPlaces() {
+      setSearchLoading(true)
+      setSearchError(null)
+      const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+      const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
+
+      try {
+        const rows = await fetchPlacesForSearch(table, lookupTerms, searchQuery)
+        if (!isMounted) return
+
+        let photoMap = {}
+        const placeIds = rows.map(p => p.id).filter(Boolean)
+        if (placeIds.length) {
+          try {
+            photoMap = await fetchPhotoMap(placeIds)
+          } catch (err) {
+            console.warn('[App] Search photo fetch failed:', err)
+          }
+        }
+
+        if (!isMounted) return
+        setSearchPlaces(normalizePlaceData(rows, photoMap, defaultPlaceType))
+      } catch (err) {
+        if (!isMounted) return
+        setSearchPlaces([])
+        setSearchError(err)
+        console.warn('[App] Search lookup failed:', err)
+      } finally {
+        if (isMounted) setSearchLoading(false)
+      }
+    }
+
+    loadSearchPlaces()
+    return () => {
+      isMounted = false
+    }
+  }, [searchQuery, themeKey, isPizza, normalizePlaceData])
+
   // Handle Near Me toggle
   const handleNearMeToggle = useCallback(() => {
     if (nearMeActive) {
@@ -647,42 +1064,49 @@ function SiteContainer({ themeKey }) {
   )
 
   const filteredPlaces = useMemo(() => {
-    const searchLower = searchQuery.toLowerCase().trim()
+    const searchLower = normalizeSearchText(searchQuery)
+    const searchTerms = searchLower.split(/\s+/).filter(Boolean)
+    const sourcePlaces = searchLower ? searchPlaces : allLoadedPlaces
 
-    let results = allLoadedPlaces.filter(place => {
+    let results = sourcePlaces.reduce((matches, place) => {
+      let nextPlace = place
       // Search filter
-      if (searchLower && !place.name?.toLowerCase().includes(searchLower)) {
-        return false
+      if (searchTerms.length > 0) {
+        const searchRank = placeSearchRank(place, searchLower, searchTerms)
+        if (searchRank >= 99) {
+          return matches
+        }
+        nextPlace = { ...nextPlace, _searchRank: searchRank }
       }
 
       // Near me filter
       if (nearMeActive && userLocation) {
         const distance = getDistanceMiles(userLocation.lat, userLocation.lng, place.lat, place.lng)
-        if (distance > nearMeRadius) return false
-        place._distance = distance
+        if (distance > nearMeRadius) return matches
+        nextPlace = { ...nextPlace, _distance: distance }
       }
 
       // Style, price, status filters
       const placeStatus = place.status || 'visited'
-      const isExplicitAnthonyVisit =
-        typeof place.statusRaw === 'string' &&
-        (place.statusRaw.startsWith('visited') || place.statusRaw.startsWith('golden')) &&
-        typeof place.rating === 'number' &&
-        !Number.isNaN(place.rating)
-      return (
+      const isExplicitAnthonyVisit = isAnthonyReviewedPlace(place)
+      const passesFilters = (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
         (filters.prices.length === 0 || filters.prices.includes(place.price_range || place.price)) &&
         (showAnthonysVisits ? isExplicitAnthonyVisit : effectiveStatusSet.has(placeStatus))
       )
-    })
+      if (passesFilters) matches.push(nextPlace)
+      return matches
+    }, [])
 
-    // Sort by distance when near me is active
+    // Sort by distance when near me is active, otherwise by search relevance.
     if (nearMeActive && userLocation) {
       results = results.slice().sort((a, b) => (a._distance || 0) - (b._distance || 0))
+    } else if (searchLower) {
+      results = results.slice().sort(compareSearchResults)
     }
 
     return results
-  }, [allLoadedPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits])
+  }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits])
 
   const shouldDimUnloadedAggregates = useMemo(() => {
     return (
@@ -879,6 +1303,8 @@ function SiteContainer({ themeKey }) {
                     nearMeActive={nearMeActive}
                     nearMeRadius={nearMeRadius}
                     locationError={locationError}
+                    searchLoading={searchLoading}
+                    searchError={searchError}
                     onNearMeToggle={handleNearMeToggle}
                     onRadiusChange={setNearMeRadius}
                     filteredPlaces={filteredPlaces}
@@ -894,6 +1320,7 @@ function SiteContainer({ themeKey }) {
                       stateAggregates={filteredDisplayAggregates}
                       onStateClick={handleStateClick}
                       flyToLocation={flyToLocation}
+                      forceIndividualMarkers={Boolean(searchQuery.trim()) || nearMeActive}
                       resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}`}
                     />
                   </Suspense>

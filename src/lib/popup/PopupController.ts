@@ -113,18 +113,8 @@ export class PopupController {
       'Expanding a new target should replace the previous popup'
     )
 
-    // Provide a slight upward offset so expanded popups stay centered within the viewport.
-    if (isLeafletMap(this.map)) {
-      const mapRef = this.map as unknown as L.Map
-      const zoom = mapRef.getZoom()
-      const focus = L.latLng(target.lat, target.lng)
-      const point = mapRef.project(focus, zoom)
-      const verticalOffsetPx = 120
-      const adjustedPoint = point.subtract([0, verticalOffsetPx])
-      const adjustedLatLng = mapRef.unproject(adjustedPoint, zoom)
-      mapRef.flyTo(adjustedLatLng, zoom, { animate: true, duration: 0.5 })
-    } else if (isMapboxMap(this.map)) {
-      ;(this.map as any).easeTo({ center: [target.lng, target.lat], duration: 500, offset: [0, -100] })
+    if (isMapboxMap(this.map)) {
+      ;(this.map as any).easeTo({ center: [target.lng, target.lat], duration: 500, offset: [0, -80] })
     }
   }
 

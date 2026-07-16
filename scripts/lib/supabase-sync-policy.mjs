@@ -1,3 +1,10 @@
+export const SUPABASE_SYNC_TARGET_TABLE = 'pizza_places';
+
+export const LOCAL_ONLY_SUPABASE_TABLES = [
+  'place_sources',
+  'source_review_queue',
+];
+
 export const OVERWRITE_COLS = [
   'created_at',
   'updated_at',
@@ -52,8 +59,12 @@ export const QA_DEFAULT_COLS = [
 export const LOCAL_CONTEXT_COLS = [
   'id',
   'name',
+  'lat',
+  'lng',
+  'address',
   'state',
   'google_place_id',
+  'status',
 ];
 
 export const LOCAL_SYNC_COLS = [
@@ -66,6 +77,7 @@ const LOCAL_SYNC_CHECKPOINT_COL = `to_char(last_enriched_at at time zone 'UTC', 
 
 export const SUPABASE_SYNC_SELECT_COLS = [
   'id',
+  ...OVERWRITE_COLS,
   ...FILL_IF_NULL_COLS,
   ...QA_DEFAULT_COLS,
 ];
@@ -75,16 +87,42 @@ export const LOCAL_SYNC_VALUE_COLS = [
   ...OVERWRITE_COLS,
 ];
 
+export function assertSupabaseSyncTableBoundary({
+  targetTable = SUPABASE_SYNC_TARGET_TABLE,
+  localOnlyTables = LOCAL_ONLY_SUPABASE_TABLES,
+} = {}) {
+  if (localOnlyTables.includes(targetTable)) {
+    throw new Error(`Refusing to sync local-only provenance/review table to Supabase: ${targetTable}`);
+  }
+
+  if (targetTable !== SUPABASE_SYNC_TARGET_TABLE) {
+    throw new Error(`Unsupported Supabase sync target table: ${targetTable}`);
+  }
+
+  return {
+    targetTable,
+    localOnlyTables: [...localOnlyTables],
+  };
+}
+
 export function normalizeSyncSelectorOptions(options = {}) {
   const checkpointAfter = options.checkpointAfter || null;
   const checkpointMode = Boolean(options.checkpointMode || checkpointAfter);
+  const ids = Array.isArray(options.ids)
+    ? [...new Set(options.ids.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0))]
+    : [];
+
   return {
+    ids,
     startAfter: Number.isFinite(options.startAfter) ? options.startAfter : 0,
-    batch: Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
+    batch: Math.max(
+      Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
+      ids.length || 0,
+    ),
     changedSinceHours: options.changedSinceHours ?? null,
     onlyClassified: Boolean(options.onlyClassified),
-    checkpointMode,
-    checkpointAfter,
+    checkpointMode: ids.length ? false : checkpointMode,
+    checkpointAfter: ids.length ? null : checkpointAfter,
   };
 }
 
@@ -97,7 +135,10 @@ export function localSyncSelect(options = {}) {
           )`,
   ];
 
-  if (selector.checkpointMode) {
+  if (selector.ids.length) {
+    params.push(selector.ids);
+    filters.unshift(`id = ANY($${params.length}::int[])`);
+  } else if (selector.checkpointMode) {
     filters.push('last_enriched_at is not null');
   } else {
     params.push(selector.startAfter);
@@ -160,7 +201,9 @@ export function buildSupabasePayload(local, current, { nowIso = new Date().toISO
 
   for (const col of OVERWRITE_COLS) {
     const value = local[col];
-    if (value !== null && value !== undefined) payload[col] = value;
+    if (value !== null && value !== undefined && !syncValuesEqual(value, current[col])) {
+      payload[col] = value;
+    }
   }
 
   for (const col of FILL_IF_NULL_COLS) {
@@ -176,6 +219,46 @@ export function buildSupabasePayload(local, current, { nowIso = new Date().toISO
 
   if (Object.keys(payload).length <= 1) return null;
   if (!('updated_at' in payload)) payload.updated_at = nowIso;
+  return payload;
+}
+
+function normalizeSyncValue(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+      const date = new Date(trimmed);
+      if (!Number.isNaN(date.getTime())) return date.toISOString();
+    }
+    return trimmed;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  return JSON.stringify(value);
+}
+
+function syncValuesEqual(localValue, supabaseValue) {
+  return normalizeSyncValue(localValue) === normalizeSyncValue(supabaseValue);
+}
+
+export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOString() } = {}) {
+  const payload = {};
+
+  for (const col of LOCAL_CONTEXT_COLS) {
+    const value = local[col];
+    if (value !== null && value !== undefined) payload[col] = value;
+  }
+
+  for (const col of [...OVERWRITE_COLS, ...FILL_IF_NULL_COLS]) {
+    const value = local[col];
+    if (value !== null && value !== undefined) payload[col] = value;
+  }
+
+  if (payload.qa_status == null) payload.qa_status = 'unreviewed';
+  if (payload.qa_schema_version == null) payload.qa_schema_version = 1;
+  if (!('updated_at' in payload)) payload.updated_at = nowIso;
+  if (!('created_at' in payload)) payload.created_at = nowIso;
+
   return payload;
 }
 

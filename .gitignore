@@ -32,6 +32,7 @@
 
 # OpenClaw / cron / watchdog local artifacts
 /logs/
+/reports/
 /.openclaw/
 /.status/
 /.cron_status/

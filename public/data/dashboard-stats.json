@@ -1,44 +1,44 @@
 {
-  "generatedAt": "2026-02-05T20:54:15.945Z",
+  "generatedAt": "2026-07-16T17:59:00.704Z",
   "source": "supabase",
   "pizza": {
     "total": 164604,
     "distribution": [
       [
         "Traditional",
-        15832
-      ],
-      [
-        "New York",
-        540
+        16093
       ],
       [
         "Chicago",
-        502
+        563
+      ],
+      [
+        "New York",
+        561
       ],
       [
         "Neapolitan",
-        474
+        541
       ],
       [
         "Detroit",
-        313
+        318
       ],
       [
         "Tavern",
-        77
-      ],
-      [
-        "Roman",
-        36
+        84
       ],
       [
         "Sicilian",
-        27
+        53
+      ],
+      [
+        "Roman",
+        43
       ],
       [
         "California",
-        1
+        2
       ]
     ],
     "byState": [
@@ -260,7 +260,7 @@
     "addressPct": 61.67833102476246,
     "withRating": 116,
     "withPrice": 15590,
-    "withStyle": 17785,
+    "withStyle": 18241,
     "visitedOrGolden": 116,
     "withAllFields": 116
   },

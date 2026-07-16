@@ -70,6 +70,28 @@ The direct sync engine should still be dry-run first when invoked manually:
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --batch 25 --max-batches 1'
 ```
 
+For a reviewed set of specific canonical rows, prefer exact-ID guarded sync:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --ids 123,456'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 123,456'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 123,456 --apply'
+```
+
+For reviewed-new canonical rows that do not exist in Supabase yet, the guarded
+runner requires exact IDs plus an explicit reviewed-new insert flag:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 123,456 --insert-missing-reviewed-new'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 123,456 --insert-missing-reviewed-new --apply'
+```
+
+That path still syncs only `pizza_places`. Missing rows are inserted only when
+local `place_sources` proves `match_method='reviewed_new_import'`.
+
+Do not use broad changed-since windows for one-off reviewed source promotion
+batches when exact IDs are available.
+
 The source policy is documented in `docs/DATA_SOURCES.md`. Google Maps is an
 outbound navigation destination, not an ingestion source.
 

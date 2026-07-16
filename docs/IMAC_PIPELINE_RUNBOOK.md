@@ -6,8 +6,9 @@ This is the APizzaMichigan home-runner playbook for the Michigan iMac.
 
 - Remote access: Tailscale SSH from the MacBook via `ssh apizza-imac`.
 - Process manager: macOS `launchd`.
-- First production service: classifier only.
-- Manual-only until approved: OSM extraction, website scraping, menu parse, QA, and Supabase sync.
+- Production services: classifier plus guarded Supabase sync.
+- Manual-only until approved: OSM extraction, website scraping, menu parse, and
+  new source imports.
 - Working DB: local Postgres database `pizza_enrichment`.
 - Queue: SQLite `scripts/.job-queue.db`.
 - Local model: Ollama `llama3.2:latest`.
@@ -16,7 +17,8 @@ OpenClaw may remain installed for unrelated local-agent work, but APizzaMichigan
 pipeline operation should not depend on OpenClaw, Discord, or GitHub Issues.
 
 APizzaMichigan OpenClaw cron jobs should remain disabled. The launchd classifier
-is the only approved always-on APizza process in this phase.
+is the only approved always-on enrichment process in this phase. Guarded
+Supabase sync runs as a bounded launchd interval job and should not overlap.
 
 ## Baseline Checks
 
@@ -24,6 +26,13 @@ Run from the MacBook:
 
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs'
+```
+
+If a non-interactive SSH command reports `node: command not found`, run the
+same command through the iMac login shell so the normal PATH is loaded:
+
+```bash
+ssh apizza-imac 'zsh -lc "cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs"'
 ```
 
 Healthy baseline before starting services:
@@ -103,9 +112,67 @@ ssh apizza-imac 'ps -axo pid,ppid,command | egrep "watchdog-keepalive|keepalive.
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ```
 
-## Manual Sync Policy
+## Guarded Sync Policy
 
-Supabase sync is manual-only in this phase.
+Supabase sync is automated through `com.apizzamichigan.supabase-sync`, but only
+through the guarded wrapper. The wrapper runs health, QA, readiness, dry-run,
+bounded write, and post-check gates before applying at most one configured batch.
+
+The sync target is intentionally narrow: only canonical `pizza_places` rows are
+eligible. `place_sources` and `source_review_queue` are local-only provenance
+and review tables. The sync policy in `scripts/lib/supabase-sync-policy.mjs`
+defines that boundary, and both readiness/status reports print it before any
+operator uses the results.
+
+Verify the sync boundary before changing sync scripts or running a manual sync:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-supabase-sync-policy.mjs'
+```
+
+Verify the source promotion boundary before changing source adapters or
+promotion scripts:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-promotion-policy.mjs'
+```
+
+Verify that the written source/provenance contract still matches the promotion
+and Supabase sync policy modules:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-contract-docs.mjs'
+```
+
+Verify source matching still uses the canonical-row prefetch and in-memory grid
+path before running large source batches:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-matching-prefetch.mjs'
+```
+
+Verify the curated ATP spider manifest before rerunning ATP chain/regional
+batches:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-atp-spider-manifest.mjs'
+```
+
+Verify the generic source-input adapter contract before adding FSQ, Overture,
+Wikidata, government, DENUE, or official-website samples:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-input-adapters.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-fsq-sample-workflow.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-fsq-review-summary.mjs'
+```
+
+Verify the source review workflow boundary before changing admin review actions
+or reviewed-new import code:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-review-workflow.mjs'
+```
 
 Run QA before any sync:
 
@@ -137,6 +204,15 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50 --apply'
 ```
 
+For reviewed-new canonical rows that are missing from Supabase, use exact IDs
+and the explicit reviewed-new insert flag. The lower-level sync still requires
+local `place_sources.match_method='reviewed_new_import'` before inserting:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 182432,182527 --insert-missing-reviewed-new'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 182432,182527 --insert-missing-reviewed-new --apply'
+```
+
 The production sync service uses the same guarded runner through a launchd-safe
 wrapper:
 
@@ -148,6 +224,10 @@ ssh apizza-imac 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
 
 The service applies at most one 100-row batch every 30 minutes. It should remain
 disabled if classification QA is not healthy.
+
+The wrapper owns `/tmp/apizzamichigan/supabase-sync.lock` to avoid overlapping
+runs. If a prior process exits badly, locks older than 25 minutes are treated as
+stale and removed on the next scheduled run.
 
 ## Legacy Material
 

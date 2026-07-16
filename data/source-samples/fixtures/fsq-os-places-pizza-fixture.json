@@ -1,0 +1,45 @@
+[
+  {
+    "fsq_place_id": "fsq_fixture_annarbor_001",
+    "name": "Fixture Pizza Ann Arbor",
+    "latitude": 42.2808,
+    "longitude": -83.743,
+    "address": "100 Fixture St",
+    "locality": "Ann Arbor",
+    "region": "MI",
+    "postcode": "48104",
+    "country": "US",
+    "tel": "+1 734-555-0100",
+    "website": "https://example.com/fixture-pizza",
+    "fsq_category_labels": ["Dining and Drinking", "Restaurant", "Pizzeria"]
+  },
+  {
+    "fsq_place_id": "fsq_fixture_detroit_001",
+    "name": "Fixture Slice Detroit",
+    "latitude": 42.3314,
+    "longitude": -83.0458,
+    "address": "200 Fixture Ave",
+    "locality": "Detroit",
+    "region": "MI",
+    "postcode": "48226",
+    "country": "US",
+    "tel": "+1 313-555-0100",
+    "website": "https://example.com/fixture-slice",
+    "fsq_category_labels": ["Pizza", "Restaurant"]
+  },
+  {
+    "fsq_place_id": "fsq_fixture_closed_001",
+    "name": "Closed Fixture Pizza",
+    "latitude": 42.7325,
+    "longitude": -84.5555,
+    "address": "300 Fixture Rd",
+    "locality": "Lansing",
+    "region": "MI",
+    "postcode": "48933",
+    "country": "US",
+    "tel": "+1 517-555-0100",
+    "website": "https://example.com/closed-fixture",
+    "fsq_category_labels": ["Pizzeria"],
+    "date_closed": "2025-01-01"
+  }
+]

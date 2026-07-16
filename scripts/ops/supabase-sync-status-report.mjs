@@ -11,7 +11,9 @@ import { createClient } from '@supabase/supabase-js';
 import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
+  SUPABASE_SYNC_TARGET_TABLE,
   SUPABASE_SYNC_SELECT_COLS,
+  assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
   localSyncSelectSql,
@@ -141,6 +143,7 @@ async function main() {
   const git = gitReport(root);
   const env = loadEnvLocal();
   const checkpoint = readSyncCheckpoint(options.checkpoint);
+  const syncBoundary = assertSupabaseSyncTableBoundary();
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
@@ -196,7 +199,7 @@ async function main() {
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
     const { data: sbRows, error } = ids.length
       ? await supabase
-        .from('pizza_places')
+        .from(SUPABASE_SYNC_TARGET_TABLE)
         .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
         .in('id', ids)
       : { data: [], error: null };
@@ -244,6 +247,7 @@ async function main() {
       generatedAt: new Date().toISOString(),
       status,
       repo: { root, ...git },
+      syncBoundary,
       options,
       checkpoint,
       summary: summary.rows[0],
@@ -285,6 +289,10 @@ async function main() {
     console.log(`- classified in window: ${payload.summary.classified_in_window}`);
     console.log(`- pending after checkpoint: ${payload.summary.pending_after_checkpoint}`);
     console.log(`- latest local last_enriched_at: ${payload.summary.latest_local_enriched_at || ''}`);
+    console.log('');
+    console.log('## Sync Boundary');
+    console.log(`- target table: \`${payload.syncBoundary.targetTable}\``);
+    console.log(`- local-only tables: ${payload.syncBoundary.localOnlyTables.map(tableName => `\`${tableName}\``).join(', ')}`);
     console.log('');
     console.log('## Next Batch');
     console.log(`- local rows: ${payload.nextBatch.localRows}`);
