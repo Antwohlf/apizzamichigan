@@ -32,6 +32,23 @@ const googleMapsSearchUrl = row => {
   return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : ''
 }
 
+const sourceCoordinate = (row, keys) => {
+  for (const key of keys) {
+    const value = Number(row?.source_data?.[key])
+    if (Number.isFinite(value)) return value
+  }
+  return null
+}
+
+const sourceCoordinatePair = row => {
+  const lat = sourceCoordinate(row, ['lat', 'latitude'])
+  const lng = sourceCoordinate(row, ['lng', 'lon', 'longitude'])
+  return lat !== null && lng !== null ? { lat, lng } : null
+}
+
+const googleMapsCoordinateUrl = coords =>
+  coords ? `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}` : ''
+
 const osmUrl = value => {
   if (!value || typeof value !== 'string' || !value.startsWith('osm:')) return ''
   const [, rawId] = value.split(':')
@@ -504,7 +521,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       const sourceAddress = row.source_data?.address || row.source_data?.['addr:full'] || ''
                       const sourceWebsite = safeHttpUrl(row.source_data?.website || row.source_data?.['contact:website'] || '')
                       const sourceUrl = safeHttpUrl(row.source_url || row.source_data?.source_url || '')
-                      const mapsUrl = googleMapsSearchUrl(row)
+                      const sourceCoords = sourceCoordinatePair(row)
+                      const mapsUrl = googleMapsCoordinateUrl(sourceCoords) || googleMapsSearchUrl(row)
                       const nearestOsmUrl = osmUrl(row.nearest_google_place_id)
                       const sourcePhone = row.source_data?.phone || row.source_data?.['contact:phone'] || ''
                       const busy = Boolean(actionState[row.id])
@@ -524,6 +542,9 @@ export default function AdminSourceProvenancePanel({ entity }) {
                             <div>
                               <strong style={{ color: '#f8fafc' }}>Source</strong>
                               <div>{sourceAddress || 'no address'}</div>
+                              {sourceCoords ? (
+                                <div>{sourceCoords.lat.toFixed(6)}, {sourceCoords.lng.toFixed(6)}</div>
+                              ) : null}
                               {sourcePhone ? <div>{sourcePhone}</div> : null}
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.55rem', marginTop: '0.35rem' }}>
                                 {sourceWebsite ? <a href={sourceWebsite} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Website</a> : null}
