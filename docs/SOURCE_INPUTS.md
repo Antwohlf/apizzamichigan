@@ -148,6 +148,20 @@ GeoJSON `FeatureCollection`; each `Feature` represents a scraped item and
 usually has `properties` plus point geometry. The output data is CC0, while the
 spider software is MIT licensed.
 
+Run repeatable ATP spider batches with:
+
+```bash
+node scripts/ops/import-atp-spiders.mjs --default-spiders
+```
+
+Add `--apply` only after the dry-run summary looks acceptable:
+
+```bash
+node scripts/ops/import-atp-spiders.mjs \
+  --spiders dominos_pizza_us,papa_johns,marcos \
+  --apply
+```
+
 Useful fields:
 
 - `id`
