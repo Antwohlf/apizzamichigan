@@ -39,6 +39,8 @@ function parseArgs(argv) {
     latestUrl: DEFAULT_LATEST_URL,
     manifestPath: DEFAULT_MANIFEST_PATH,
     useDefaultSpiders: false,
+    manifestGroups: [],
+    listManifest: false,
     preflight: true,
     preflightOnly: false,
     apply: false,
@@ -51,6 +53,9 @@ function parseArgs(argv) {
     if (arg === '--spider') args.spiders.push(argv[++i]);
     else if (arg === '--spiders') args.spiders.push(...argv[++i].split(',').map(item => item.trim()).filter(Boolean));
     else if (arg === '--default-spiders') args.useDefaultSpiders = true;
+    else if (arg === '--group') args.manifestGroups.push(argv[++i]);
+    else if (arg === '--groups') args.manifestGroups.push(...argv[++i].split(',').map(item => item.trim()).filter(Boolean));
+    else if (arg === '--list-manifest') args.listManifest = true;
     else if (arg === '--entity') args.entity = argv[++i];
     else if (arg === '--output-dir') args.outputDir = argv[++i];
     else if (arg === '--download-dir') args.downloadDir = argv[++i];
@@ -70,11 +75,16 @@ function parseArgs(argv) {
     }
   }
 
-  if (args.useDefaultSpiders) {
-    args.spiders.push(...loadManifestSpiders(args.manifestPath));
+  const manifest = loadManifest(args.manifestPath);
+  if (args.listManifest) {
+    printManifest(manifest);
+    process.exit(0);
+  }
+  if (args.useDefaultSpiders || args.manifestGroups.length) {
+    args.spiders.push(...manifestSpiders(manifest, { groups: args.manifestGroups }));
   }
   args.spiders = [...new Set(args.spiders)];
-  if (!args.spiders.length) throw new Error('Pass --spider <name>, --spiders <a,b>, or --default-spiders');
+  if (!args.spiders.length) throw new Error('Pass --spider <name>, --spiders <a,b>, --group <name>, or --default-spiders');
   if (!['pizza', 'taco'].includes(args.entity)) throw new Error('Invalid --entity');
   if (!Number.isFinite(args.sample) || args.sample < 0) throw new Error('Invalid --sample');
   if (!Number.isFinite(args.limit) || args.limit <= 0) throw new Error('Invalid --limit');
@@ -88,6 +98,9 @@ Options:
   --spider <name>       Add one ATP spider name
   --spiders <a,b,c>     Add comma-separated spider names
   --default-spiders     Use the current APizza pizza spider shortlist
+  --group <name>        Use import-enabled spiders from a manifest group
+  --groups <a,b,c>      Use import-enabled spiders from manifest groups
+  --list-manifest       Print manifest groups/spiders and exit
   --entity <pizza|taco> Canonical entity to compare against (default pizza)
   --output-dir <dir>    Review JSON directory (default reports/source-review)
   --download-dir <dir>  GeoJSON download directory (default /tmp)
@@ -105,20 +118,66 @@ Without --apply, this only downloads inputs and writes review JSON.
 `);
 }
 
-function loadManifestSpiders(manifestPath) {
+function loadManifest(manifestPath) {
   const absPath = resolve(process.cwd(), manifestPath);
   if (!existsSync(absPath)) {
-    return DEFAULT_SPIDERS;
+    return {
+      entity: 'pizza',
+      source: 'all_the_places',
+      updated_at: null,
+      spiders: DEFAULT_SPIDERS.map(spider => ({
+        spider,
+        group: 'fallback_default',
+        status: 'active',
+        import_enabled: true,
+      })),
+    };
   }
-  const manifest = JSON.parse(readFileSync(absPath, 'utf8'));
+  return JSON.parse(readFileSync(absPath, 'utf8'));
+}
+
+function manifestSpiders(manifest, { groups = [] } = {}) {
+  const selectedGroups = new Set(groups.map(group => String(group || '').trim()).filter(Boolean));
   const spiders = (manifest.spiders || [])
     .filter(row => row.import_enabled)
+    .filter(row => selectedGroups.size === 0 || selectedGroups.has(row.group))
     .map(row => row.spider)
     .filter(Boolean);
   if (!spiders.length) {
-    throw new Error(`No import_enabled spiders found in ${manifestPath}`);
+    const suffix = selectedGroups.size ? ` for group(s): ${[...selectedGroups].join(', ')}` : '';
+    throw new Error(`No import_enabled spiders found${suffix}`);
   }
   return spiders;
+}
+
+function printManifest(manifest) {
+  const rows = manifest.spiders || [];
+  const groups = rows.reduce((acc, row) => {
+    const group = row.group || 'ungrouped';
+    if (!acc[group]) acc[group] = { total: 0, enabled: 0 };
+    acc[group].total += 1;
+    if (row.import_enabled) acc[group].enabled += 1;
+    return acc;
+  }, {});
+
+  console.log('# ATP Spider Manifest');
+  if (manifest.entity) console.log(`entity=${manifest.entity}`);
+  if (manifest.source) console.log(`source=${manifest.source}`);
+  if (manifest.updated_at) console.log(`updated_at=${manifest.updated_at}`);
+  console.log('');
+  console.log('## Groups');
+  console.log('| group | import_enabled | total |');
+  console.log('| --- | ---: | ---: |');
+  for (const [group, counts] of Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))) {
+    console.log(`| ${group} | ${counts.enabled} | ${counts.total} |`);
+  }
+  console.log('');
+  console.log('## Spiders');
+  console.log('| spider | group | status | import_enabled | note |');
+  console.log('| --- | --- | --- | --- | --- |');
+  for (const row of rows) {
+    console.log(`| ${row.spider} | ${row.group || ''} | ${row.status || ''} | ${row.import_enabled ? 'yes' : 'no'} | ${row.note || row.brand || ''} |`);
+  }
 }
 
 async function fetchJson(url) {

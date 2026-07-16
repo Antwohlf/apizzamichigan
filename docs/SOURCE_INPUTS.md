@@ -268,6 +268,23 @@ node scripts/ops/import-atp-spiders.mjs \
   --preflight-only
 ```
 
+The ATP manifest is grouped so large batches can be split into smaller runs:
+
+```bash
+node scripts/ops/import-atp-spiders.mjs --list-manifest
+node scripts/ops/import-atp-spiders.mjs --group original_chain --preflight-only
+node scripts/ops/import-atp-spiders.mjs --group regional_chain --preflight-only
+```
+
+Use a group run when continuing ATP imports:
+
+```bash
+node scripts/ops/import-atp-spiders.mjs \
+  --group regional_chain
+```
+
+Add `--apply` only after the dry-run review summary looks safe.
+
 Discover current spider names from the latest ATP run before adding new chains:
 
 ```bash
