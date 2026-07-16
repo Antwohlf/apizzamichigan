@@ -49,7 +49,7 @@ The source-of-record rule is:
 ## Build Order
 
 1. Keep OSM as the current production backbone.
-2. Add the provenance/external-ID schema before importing another broad source.
+2. Add the shared `place_sources` provenance table before importing another broad source.
 3. Prototype a Michigan or North America slice of Foursquare OS Places.
 4. Measure FSQ overlap and gaps against current OSM-derived `pizza_places`.
 5. Prototype All the Places for pizza/taco chains and regional restaurant groups.
@@ -108,7 +108,7 @@ separate these concepts:
 Near-term migrations should be additive and should not block the current local
 enrichment and guarded sync pipeline.
 
-Detailed provenance table design lives in `docs/SOURCE_PROVENANCE_SCHEMA.md`.
+The simplified provenance table design lives in `docs/SOURCE_PROVENANCE_SCHEMA.md`.
 
 ## Primary References
 
