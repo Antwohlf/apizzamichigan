@@ -77,6 +77,12 @@ Prerequisite: export a small FSQ slice to a local JSON/CSV/NDJSON file with at
 least `fsq_place_id`, `name`, `latitude`, `longitude`, category fields, and
 status/closed fields. The source adapter is the import boundary.
 
+Check local readiness with:
+
+```bash
+node scripts/ops/fsq-sample-preflight.mjs
+```
+
 Run this against a small exported FSQ sample:
 
 ```bash
@@ -98,6 +104,15 @@ The report is read-only. It:
 
 Add `--review-output reports/source-review/fsq-mi-pizza-review.json` to preserve
 ambiguous and likely-new rows for later review.
+
+Once a sample file exists, the preflight can run the adapter directly:
+
+```bash
+node scripts/ops/fsq-sample-preflight.mjs \
+  --input data/source-samples/fsq-os-places-mi-pizza.csv \
+  --review-output reports/source-review/fsq-mi-pizza-review.json \
+  --run
+```
 
 ## Match Meaning
 
