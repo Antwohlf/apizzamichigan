@@ -482,7 +482,7 @@ async function loadCanonicalPlaces(client, tableName, candidates, maxDistanceM) 
       state,
       google_place_id,
       lat::double precision AS lat,
-      lng::double precision AS lng,
+      lng::double precision AS lng
     FROM ${tableName}
     WHERE lat IS NOT NULL
       AND lng IS NOT NULL
