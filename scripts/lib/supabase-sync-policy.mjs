@@ -103,13 +103,21 @@ export function assertSupabaseSyncTableBoundary({
 export function normalizeSyncSelectorOptions(options = {}) {
   const checkpointAfter = options.checkpointAfter || null;
   const checkpointMode = Boolean(options.checkpointMode || checkpointAfter);
+  const ids = Array.isArray(options.ids)
+    ? [...new Set(options.ids.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0))]
+    : [];
+
   return {
+    ids,
     startAfter: Number.isFinite(options.startAfter) ? options.startAfter : 0,
-    batch: Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
+    batch: Math.max(
+      Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
+      ids.length || 0,
+    ),
     changedSinceHours: options.changedSinceHours ?? null,
     onlyClassified: Boolean(options.onlyClassified),
-    checkpointMode,
-    checkpointAfter,
+    checkpointMode: ids.length ? false : checkpointMode,
+    checkpointAfter: ids.length ? null : checkpointAfter,
   };
 }
 
@@ -122,7 +130,10 @@ export function localSyncSelect(options = {}) {
           )`,
   ];
 
-  if (selector.checkpointMode) {
+  if (selector.ids.length) {
+    params.push(selector.ids);
+    filters.unshift(`id = ANY($${params.length}::int[])`);
+  } else if (selector.checkpointMode) {
     filters.push('last_enriched_at is not null');
   } else {
     params.push(selector.startAfter);

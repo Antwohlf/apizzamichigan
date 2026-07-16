@@ -13,6 +13,7 @@ const NODE = process.execPath;
 
 function parseArgs(argv) {
   const out = {
+    ids: [],
     hours: 6,
     batch: 50,
     maxBatches: 1,
@@ -24,6 +25,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--hours') out.hours = parseFloat(argv[++i]);
+    else if (arg === '--ids') out.ids = parseIds(argv[++i]);
     else if (arg === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (arg === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
     else if (arg === '--checkpoint') out.checkpoint = argv[++i];
@@ -34,6 +36,7 @@ function parseArgs(argv) {
 
 Options:
   --hours <n>        Recent enrichment window (default 6)
+  --ids <a,b,c>      Sync only these local pizza_places ids
   --batch <n>        Batch size (default 50)
   --max-batches <n>  Maximum write batches (default 1)
   --checkpoint <p>   Checkpoint path (default scripts/.supabase-sync-checkpoint.json)
@@ -47,10 +50,22 @@ Options:
   }
 
   if (!Number.isFinite(out.hours) || out.hours <= 0) throw new Error('Invalid --hours');
+  if (out.ids.length && out.checkpoint !== 'scripts/.supabase-sync-checkpoint.json') {
+    throw new Error('--ids cannot be combined with --checkpoint');
+  }
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches <= 0) throw new Error('Invalid --max-batches');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
   return out;
+}
+
+function parseIds(value) {
+  const ids = String(value || '')
+    .split(',')
+    .map(item => Number(item.trim()))
+    .filter(id => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new Error('Invalid --ids');
+  return [...new Set(ids)];
 }
 
 function run(command, args, { json = false } = {}) {
@@ -78,12 +93,18 @@ function assertState(label, actual, allowed = ['OK']) {
 function syncArgs(options, { dryRun = false } = {}) {
   const args = [
     'scripts/sync-local-to-supabase.mjs',
-    '--changed-since-hours', String(options.hours),
-    '--only-classified',
-    '--checkpoint', options.checkpoint,
     '--batch', String(options.batch),
     '--max-batches', String(options.maxBatches),
   ];
+  if (options.ids.length) {
+    args.push('--ids', options.ids.join(','));
+  } else {
+    args.push(
+      '--changed-since-hours', String(options.hours),
+      '--only-classified',
+      '--checkpoint', options.checkpoint,
+    );
+  }
   if (dryRun) args.push('--dry-run');
   return args;
 }
@@ -96,9 +117,9 @@ async function main() {
   console.log('');
   console.log(`Started: ${startedAt}`);
   console.log(`Mode: ${options.apply ? 'apply' : 'dry-run only'}`);
-  console.log(`Window: last ${options.hours}h`);
+  console.log(`Scope: ${options.ids.length ? `ids=${options.ids.join(',')}` : `last ${options.hours}h classified checkpoint window`}`);
   console.log(`Batch: ${options.batch}, max_batches=${options.maxBatches}`);
-  console.log(`Checkpoint: ${options.checkpoint}`);
+  console.log(`Checkpoint: ${options.ids.length ? 'none (id-scoped)' : options.checkpoint}`);
 
   step('Health Gate');
   const health = run(NODE, ['scripts/ops/classifier-health-report.mjs', '--json'], { json: true });
@@ -119,12 +140,12 @@ async function main() {
   step('Readiness Gate');
   const readiness = run(NODE, [
     'scripts/ops/supabase-sync-readiness-report.mjs',
-    '--changed-since-hours', String(options.hours),
-    '--only-classified',
-    '--checkpoint', options.checkpoint,
     '--batch', String(options.batch),
     '--sample', String(options.sample),
     '--json',
+    ...(options.ids.length
+      ? ['--ids', options.ids.join(',')]
+      : ['--changed-since-hours', String(options.hours), '--only-classified', '--checkpoint', options.checkpoint]),
   ], { json: true });
   console.log(`state=${readiness.state}, would_update=${readiness.totals.wouldUpdate}, missing=${readiness.totals.missingSupabaseRows}, protected_conflicts=${readiness.totals.protectedFieldConflicts}`);
   assertState('readiness', readiness.state);

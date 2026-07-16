@@ -34,6 +34,7 @@ import {
 
 function parseArgs(argv) {
   const out = {
+    ids: [],
     batch: 500,
     startAfter: 0,
     maxBatches: 0, // 0 = unlimited
@@ -48,6 +49,7 @@ function parseArgs(argv) {
     if (a === '--dry-run') out.dryRun = true;
     else if (a === '--verbose') out.verbose = true;
     else if (a === '--only-classified') out.onlyClassified = true;
+    else if (a === '--ids') out.ids = parseIds(argv[++i]);
     else if (a === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (a === '--start-after') out.startAfter = parseInt(argv[++i], 10);
     else if (a === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
@@ -58,6 +60,7 @@ function parseArgs(argv) {
 
 Options:
   --batch <n>                 Batch size (default 500)
+  --ids <a,b,c>               Sync only these local pizza_places ids
   --start-after <id>          Start after this numeric id (default 0)
   --max-batches <n>           Stop after n batches (default 0 = unlimited)
   --changed-since-hours <n>   Only scan rows enriched in the last n hours
@@ -70,12 +73,22 @@ Options:
     }
   }
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
+  if (out.ids.length && out.checkpointPath) throw new Error('--ids cannot be combined with --checkpoint');
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches < 0) throw new Error('Invalid --max-batches');
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
     throw new Error('Invalid --changed-since-hours');
   }
   return out;
+}
+
+function parseIds(value) {
+  const ids = String(value || '')
+    .split(',')
+    .map(item => Number(item.trim()))
+    .filter(id => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new Error('Invalid --ids');
+  return [...new Set(ids)];
 }
 
 function loadEnvLocal() {
@@ -175,6 +188,7 @@ async function main() {
 
       if (args.dryRun) {
         const selectorText = [
+          `ids=${selector.ids?.length ? selector.ids.join(',') : 'none'}`,
           `start_after=${selector.startAfter}`,
           `changed_since_hours=${selector.changedSinceHours ?? 'none'}`,
           `only_classified=${selector.onlyClassified}`,
@@ -193,11 +207,13 @@ async function main() {
             source: args.checkpointPath,
           };
         }
+        if (args.ids.length) break;
         continue;
       }
 
       if (!updates.length) {
         console.log(`[ok] batch ${batchNum}: nothing to update (local_rows=${localRows.length}, cursor=${cursor})`);
+        if (args.ids.length) break;
         continue;
       }
 
@@ -228,6 +244,7 @@ async function main() {
         };
       }
       console.log(`[ok] batch ${batchNum}: updated=${updated} local_rows=${localRows.length} cursor=${cursor}`);
+      if (args.ids.length) break;
     }
 
     console.log(`Done. batches=${batchNum} local_rows_scanned=${totalRowsScanned} supabase_rows_updated=${totalUpdates} last_cursor=${cursor}`);
