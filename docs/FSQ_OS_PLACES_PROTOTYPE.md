@@ -101,8 +101,27 @@ HF_TOKEN=... \
 node scripts/ops/export-fsq-hf-sample.mjs \
   --query pizza \
   --length 100 \
+  --pages 3 \
   --output data/source-samples/fsq-os-places-pizza-sample.json
 ```
+
+To export the sample and immediately run the read-only source report:
+
+```bash
+HF_TOKEN=... \
+node scripts/ops/export-fsq-hf-sample.mjs \
+  --query pizza \
+  --length 100 \
+  --pages 3 \
+  --output data/source-samples/fsq-os-places-pizza-sample.json \
+  --entity pizza \
+  --review-output reports/source-review/fsq-os-places-review.json \
+  --run-report
+```
+
+`--pages` is capped at 20 and each page is capped at 100 rows so this remains a
+sample workflow. Use this to answer the overlap/gap question before considering
+any broader FSQ ingestion.
 
 Run this against a small exported FSQ sample:
 
@@ -133,6 +152,15 @@ node scripts/ops/fsq-sample-preflight.mjs \
   --input data/source-samples/fsq-os-places-mi-pizza.csv \
   --review-output reports/source-review/fsq-mi-pizza-review.json \
   --run
+```
+
+Without `--input`, preflight prints the exact Hugging Face export command. Use
+`--export-length` and `--export-pages` to size that sample:
+
+```bash
+node scripts/ops/fsq-sample-preflight.mjs \
+  --export-length 100 \
+  --export-pages 3
 ```
 
 ## Match Meaning

@@ -8,6 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
+import { execFileSync } from 'child_process';
 
 const DEFAULT_DATASET = 'foursquare/fsq-os-places';
 
@@ -44,7 +45,11 @@ function parseArgs(argv) {
     query: 'pizza',
     offset: 0,
     length: 100,
+    pages: 1,
     output: 'data/source-samples/fsq-os-places-pizza-sample.json',
+    entity: 'pizza',
+    reviewOutput: 'reports/source-review/fsq-os-places-review.json',
+    runReport: false,
     token: env.HF_TOKEN || env.HUGGINGFACE_HUB_TOKEN || '',
   };
 
@@ -56,7 +61,11 @@ function parseArgs(argv) {
     else if (arg === '--query') args.query = argv[++i];
     else if (arg === '--offset') args.offset = parseInt(argv[++i], 10);
     else if (arg === '--length') args.length = parseInt(argv[++i], 10);
+    else if (arg === '--pages') args.pages = parseInt(argv[++i], 10);
     else if (arg === '--output') args.output = argv[++i];
+    else if (arg === '--entity') args.entity = argv[++i];
+    else if (arg === '--review-output') args.reviewOutput = argv[++i];
+    else if (arg === '--run-report') args.runReport = true;
     else if (arg === '--token') args.token = argv[++i];
     else if (arg === '--help') {
       printHelp();
@@ -74,6 +83,10 @@ function parseArgs(argv) {
   if (!Number.isFinite(args.length) || args.length < 1 || args.length > 100) {
     throw new Error('Invalid --length. Hugging Face Dataset Viewer allows 1-100 rows per request.');
   }
+  if (!Number.isFinite(args.pages) || args.pages < 1 || args.pages > 20) {
+    throw new Error('Invalid --pages. Use 1-20 pages to keep this a bounded sample export.');
+  }
+  if (!['pizza', 'taco'].includes(args.entity)) throw new Error('Invalid --entity');
   if (!args.token) {
     throw new Error('Missing HF_TOKEN or HUGGINGFACE_HUB_TOKEN for gated FSQ OS Places access.');
   }
@@ -93,25 +106,32 @@ Options:
                       (default pizza)
   --offset <n>        Row/search offset (default 0)
   --length <n>        Rows to export, max 100 (default 100)
+  --pages <n>         Number of Dataset Viewer pages to fetch, max 20
+                      (default 1)
   --output <file>     JSON output path
+  --entity <pizza|taco>
+                      Entity for the optional adapter report (default pizza)
+  --review-output <file>
+                      Review JSON path for --run-report
+  --run-report        After export, run source-input-sample-report
   --token <token>     HF token; default HF_TOKEN/HUGGINGFACE_HUB_TOKEN
 
 After export, run:
   node scripts/ops/source-input-sample-report.mjs \\
     --source fsq_os_places \\
     --input <output-file> \\
-    --entity pizza \\
+    --entity <pizza|taco> \\
     --review-output reports/source-review/fsq-os-places-review.json
 `);
 }
 
-function datasetViewerUrl(args) {
+function datasetViewerUrl(args, offset = args.offset) {
   const endpoint = args.query ? 'search' : 'rows';
   const url = new URL(`https://datasets-server.huggingface.co/${endpoint}`);
   url.searchParams.set('dataset', args.dataset);
   url.searchParams.set('config', args.config);
   url.searchParams.set('split', args.split);
-  url.searchParams.set('offset', String(args.offset));
+  url.searchParams.set('offset', String(offset));
   url.searchParams.set('length', String(args.length));
   if (args.query) url.searchParams.set('query', args.query);
   return url;
@@ -147,9 +167,19 @@ async function fetchJson(url, token) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  const url = datasetViewerUrl(args);
-  const payload = await fetchJson(url, args.token);
-  const rows = Array.isArray(payload?.rows) ? payload.rows.map(normalizeRow) : [];
+  const rows = [];
+
+  for (let page = 0; page < args.pages; page++) {
+    const offset = args.offset + (page * args.length);
+    const url = datasetViewerUrl(args, offset);
+    const payload = await fetchJson(url, args.token);
+    const pageRows = Array.isArray(payload?.rows) ? payload.rows.map(normalizeRow) : [];
+    rows.push(...pageRows);
+
+    if (pageRows.length < args.length) {
+      break;
+    }
+  }
 
   if (!rows.length) {
     throw new Error('Dataset Viewer returned no rows. Check config/split/query or token access.');
@@ -165,18 +195,31 @@ async function main() {
   console.log(`Config: ${args.config}`);
   console.log(`Split: ${args.split}`);
   console.log(`Query: ${args.query || '(none)'}`);
+  console.log(`Offset: ${args.offset}`);
+  console.log(`Page size: ${args.length}`);
+  console.log(`Pages requested: ${args.pages}`);
   console.log(`Rows written: ${rows.length}`);
   console.log(`Output: ${args.output}`);
   console.log('');
   console.log('Next command:');
-  console.log([
+  const nextCommand = [
     process.execPath,
     'scripts/ops/source-input-sample-report.mjs',
     '--source', 'fsq_os_places',
     '--input', args.output,
-    '--entity', 'pizza',
-    '--review-output', 'reports/source-review/fsq-os-places-review.json',
-  ].map(part => (/\s/.test(part) ? JSON.stringify(part) : part)).join(' '));
+    '--entity', args.entity,
+    '--max-distance-m', '100',
+    '--limit', '5000',
+    '--sample', '25',
+    '--review-output', args.reviewOutput,
+  ];
+  console.log(nextCommand.map(part => (/\s/.test(part) ? JSON.stringify(part) : part)).join(' '));
+
+  if (args.runReport) {
+    console.log('');
+    console.log('Running source adapter report...');
+    execFileSync(nextCommand[0], nextCommand.slice(1), { stdio: 'inherit' });
+  }
 }
 
 main().catch(error => {

@@ -16,6 +16,8 @@ function parseArgs(argv) {
     input: process.env.FSQ_OS_PLACES_SAMPLE || '',
     entity: 'pizza',
     reviewOutput: 'reports/source-review/fsq-os-places-review.json',
+    exportLength: 100,
+    exportPages: 1,
     run: false,
   };
 
@@ -24,6 +26,8 @@ function parseArgs(argv) {
     if (arg === '--input') args.input = argv[++i];
     else if (arg === '--entity') args.entity = argv[++i];
     else if (arg === '--review-output') args.reviewOutput = argv[++i];
+    else if (arg === '--export-length') args.exportLength = parseInt(argv[++i], 10);
+    else if (arg === '--export-pages') args.exportPages = parseInt(argv[++i], 10);
     else if (arg === '--run') args.run = true;
     else if (arg === '--help') {
       printHelp();
@@ -34,6 +38,12 @@ function parseArgs(argv) {
   }
 
   if (!['pizza', 'taco'].includes(args.entity)) throw new Error('Invalid --entity');
+  if (!Number.isFinite(args.exportLength) || args.exportLength < 1 || args.exportLength > 100) {
+    throw new Error('Invalid --export-length');
+  }
+  if (!Number.isFinite(args.exportPages) || args.exportPages < 1 || args.exportPages > 20) {
+    throw new Error('Invalid --export-pages');
+  }
   return args;
 }
 
@@ -45,6 +55,8 @@ Options:
                           (or FSQ_OS_PLACES_SAMPLE env var)
   --entity <pizza|taco>   Entity to compare against (default pizza)
   --review-output <file>  Review JSON output path
+  --export-length <n>     HF Dataset Viewer page size, max 100 (default 100)
+  --export-pages <n>      HF Dataset Viewer page count, max 20 (default 1)
   --run                   Run source-input-sample-report when input exists
 `);
 }
@@ -135,8 +147,12 @@ function main() {
     process.execPath,
     'scripts/ops/export-fsq-hf-sample.mjs',
     '--query', 'pizza',
-    '--length', '100',
+    '--length', String(args.exportLength),
+    '--pages', String(args.exportPages),
     '--output', args.input || 'data/source-samples/fsq-os-places-pizza-sample.json',
+    '--entity', args.entity,
+    '--review-output', args.reviewOutput,
+    '--run-report',
   ].map(part => (/\s/.test(part) ? JSON.stringify(part) : part)).join(' '));
 
   if (missing.length) {
