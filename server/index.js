@@ -2,6 +2,9 @@ require('dotenv').config()
 
 const express = require('express')
 const cookieParser = require('cookie-parser')
+const { existsSync, readdirSync, readFileSync, statSync } = require('fs')
+const { join, resolve } = require('path')
+const pg = require('pg')
 const { createClient } = require('@supabase/supabase-js')
 const { handleBugReport } = require('../api/_lib/bugReport')
 const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
@@ -19,6 +22,8 @@ const REVIEW_PHOTO_TABLE = 'review-photos'
 const FALLBACK_SUPABASE_URL = 'https://htahyiuvqmalfpbgiizx.supabase.co'
 const MAX_REVIEW_PHOTOS = 10
 const MAX_REVIEW_PHOTO_BYTES = 8 * 1024 * 1024
+const SOURCE_REVIEW_DIR = process.env.SOURCE_REVIEW_DIR || 'reports/source-review'
+const SOURCE_REVIEW_QUEUE_CSV = process.env.SOURCE_REVIEW_QUEUE_CSV || 'reports/source-review-queue.csv'
 let reviewPhotosTableAvailable = true
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
@@ -55,6 +60,148 @@ function requireAdminAuth(req, res, next) {
 
 const getPlaceTable = (entity = 'pizza') =>
   entity === 'taco' ? 'taco_places' : 'pizza_places'
+
+const localPostgresConfig = () => ({
+  host: process.env.PGHOST || process.env.LOCAL_DB_HOST || 'localhost',
+  port: parseInt(process.env.PGPORT || process.env.LOCAL_DB_PORT || '5432', 10),
+  database: process.env.PGDATABASE || process.env.LOCAL_DB_NAME || 'pizza_enrichment',
+  user: process.env.PGUSER || process.env.LOCAL_DB_USER || process.env.USER,
+  password: process.env.PGPASSWORD || process.env.LOCAL_DB_PASSWORD || '',
+})
+
+const normalizeCount = value => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+function readSourceReviewReports(entity, inputDir = SOURCE_REVIEW_DIR) {
+  const absDir = resolve(process.cwd(), inputDir)
+  const result = {
+    available: existsSync(absDir),
+    inputDir,
+    totals: { inputRows: 0, matched: 0, ambiguous: 0, likelyNew: 0, accepted: 0 },
+    reports: [],
+    errors: [],
+  }
+
+  if (!result.available) return result
+
+  for (const file of readdirSync(absDir).filter(name => name.endsWith('-review.json')).sort()) {
+    try {
+      const report = JSON.parse(readFileSync(join(absDir, file), 'utf8'))
+      if (report.entity && report.entity !== entity) continue
+      const counts = report.counts || {}
+      const row = {
+        file,
+        source: report.source || '',
+        sourceLabel: report.source_label || report.source || '',
+        generatedAt: report.generated_at || null,
+        inputRows: normalizeCount(counts.inputRowsInspected),
+        matched: normalizeCount(counts.matchedExistingPlaces),
+        ambiguous: normalizeCount(counts.ambiguousReviewCandidates ?? report.ambiguous?.length),
+        likelyNew: normalizeCount(counts.likelyNewUnmatchedCandidates ?? report.likely_new?.length),
+        accepted: normalizeCount(counts.acceptedForPlaceSourcesImport),
+      }
+      result.reports.push(row)
+      result.totals.inputRows += row.inputRows
+      result.totals.matched += row.matched
+      result.totals.ambiguous += row.ambiguous
+      result.totals.likelyNew += row.likelyNew
+      result.totals.accepted += row.accepted
+    } catch (error) {
+      result.errors.push({ file, error: error?.message || 'Unable to read report' })
+    }
+  }
+
+  return result
+}
+
+function readSourceReviewQueueCsv(csvPath = SOURCE_REVIEW_QUEUE_CSV) {
+  const absPath = resolve(process.cwd(), csvPath)
+  if (!existsSync(absPath)) {
+    return { available: false, path: csvPath, reviewRows: 0, updatedAt: null }
+  }
+
+  const text = readFileSync(absPath, 'utf8').trim()
+  const lines = text ? text.split(/\r?\n/) : []
+  const stat = statSync(absPath)
+  return {
+    available: true,
+    path: csvPath,
+    reviewRows: Math.max(0, lines.length - 1),
+    updatedAt: stat.mtime.toISOString(),
+  }
+}
+
+async function readLocalSourceProvenance(entity) {
+  const client = new pg.Client(localPostgresConfig())
+  try {
+    await client.connect()
+    const tableCheck = await client.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'place_sources'
+      ) AS exists
+    `)
+
+    if (!tableCheck.rows[0]?.exists) {
+      return {
+        available: false,
+        reason: 'place_sources table is not present in local Postgres.',
+        sourceCounts: [],
+        matchMethods: [],
+      }
+    }
+
+    const [sourceCounts, matchMethods] = await Promise.all([
+      client.query(`
+        SELECT
+          source,
+          COUNT(*)::int AS rows,
+          COUNT(DISTINCT place_id)::int AS places,
+          MAX(retrieved_at) AS latest_retrieved_at,
+          MAX(updated_at) AS latest_updated_at
+        FROM place_sources
+        WHERE entity_type = $1
+        GROUP BY source
+        ORDER BY source
+      `, [entity]),
+      client.query(`
+        SELECT
+          source,
+          COALESCE(match_method, 'unknown') AS match_method,
+          COUNT(*)::int AS rows
+        FROM place_sources
+        WHERE entity_type = $1
+        GROUP BY source, COALESCE(match_method, 'unknown')
+        ORDER BY source, rows DESC, match_method
+      `, [entity]),
+    ])
+
+    return {
+      available: true,
+      database: localPostgresConfig().database,
+      localOnly: true,
+      sourceCounts: sourceCounts.rows,
+      matchMethods: matchMethods.rows,
+    }
+  } catch (error) {
+    return {
+      available: false,
+      reason: error?.message || 'Unable to read local source provenance.',
+      sourceCounts: [],
+      matchMethods: [],
+    }
+  } finally {
+    try {
+      await client.end()
+    } catch (error) {
+      // Connection may never have opened; nothing to clean up.
+    }
+  }
+}
 
 const getStorageClient = () => {
   if (!serviceClient?.storage) {
@@ -485,6 +632,33 @@ app.delete('/api/admin/review-photos/:photoId', requireAdminAuth, async (req, re
   } catch (error) {
     console.error('[admin] delete review photo error', error)
     return res.status(500).json({ error: 'Failed to delete review photo.' })
+  }
+})
+
+app.get('/api/admin/source-provenance', requireAdminAuth, async (req, res) => {
+  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+
+  try {
+    const [database, reviewArtifacts, reviewQueueCsv] = await Promise.all([
+      readLocalSourceProvenance(entity),
+      Promise.resolve(readSourceReviewReports(entity)),
+      Promise.resolve(readSourceReviewQueueCsv()),
+    ])
+
+    return res.json({
+      data: {
+        entity,
+        generatedAt: new Date().toISOString(),
+        localOnly: true,
+        syncPolicy: 'Source evidence stays local until a public/admin provenance feature requires a Supabase table.',
+        database,
+        reviewArtifacts,
+        reviewQueueCsv,
+      },
+    })
+  } catch (error) {
+    console.error('[admin] source provenance error', error)
+    return res.status(500).json({ error: 'Failed to load source provenance.' })
   }
 })
 
