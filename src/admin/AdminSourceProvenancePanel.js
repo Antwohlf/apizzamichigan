@@ -115,11 +115,15 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const totals = useMemo(() => {
     const sourceRows = payload?.database?.sourceCounts || []
     const reviewTotals = payload?.reviewArtifacts?.totals || {}
+    const pendingQueueRows = (payload?.database?.reviewQueue?.statusCounts || [])
+      .filter(row => row.status === 'pending')
+      .reduce((sum, row) => sum + (Number(row.rows) || 0), 0)
     return {
       sourceRows: sourceRows.reduce((sum, row) => sum + (Number(row.rows) || 0), 0),
       sourcePlaces: sourceRows.reduce((sum, row) => sum + (Number(row.places) || 0), 0),
       ambiguous: Number(reviewTotals.ambiguous) || 0,
       likelyNew: Number(reviewTotals.likelyNew) || 0,
+      pendingQueueRows,
     }
   }, [payload])
 
@@ -151,6 +155,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
         <SummaryStat label="Linked Places" value={formatCount(totals.sourcePlaces)} />
         <SummaryStat label="Ambiguous Review" value={formatCount(totals.ambiguous)} tone="#fbbf24" />
         <SummaryStat label="Likely New Review" value={formatCount(totals.likelyNew)} tone="#fb923c" />
+        <SummaryStat label="DB Queue Pending" value={formatCount(totals.pendingQueueRows)} tone="#38bdf8" />
       </div>
 
       {!database.available ? (
@@ -209,6 +214,34 @@ export default function AdminSourceProvenancePanel({ entity }) {
                 </tbody>
               </table>
             </div>
+          </section>
+
+          <section style={blockStyle}>
+            <h2 style={{ margin: '0 0 0.75rem', color: '#f8fafc', fontSize: '1rem' }}>Durable Review Queue</h2>
+            {!database.reviewQueue?.available ? (
+              <p style={{ margin: 0, color: '#94a3b8' }}>source_review_queue is not created on this database yet.</p>
+            ) : (
+              <div style={tableWrapStyle}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Kind</th>
+                      <th style={thStyle}>Status</th>
+                      <th style={thStyle}>Rows</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(database.reviewQueue.statusCounts || []).map(row => (
+                      <tr key={`${row.review_kind}-${row.status}`}>
+                        <td style={tdStyle}>{row.review_kind}</td>
+                        <td style={tdStyle}>{row.status}</td>
+                        <td style={tdStyle}>{formatCount(row.rows)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}

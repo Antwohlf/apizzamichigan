@@ -138,24 +138,43 @@ async function readLocalSourceProvenance(entity) {
   try {
     await client.connect()
     const tableCheck = await client.query(`
-      SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_name = 'place_sources'
-      ) AS exists
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('place_sources', 'source_review_queue')
     `)
+    const tables = new Set(tableCheck.rows.map(row => row.table_name))
 
-    if (!tableCheck.rows[0]?.exists) {
+    if (!tables.has('place_sources')) {
       return {
         available: false,
         reason: 'place_sources table is not present in local Postgres.',
         sourceCounts: [],
         matchMethods: [],
+        reviewQueue: { available: tables.has('source_review_queue'), statusCounts: [], sourceCounts: [] },
       }
     }
 
-    const [sourceCounts, matchMethods] = await Promise.all([
+    const queueQueries = tables.has('source_review_queue')
+      ? [
+          client.query(`
+            SELECT review_kind, status, COUNT(*)::int AS rows
+            FROM source_review_queue
+            WHERE entity_type = $1
+            GROUP BY review_kind, status
+            ORDER BY review_kind, status
+          `, [entity]),
+          client.query(`
+            SELECT source, review_kind, status, COUNT(*)::int AS rows
+            FROM source_review_queue
+            WHERE entity_type = $1
+            GROUP BY source, review_kind, status
+            ORDER BY source, review_kind, status
+          `, [entity]),
+        ]
+      : [Promise.resolve({ rows: [] }), Promise.resolve({ rows: [] })]
+
+    const [sourceCounts, matchMethods, reviewQueueStatus, reviewQueueSources] = await Promise.all([
       client.query(`
         SELECT
           source,
@@ -178,6 +197,7 @@ async function readLocalSourceProvenance(entity) {
         GROUP BY source, COALESCE(match_method, 'unknown')
         ORDER BY source, rows DESC, match_method
       `, [entity]),
+      ...queueQueries,
     ])
 
     return {
@@ -186,6 +206,11 @@ async function readLocalSourceProvenance(entity) {
       localOnly: true,
       sourceCounts: sourceCounts.rows,
       matchMethods: matchMethods.rows,
+      reviewQueue: {
+        available: tables.has('source_review_queue'),
+        statusCounts: reviewQueueStatus.rows,
+        sourceCounts: reviewQueueSources.rows,
+      },
     }
   } catch (error) {
     return {

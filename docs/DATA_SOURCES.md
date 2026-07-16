@@ -127,6 +127,8 @@ As of 2026-07-16, the iMac local database has:
 - Review JSON artifacts for ambiguous and likely-new source rows under
   `reports/source-review/` on the iMac. These files are intentionally ignored by
   Git because they are generated operational artifacts.
+- A durable local `source_review_queue` table can track those review rows after
+  import. It is local operator state, not a Supabase/public product table.
 
 Use this to summarize the review backlog:
 
@@ -138,6 +140,13 @@ Use this to export ambiguous and likely-new rows into an operator review CSV:
 
 ```bash
 node scripts/ops/source-review-export.mjs --kind all --output reports/source-review-queue.csv
+```
+
+Use this to import generated review JSONs into the local durable review queue:
+
+```bash
+psql pizza_enrichment < scripts/enrichment/source-review-queue-schema.sql
+node scripts/ops/import-source-review-queue.mjs --input-dir reports/source-review --apply
 ```
 
 ## Primary References

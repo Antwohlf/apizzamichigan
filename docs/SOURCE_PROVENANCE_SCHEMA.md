@@ -10,6 +10,8 @@ The near-term model is intentionally small:
 
 The current `pizza_places` and `taco_places` tables continue serving the app.
 New source evidence goes into one shared table: `place_sources`.
+Ambiguous and likely-new source rows go into one local operator table:
+`source_review_queue`.
 
 ## Why This Exists
 
@@ -62,6 +64,52 @@ CREATE INDEX idx_place_sources_source
 
 This table is shared by APizzaMichigan and TacoBoutMichigan. It should not be
 duplicated into pizza-specific and taco-specific versions.
+
+### `source_review_queue`
+
+One row per ambiguous or likely-new source record awaiting an operator decision.
+
+```sql
+CREATE TABLE source_review_queue (
+  id BIGSERIAL PRIMARY KEY,
+
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('pizza', 'taco')),
+  review_kind TEXT NOT NULL CHECK (review_kind IN ('ambiguous', 'likely_new')),
+
+  source TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_name TEXT,
+  source_url TEXT,
+  source_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+  nearest_place_id BIGINT,
+  nearest_google_place_id TEXT,
+  nearest_place_name TEXT,
+  nearest_distance_m NUMERIC(10, 3),
+  nearest_name_score NUMERIC(8, 4),
+  review_reason TEXT,
+
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'accepted', 'linked', 'rejected', 'ignored')),
+  decision TEXT,
+  canonical_place_id BIGINT,
+  reviewer_notes TEXT,
+  reviewed_at TIMESTAMPTZ,
+  reviewed_by TEXT,
+
+  report_file TEXT,
+  report_generated_at TIMESTAMPTZ,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (entity_type, source, source_id, review_kind)
+);
+```
+
+This is local workflow state. It should not be synced to Supabase unless an
+admin review product needs it there. It does not imply that a source row should
+be imported into `pizza_places` or linked into `place_sources`; it only records
+that the row needs a decision.
 
 ## Stable Source Names
 
@@ -160,8 +208,10 @@ not need a field-level provenance table until we feel real pain from ambiguity.
 4. Keep `google_place_id` in place until app and sync code no longer depend on it.
 5. Prototype new source families with read-only sample reports first.
 6. Add accepted matches to `place_sources`, not directly to `pizza_places`.
-7. Promote only clearly useful canonical fields after reviewing source quality.
-8. Keep `place_sources` local-only for now. Supabase should receive canonical
+7. Add ambiguous and likely-new candidates to `source_review_queue` for durable
+   local review.
+8. Promote only clearly useful canonical fields after reviewing source quality.
+9. Keep `place_sources` and `source_review_queue` local-only for now. Supabase should receive canonical
    product fields, not raw source evidence, until a public/admin provenance
    feature requires it.
 
@@ -178,6 +228,8 @@ The source input adapter is:
 ```bash
 node scripts/ops/source-input-sample-report.mjs --list-sources
 node scripts/ops/source-input-sample-report.mjs --source all_the_places --input data/source-samples/example.geojson
+node scripts/ops/import-source-review-queue.mjs --input-dir reports/source-review
+node scripts/ops/import-source-review-queue.mjs --apply-schema --apply
 ```
 
 ## What We Are Not Adding Yet

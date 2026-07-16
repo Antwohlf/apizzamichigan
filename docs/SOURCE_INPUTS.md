@@ -92,6 +92,21 @@ node scripts/ops/source-review-export.mjs \
   --output reports/source-review-queue.csv
 ```
 
+For a durable local review queue, create the local table and import generated
+review JSONs:
+
+```bash
+psql pizza_enrichment < scripts/enrichment/source-review-queue-schema.sql
+
+node scripts/ops/import-source-review-queue.mjs \
+  --input-dir reports/source-review \
+  --apply
+```
+
+The importer only writes `source_review_queue`. It does not write
+`pizza_places`, `taco_places`, `place_sources`, or Supabase. Existing reviewed
+rows are preserved; reruns refresh only pending rows.
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.
@@ -115,8 +130,8 @@ Dry-run sample reports produce three buckets:
 | Bucket | Meaning | Next Action |
 | --- | --- | --- |
 | Matched existing places | Source likely describes a row already in `pizza_places`. | Can be written to `place_sources` with `--apply`. |
-| Ambiguous review candidates | Nearby source record exists but name confidence is weak. | Manual review before source record import. |
-| Likely new/unmatched candidates | No nearby current row inside the configured radius. | Candidate for future import review, not automatic canonical insert. |
+| Ambiguous review candidates | Nearby source record exists but name confidence is weak. | Import to `source_review_queue`; manual review before source record import. |
+| Likely new/unmatched candidates | No nearby current row inside the configured radius. | Import to `source_review_queue`; candidate for future import review, not automatic canonical insert. |
 
 When a source graduates from dry-run to persistence:
 
