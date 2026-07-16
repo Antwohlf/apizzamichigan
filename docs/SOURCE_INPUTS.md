@@ -136,6 +136,21 @@ coordinates are not import-ready; regenerate/reimport the review artifact after
 the adapter preserves coordinates instead of creating a canonical place from an
 incomplete row.
 
+Before building any canonical import path, run a read-only preflight over
+accepted likely-new rows:
+
+```bash
+node scripts/ops/preflight-reviewed-new-place-import.mjs \
+  --entity pizza \
+  --nearby-radius-m 150 \
+  --output reports/reviewed-new-place-preflight.csv
+```
+
+The preflight builds proposed canonical payloads, checks required source
+identity/coordinate fields, warns about nearby canonical rows, and writes an
+operator CSV if requested. It does not create canonical places, write
+`place_sources`, update `source_review_queue`, or sync anything to Supabase.
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.
