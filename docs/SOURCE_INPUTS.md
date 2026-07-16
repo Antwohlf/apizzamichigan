@@ -248,6 +248,9 @@ Run repeatable ATP spider batches with:
 node scripts/ops/import-atp-spiders.mjs --default-spiders
 ```
 
+`--default-spiders` reads `config/atp-pizza-spiders.json`, which separates
+import-enabled spiders from known gaps and false positives.
+
 Before a large ATP run, preflight the exact spider set against the current ATP
 stats:
 

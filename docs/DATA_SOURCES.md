@@ -136,7 +136,8 @@ As of 2026-07-16, the iMac local database has:
   - `11,858` likely-new ATP rows pending review
 
 The current ATP batch set includes the original chain shortlist plus a small
-regional batch:
+regional batch. The machine-readable source of truth for
+`import-atp-spiders --default-spiders` is `config/atp-pizza-spiders.json`:
 
 - Original shortlist: `little_caesars_us`, `pizza_hut_us`,
   `dominos_pizza_us`, `papa_johns`, `marcos`, `papa_murphys`, `mod_pizza`,

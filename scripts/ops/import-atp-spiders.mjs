@@ -12,6 +12,7 @@ import { basename, join, resolve } from 'path';
 
 const DEFAULT_BASE_URL = 'https://data.alltheplaces.xyz/runs/latest/output';
 const DEFAULT_LATEST_URL = 'https://data.alltheplaces.xyz/runs/latest.json';
+const DEFAULT_MANIFEST_PATH = 'config/atp-pizza-spiders.json';
 const DEFAULT_SPIDERS = [
   'little_caesars_us',
   'pizza_hut_us',
@@ -36,6 +37,8 @@ function parseArgs(argv) {
     downloadDir: '/tmp',
     baseUrl: DEFAULT_BASE_URL,
     latestUrl: DEFAULT_LATEST_URL,
+    manifestPath: DEFAULT_MANIFEST_PATH,
+    useDefaultSpiders: false,
     preflight: true,
     preflightOnly: false,
     apply: false,
@@ -47,12 +50,13 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === '--spider') args.spiders.push(argv[++i]);
     else if (arg === '--spiders') args.spiders.push(...argv[++i].split(',').map(item => item.trim()).filter(Boolean));
-    else if (arg === '--default-spiders') args.spiders.push(...DEFAULT_SPIDERS);
+    else if (arg === '--default-spiders') args.useDefaultSpiders = true;
     else if (arg === '--entity') args.entity = argv[++i];
     else if (arg === '--output-dir') args.outputDir = argv[++i];
     else if (arg === '--download-dir') args.downloadDir = argv[++i];
     else if (arg === '--base-url') args.baseUrl = argv[++i].replace(/\/$/, '');
     else if (arg === '--latest-url') args.latestUrl = argv[++i];
+    else if (arg === '--manifest') args.manifestPath = argv[++i];
     else if (arg === '--skip-preflight') args.preflight = false;
     else if (arg === '--preflight-only') args.preflightOnly = true;
     else if (arg === '--apply') args.apply = true;
@@ -66,6 +70,10 @@ function parseArgs(argv) {
     }
   }
 
+  if (args.useDefaultSpiders) {
+    args.spiders.push(...loadManifestSpiders(args.manifestPath));
+  }
+  args.spiders = [...new Set(args.spiders)];
   if (!args.spiders.length) throw new Error('Pass --spider <name>, --spiders <a,b>, or --default-spiders');
   if (!['pizza', 'taco'].includes(args.entity)) throw new Error('Invalid --entity');
   if (!Number.isFinite(args.sample) || args.sample < 0) throw new Error('Invalid --sample');
@@ -85,6 +93,8 @@ Options:
   --download-dir <dir>  GeoJSON download directory (default /tmp)
   --base-url <url>      ATP output base URL (default latest run output)
   --latest-url <url>    ATP latest metadata URL for spider preflight
+  --manifest <file>     Manifest for --default-spiders
+                        (default config/atp-pizza-spiders.json)
   --skip-preflight      Do not validate spider names against ATP run stats
   --preflight-only      Validate spider names and exit before downloading
   --apply               Write accepted matches to place_sources
@@ -93,6 +103,22 @@ Options:
 
 Without --apply, this only downloads inputs and writes review JSON.
 `);
+}
+
+function loadManifestSpiders(manifestPath) {
+  const absPath = resolve(process.cwd(), manifestPath);
+  if (!existsSync(absPath)) {
+    return DEFAULT_SPIDERS;
+  }
+  const manifest = JSON.parse(readFileSync(absPath, 'utf8'));
+  const spiders = (manifest.spiders || [])
+    .filter(row => row.import_enabled)
+    .map(row => row.spider)
+    .filter(Boolean);
+  if (!spiders.length) {
+    throw new Error(`No import_enabled spiders found in ${manifestPath}`);
+  }
+  return spiders;
 }
 
 async function fetchJson(url) {
@@ -166,6 +192,10 @@ async function main() {
   if (args.preflightOnly) return;
 
   const rows = [];
+  if (args.useDefaultSpiders) {
+    console.log(`# ATP spider manifest: ${args.manifestPath}`);
+    console.log('');
+  }
   for (const spider of args.spiders) {
     const fileName = `${spider}.geojson`;
     const outputPath = join(args.downloadDir, fileName);
