@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import './ReviewGallery.css'
 
 const SMALL_TRANSFORM = 'width=480&quality=70&format=webp'
 const LARGE_TRANSFORM = 'width=1600&quality=75&format=webp'
@@ -113,107 +114,13 @@ export default function ReviewGallery({ photos = [], placeName }) {
   const activePhoto = normalizedPhotos[activeIndex]
   const hasMultiplePhotos = normalizedPhotos.length > 1
 
-  const gridStyle = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
-    gap: '8px',
-    marginTop: '0.75rem',
-  }
-
-  const thumbStyle = {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    borderRadius: '6px',
-  }
-
-  const overlayStyle = {
-    position: 'fixed',
-    inset: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.78)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 'clamp(12px, 3vw, 32px)',
-    zIndex: 10000,
-  }
-
-  const dialogStyle = {
-    position: 'relative',
-    width: 'min(1040px, calc(100vw - 32px))',
-    maxHeight: 'calc(100vh - 32px)',
-    background: '#0b1220',
-    border: '1px solid rgba(148, 163, 184, 0.28)',
-    borderRadius: '10px',
-    padding: '12px',
-    boxSizing: 'border-box',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    boxShadow: '0 32px 120px rgba(15, 23, 42, 0.55)',
-  }
-
-  const headerStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '12px',
-    minHeight: '36px',
-  }
-
-  const captionStyle = {
-    color: '#dbeafe',
-    fontSize: '0.9rem',
-    fontWeight: 650,
-    minWidth: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  }
-
-  const imageFrameStyle = {
-    minHeight: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#020617',
-    borderRadius: '8px',
-    overflow: 'hidden',
-  }
-
-  const fullImageStyle = {
-    display: 'block',
-    width: '100%',
-    height: 'auto',
-    maxHeight: hasMultiplePhotos ? 'calc(100vh - 160px)' : 'calc(100vh - 108px)',
-    objectFit: 'contain',
-    background: '#0b1220',
-  }
-
-  const controlsStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '0.75rem',
-  }
-
-  const controlButtonStyle = {
-    padding: '0.5rem 0.9rem',
-    borderRadius: '6px',
-    border: '1px solid rgba(148, 163, 184, 0.4)',
-    background: 'rgba(15, 23, 42, 0.94)',
-    color: '#e2e8f0',
-    cursor: 'pointer',
-    fontWeight: 600,
-  }
-
   const captionText = placeName
     ? `${placeName} detail ${activeIndex + 1} of ${normalizedPhotos.length}`
     : `Review detail ${activeIndex + 1} of ${normalizedPhotos.length}`
 
   const lightbox = isOpen && activePhoto && (
     <div
-      style={overlayStyle}
+      className="review-lightbox"
       role="dialog"
       aria-modal="true"
       aria-label={captionText}
@@ -232,7 +139,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
       onWheel={stopMapEvent}
     >
       <div
-        style={dialogStyle}
+        className="review-lightbox__dialog"
         onClick={stopMapEvent}
         onContextMenu={stopMapEvent}
         onDoubleClick={stopMapEvent}
@@ -244,10 +151,11 @@ export default function ReviewGallery({ photos = [], placeName }) {
         onTouchEnd={stopMapEvent}
         onWheel={stopMapEvent}
       >
-        <div style={headerStyle}>
-          <div style={captionStyle}>{captionText}</div>
+        <div className="review-lightbox__header">
+          <div className="review-lightbox__caption">{captionText}</div>
           <button
             type="button"
+            className="review-lightbox__icon-button"
             onClick={event => {
               stopMapEvent(event)
               close()
@@ -255,19 +163,24 @@ export default function ReviewGallery({ photos = [], placeName }) {
             onMouseDown={stopMapEvent}
             onPointerDown={stopMapEvent}
             onTouchStart={stopMapEvent}
-            style={controlButtonStyle}
             aria-label="Close photo viewer"
           >
-            Close
+            ×
           </button>
         </div>
-        <div style={imageFrameStyle}>
-          <img src={activePhoto.largeSrc} alt={captionText} loading="eager" style={fullImageStyle} />
+        <div className="review-lightbox__image-frame">
+          <img
+            className={`review-lightbox__image${hasMultiplePhotos ? ' review-lightbox__image--with-controls' : ''}`}
+            src={activePhoto.largeSrc}
+            alt={captionText}
+            loading="eager"
+          />
         </div>
         {hasMultiplePhotos && (
-          <div style={controlsStyle}>
+          <div className="review-lightbox__controls">
             <button
               type="button"
+              className="review-lightbox__control"
               onClick={event => {
                 stopMapEvent(event)
                 showPrev()
@@ -275,12 +188,12 @@ export default function ReviewGallery({ photos = [], placeName }) {
               onMouseDown={stopMapEvent}
               onPointerDown={stopMapEvent}
               onTouchStart={stopMapEvent}
-              style={controlButtonStyle}
             >
               Prev
             </button>
             <button
               type="button"
+              className="review-lightbox__control"
               onClick={event => {
                 stopMapEvent(event)
                 showNext()
@@ -288,7 +201,6 @@ export default function ReviewGallery({ photos = [], placeName }) {
               onMouseDown={stopMapEvent}
               onPointerDown={stopMapEvent}
               onTouchStart={stopMapEvent}
-              style={controlButtonStyle}
             >
               Next
             </button>
@@ -300,11 +212,12 @@ export default function ReviewGallery({ photos = [], placeName }) {
 
   return (
     <>
-      <div style={gridStyle}>
+      <div className="review-gallery">
         {normalizedPhotos.map((photo, index) => (
           <button
             key={photo.id}
             type="button"
+            className="review-gallery__thumb"
             onClick={event => {
               stopMapEvent(event)
               openAt(index)
@@ -316,18 +229,15 @@ export default function ReviewGallery({ photos = [], placeName }) {
             onPointerUp={stopMapEvent}
             onTouchStart={stopMapEvent}
             onTouchEnd={stopMapEvent}
-            style={{
-              padding: 0,
-              border: '1px solid var(--app-border)',
-              borderRadius: '6px',
-              background: 'var(--app-card)',
-              cursor: 'pointer',
-              overflow: 'hidden',
-              aspectRatio: '1 / 1',
-            }}
             aria-label={`Open photo ${index + 1}${placeName ? ` for ${placeName}` : ''}`}
           >
-            <img data-testid="review-gallery-thumbnail" src={photo.smallSrc} alt="" loading="lazy" style={thumbStyle} />
+            <img
+              data-testid="review-gallery-thumbnail"
+              className="review-gallery__thumb-image"
+              src={photo.smallSrc}
+              alt=""
+              loading="lazy"
+            />
           </button>
         ))}
       </div>

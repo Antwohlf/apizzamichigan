@@ -1,0 +1,144 @@
+.review-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+  margin-top: 0.75rem;
+}
+
+.review-gallery__thumb {
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-card);
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+}
+
+.review-gallery__thumb:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.review-gallery__thumb-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.review-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(12px, 3vw, 32px);
+  background: rgba(2, 6, 23, 0.84);
+}
+
+.review-lightbox__dialog {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  width: min(1080px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 10px;
+  box-sizing: border-box;
+  background: #0b1220;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  box-shadow: 0 32px 120px rgba(0, 0, 0, 0.56);
+}
+
+.review-lightbox__header,
+.review-lightbox__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-lightbox__header {
+  min-height: 32px;
+  justify-content: space-between;
+}
+
+.review-lightbox__caption {
+  min-width: 0;
+  overflow: hidden;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-lightbox__image-frame {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #020617;
+  border-radius: 6px;
+}
+
+.review-lightbox__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 112px);
+  object-fit: contain;
+}
+
+.review-lightbox__image--with-controls {
+  max-height: calc(100vh - 164px);
+}
+
+.review-lightbox__controls {
+  justify-content: space-between;
+}
+
+.review-lightbox__control,
+.review-lightbox__icon-button {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.94);
+  color: #e2e8f0;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.review-lightbox__control {
+  min-width: 78px;
+  padding: 0.5rem 0.85rem;
+  border-radius: 6px;
+}
+
+.review-lightbox__icon-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 24px;
+  line-height: 26px;
+}
+
+.review-lightbox__control:focus-visible,
+.review-lightbox__icon-button:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .review-lightbox {
+    align-items: stretch;
+    padding: 8px;
+  }
+
+  .review-lightbox__dialog {
+    width: 100%;
+    max-height: calc(100vh - 16px);
+  }
+}
