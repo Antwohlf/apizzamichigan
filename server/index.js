@@ -228,6 +228,41 @@ async function readLocalSourceProvenance(entity) {
   }
 }
 
+async function withLocalPostgres(work) {
+  const client = new pg.Client(localPostgresConfig())
+  try {
+    await client.connect()
+    return await work(client)
+  } finally {
+    try {
+      await client.end()
+    } catch (error) {
+      // Connection may never have opened; nothing to clean up.
+    }
+  }
+}
+
+async function sourceReviewQueueExists(client) {
+  const result = await client.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = 'source_review_queue'
+    ) AS exists
+  `)
+  return Boolean(result.rows[0]?.exists)
+}
+
+const safeInteger = (value, fallback, { min = 0, max = 1000 } = {}) => {
+  const number = Number.parseInt(value, 10)
+  if (!Number.isFinite(number)) return fallback
+  return Math.min(max, Math.max(min, number))
+}
+
+const allowedSourceReviewStatuses = new Set(['pending', 'accepted', 'linked', 'rejected', 'ignored'])
+const allowedSourceReviewKinds = new Set(['ambiguous', 'likely_new'])
+
 const getStorageClient = () => {
   if (!serviceClient?.storage) {
     throw new Error('Supabase storage client unavailable')
@@ -684,6 +719,141 @@ app.get('/api/admin/source-provenance', requireAdminAuth, async (req, res) => {
   } catch (error) {
     console.error('[admin] source provenance error', error)
     return res.status(500).json({ error: 'Failed to load source provenance.' })
+  }
+})
+
+app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => {
+  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+  const status = (req.query?.status || 'pending').toString()
+  const kind = (req.query?.kind || '').toString()
+  const limit = safeInteger(req.query?.limit, 50, { min: 1, max: 100 })
+  const offset = safeInteger(req.query?.offset, 0, { min: 0, max: 1000000 })
+
+  if (!allowedSourceReviewStatuses.has(status)) {
+    return res.status(400).json({ error: 'Invalid source review status.' })
+  }
+  if (kind && !allowedSourceReviewKinds.has(kind)) {
+    return res.status(400).json({ error: 'Invalid source review kind.' })
+  }
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      if (!(await sourceReviewQueueExists(client))) {
+        return { available: false, data: [], total: 0 }
+      }
+
+      const filters = ['entity_type = $1', 'status = $2']
+      const values = [entity, status]
+      if (kind) {
+        values.push(kind)
+        filters.push(`review_kind = $${values.length}`)
+      }
+      const where = filters.join(' AND ')
+      const countResult = await client.query(`SELECT COUNT(*)::int AS total FROM source_review_queue WHERE ${where}`, values)
+      const total = countResult.rows[0]?.total || 0
+      values.push(limit, offset)
+      const rows = await client.query(`
+        SELECT
+          id,
+          entity_type,
+          review_kind,
+          source,
+          source_id,
+          source_name,
+          source_url,
+          source_data,
+          nearest_place_id,
+          nearest_google_place_id,
+          nearest_place_name,
+          nearest_distance_m,
+          nearest_name_score,
+          review_reason,
+          status,
+          decision,
+          canonical_place_id,
+          reviewer_notes,
+          reviewed_at,
+          reviewed_by,
+          report_file,
+          report_generated_at,
+          imported_at,
+          updated_at
+        FROM source_review_queue
+        WHERE ${where}
+        ORDER BY
+          CASE review_kind WHEN 'ambiguous' THEN 0 ELSE 1 END,
+          nearest_distance_m NULLS LAST,
+          source_name NULLS LAST,
+          id
+        LIMIT $${values.length - 1}
+        OFFSET $${values.length}
+      `, values)
+
+      return { available: true, data: rows.rows, total }
+    })
+
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review queue fetch error', error)
+    return res.status(500).json({ error: 'Failed to load source review queue.' })
+  }
+})
+
+app.patch('/api/admin/source-review-queue/:id', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  const status = (req.body?.status || '').toString()
+  const reviewerNotes = typeof req.body?.reviewerNotes === 'string'
+    ? req.body.reviewerNotes.trim().slice(0, 1000)
+    : null
+  const canonicalPlaceId = req.body?.canonicalPlaceId == null || req.body?.canonicalPlaceId === ''
+    ? null
+    : safeInteger(req.body.canonicalPlaceId, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid source review queue id.' })
+  }
+  if (!allowedSourceReviewStatuses.has(status) || status === 'pending') {
+    return res.status(400).json({ error: 'Invalid source review decision status.' })
+  }
+  if (status === 'linked' && !canonicalPlaceId) {
+    return res.status(400).json({ error: 'Link decisions require a canonical place id.' })
+  }
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      if (!(await sourceReviewQueueExists(client))) {
+        const error = new Error('source_review_queue is not configured.')
+        error.status = 503
+        throw error
+      }
+
+      const result = await client.query(`
+        UPDATE source_review_queue
+        SET
+          status = $2,
+          decision = $2,
+          canonical_place_id = $3,
+          reviewer_notes = $4,
+          reviewed_at = NOW(),
+          reviewed_by = 'admin',
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `, [id, status, canonicalPlaceId, reviewerNotes])
+
+      if (!result.rows[0]) {
+        const error = new Error('Source review queue row not found.')
+        error.status = 404
+        throw error
+      }
+
+      return { data: result.rows[0] }
+    })
+
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review queue update error', error)
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to update source review row.' })
   }
 })
 

@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react'
 
 const numberFormat = new Intl.NumberFormat()
+const REVIEW_STATUS_OPTIONS = ['pending', 'accepted', 'linked', 'rejected', 'ignored']
+const REVIEW_KIND_OPTIONS = [
+  { value: '', label: 'All kinds' },
+  { value: 'ambiguous', label: 'Ambiguous' },
+  { value: 'likely_new', label: 'Likely new' },
+]
 
 const formatCount = value => numberFormat.format(Number(value) || 0)
 
@@ -84,6 +90,14 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const [payload, setPayload] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [queueRows, setQueueRows] = useState([])
+  const [queueTotal, setQueueTotal] = useState(0)
+  const [queueStatus, setQueueStatus] = useState('pending')
+  const [queueKind, setQueueKind] = useState('')
+  const [queueLoading, setQueueLoading] = useState(false)
+  const [queueError, setQueueError] = useState('')
+  const [queueMessage, setQueueMessage] = useState('')
+  const [actionState, setActionState] = useState({})
 
   useEffect(() => {
     let cancelled = false
@@ -111,6 +125,94 @@ export default function AdminSourceProvenancePanel({ entity }) {
       cancelled = true
     }
   }, [entity])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadQueue() {
+      setQueueLoading(true)
+      setQueueError('')
+      setQueueMessage('')
+      try {
+        const params = new URLSearchParams({
+          entity,
+          status: queueStatus,
+          limit: '25',
+        })
+        if (queueKind) params.set('kind', queueKind)
+        const res = await fetch(`/api/admin/source-review-queue?${params.toString()}`, { credentials: 'include' })
+        if (!res.ok) {
+          const text = await res.text()
+          throw new Error(text || 'Failed to load review queue')
+        }
+        const data = await res.json()
+        if (!cancelled) {
+          setQueueRows(Array.isArray(data?.data) ? data.data : [])
+          setQueueTotal(Number(data?.total) || 0)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setQueueError(err?.message || 'Failed to load review queue.')
+          setQueueRows([])
+          setQueueTotal(0)
+        }
+      } finally {
+        if (!cancelled) setQueueLoading(false)
+      }
+    }
+
+    loadQueue()
+    return () => {
+      cancelled = true
+    }
+  }, [entity, queueKind, queueStatus])
+
+  const recordDecision = async (row, status) => {
+    let reviewerNotes = ''
+    let canonicalPlaceId = ''
+
+    if (typeof window !== 'undefined') {
+      if (status === 'linked') {
+        canonicalPlaceId = window.prompt('Canonical place id to link this source row to:', row.nearest_place_id || '') || ''
+        if (!canonicalPlaceId) return
+      }
+      reviewerNotes = window.prompt(`Notes for ${status} decision:`, '') || ''
+    }
+
+    setActionState(prev => ({ ...prev, [row.id]: status }))
+    setQueueError('')
+    setQueueMessage('')
+    try {
+      const res = await fetch(`/api/admin/source-review-queue/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status, canonicalPlaceId, reviewerNotes }),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || 'Failed to update review row')
+      }
+      const data = await res.json()
+      const updated = data?.data
+      if (updated) {
+        setQueueRows(prev => queueStatus === updated.status
+          ? prev.map(item => (item.id === updated.id ? updated : item))
+          : prev.filter(item => item.id !== updated.id)
+        )
+        setQueueTotal(prev => queueStatus === updated.status ? prev : Math.max(0, prev - 1))
+        setQueueMessage(`Marked "${updated.source_name || updated.source_id}" as ${updated.status}.`)
+      }
+    } catch (err) {
+      setQueueError(err?.message || 'Failed to update review row.')
+    } finally {
+      setActionState(prev => {
+        const next = { ...prev }
+        delete next[row.id]
+        return next
+      })
+    }
+  }
 
   const totals = useMemo(() => {
     const sourceRows = payload?.database?.sourceCounts || []
@@ -221,25 +323,117 @@ export default function AdminSourceProvenancePanel({ entity }) {
             {!database.reviewQueue?.available ? (
               <p style={{ margin: 0, color: '#94a3b8' }}>source_review_queue is not created on this database yet.</p>
             ) : (
-              <div style={tableWrapStyle}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>Kind</th>
-                      <th style={thStyle}>Status</th>
-                      <th style={thStyle}>Rows</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(database.reviewQueue.statusCounts || []).map(row => (
-                      <tr key={`${row.review_kind}-${row.status}`}>
-                        <td style={tdStyle}>{row.review_kind}</td>
-                        <td style={tdStyle}>{row.status}</td>
-                        <td style={tdStyle}>{formatCount(row.rows)}</td>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div style={tableWrapStyle}>
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Kind</th>
+                        <th style={thStyle}>Status</th>
+                        <th style={thStyle}>Rows</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(database.reviewQueue.statusCounts || []).map(row => (
+                        <tr key={`${row.review_kind}-${row.status}`}>
+                          <td style={tdStyle}>{row.review_kind}</td>
+                          <td style={tdStyle}>{row.status}</td>
+                          <td style={tdStyle}>{formatCount(row.rows)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'end' }}>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
+                    Status
+                    <select
+                      value={queueStatus}
+                      onChange={event => setQueueStatus(event.target.value)}
+                      style={{ padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    >
+                      {REVIEW_STATUS_OPTIONS.map(status => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
+                    Kind
+                    <select
+                      value={queueKind}
+                      onChange={event => setQueueKind(event.target.value)}
+                      style={{ padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    >
+                      {REVIEW_KIND_OPTIONS.map(option => (
+                        <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div style={{ color: '#94a3b8', fontWeight: 700 }}>
+                    Showing {formatCount(queueRows.length)} of {formatCount(queueTotal)}
+                  </div>
+                </div>
+
+                {queueMessage ? <p style={{ margin: 0, color: '#34d399' }}>{queueMessage}</p> : null}
+                {queueError ? <p style={{ margin: 0, color: '#f87171' }}>{queueError}</p> : null}
+                {queueLoading ? <p style={{ margin: 0, color: '#fbbf24' }}>Loading review queue…</p> : null}
+
+                {!queueLoading && !queueError && queueRows.length === 0 ? (
+                  <p style={{ margin: 0, color: '#94a3b8' }}>No rows in this review bucket.</p>
+                ) : null}
+
+                {!queueLoading && queueRows.length > 0 ? (
+                  <div style={{ display: 'grid', gap: '0.75rem' }}>
+                    {queueRows.map(row => {
+                      const sourceAddress = row.source_data?.address || row.source_data?.['addr:full'] || ''
+                      const sourceWebsite = row.source_data?.website || row.source_data?.['contact:website'] || ''
+                      const busy = Boolean(actionState[row.id])
+                      return (
+                        <article key={row.id} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: 10, padding: '0.9rem', background: '#101418' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                            <div>
+                              <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '1rem' }}>{row.source_name || row.source_id}</h3>
+                              <p style={{ margin: '0.25rem 0 0', color: '#94a3b8' }}>
+                                {row.review_kind} · {row.source} · {row.source_id}
+                              </p>
+                            </div>
+                            <div style={{ color: '#cbd5e1', fontWeight: 800 }}>{row.status}</div>
+                          </div>
+                          <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', color: '#cbd5e1' }}>
+                            <div>
+                              <strong style={{ color: '#f8fafc' }}>Source</strong>
+                              <div>{sourceAddress || 'no address'}</div>
+                              {sourceWebsite ? <div><a href={sourceWebsite} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Website</a></div> : null}
+                            </div>
+                            <div>
+                              <strong style={{ color: '#f8fafc' }}>Nearest canonical</strong>
+                              <div>{row.nearest_place_name || 'none'}</div>
+                              <div>{row.nearest_place_id ? `id ${row.nearest_place_id}` : ''}</div>
+                              <div>
+                                {row.nearest_distance_m != null ? `${Number(row.nearest_distance_m).toFixed(1)}m` : 'no distance'}
+                                {row.nearest_name_score != null ? ` · score ${Number(row.nearest_name_score).toFixed(2)}` : ''}
+                              </div>
+                            </div>
+                            <div>
+                              <strong style={{ color: '#f8fafc' }}>Review</strong>
+                              <div>{row.review_reason || 'n/a'}</div>
+                              <div>{row.report_file || ''}</div>
+                            </div>
+                          </div>
+                          {queueStatus === 'pending' ? (
+                            <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <button type="button" disabled={busy} onClick={() => recordDecision(row, 'accepted')} style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Accept new</button>
+                              <button type="button" disabled={busy} onClick={() => recordDecision(row, 'linked')} style={{ border: '1px solid #38bdf8', borderRadius: 8, background: 'transparent', color: '#7dd3fc', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Link</button>
+                              <button type="button" disabled={busy} onClick={() => recordDecision(row, 'rejected')} style={{ border: '1px solid #f87171', borderRadius: 8, background: 'transparent', color: '#fca5a5', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Reject</button>
+                              <button type="button" disabled={busy} onClick={() => recordDecision(row, 'ignored')} style={{ border: '1px solid #64748b', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Ignore</button>
+                            </div>
+                          ) : null}
+                        </article>
+                      )
+                    })}
+                  </div>
+                ) : null}
               </div>
             )}
           </section>

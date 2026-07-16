@@ -107,6 +107,17 @@ The importer only writes `source_review_queue`. It does not write
 `pizza_places`, `taco_places`, `place_sources`, or Supabase. Existing reviewed
 rows are preserved; reruns refresh only pending rows.
 
+The admin Sources tab can page through the local queue and record conservative
+decisions:
+
+- `accepted`: source row looks like a future new canonical place candidate
+- `linked`: source row should attach to an existing canonical place id
+- `rejected`: source row should not be used
+- `ignored`: not worth acting on now
+
+These decisions are review metadata only. They do not create places, link
+`place_sources`, or sync anything to Supabase.
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.
