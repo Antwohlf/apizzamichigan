@@ -78,6 +78,12 @@ The review output contains:
 - nearest canonical match, when one exists
 - review reason and distance/name scores
 
+Summarize generated review files with:
+
+```bash
+node scripts/ops/source-review-summary.mjs
+```
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.
@@ -114,6 +120,25 @@ When a source graduates from dry-run to persistence:
 6. Set `match_method` and `match_confidence`.
 7. Promote canonical fields only through a later explicit review path.
 
+## Canonical Field Promotion Policy
+
+Source adapters do not promote canonical fields. They preserve evidence in
+`place_sources` and review artifacts only.
+
+When promotion tooling is added later, use these defaults:
+
+| Field Group | Auto-Promote? | Rule |
+| --- | --- | --- |
+| `website_url`, `phone` | Fill-if-null only | Accepted source match, first-party or high-confidence source, no manual value present. |
+| `hours`, social links, service flags | Fill-if-null only | Store source evidence first; promote only factual values with clear source ownership. |
+| `name`, `address`, `lat`, `lng`, `state` | No | Identity fields need review because bad merges are expensive. |
+| `style`, `price_range`, `style_confidence` | No from source adapters | These remain classifier/manual/editorial fields. |
+| `rating`, `notes`, `status`, photos | Never | Editorial/user-facing fields stay manual unless an explicit admin action changes them. |
+
+Supabase sync should continue to move product-facing canonical fields, not raw
+source evidence. Keep `place_sources` local-only until the public app or admin
+UI has a concrete provenance feature that needs it.
+
 ## Source Notes
 
 ### All the Places
@@ -139,7 +164,9 @@ Useful fields:
 - `phone`
 - OSM-like category fields such as `amenity`, `cuisine`, or `shop`
 
-First APizza use: chain and regional pizzeria location finders.
+First APizza use: chain and regional pizzeria location finders. Current
+production posture is accepted-match imports to local `place_sources` only;
+ambiguous and likely-new rows remain in generated review files.
 
 ### Overture Places
 

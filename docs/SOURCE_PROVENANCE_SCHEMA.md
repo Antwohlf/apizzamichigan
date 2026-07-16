@@ -161,6 +161,9 @@ not need a field-level provenance table until we feel real pain from ambiguity.
 5. Prototype new source families with read-only sample reports first.
 6. Add accepted matches to `place_sources`, not directly to `pizza_places`.
 7. Promote only clearly useful canonical fields after reviewing source quality.
+8. Keep `place_sources` local-only for now. Supabase should receive canonical
+   product fields, not raw source evidence, until a public/admin provenance
+   feature requires it.
 
 The first-phase tooling is:
 
@@ -190,8 +193,8 @@ Those may become useful later, but they are overkill for the current stage.
 
 ## Open Questions
 
-- Whether `place_sources` should eventually be mirrored to Supabase or remain
-  local-only.
+- Which provenance summaries should be exposed in admin UI before mirroring
+  `place_sources` to Supabase.
 - Whether public attribution should be dataset-level, row-level, or both.
 - Whether ODbL-derived source records need special separation before FSQ/ATP are
   merged into broader production outputs.

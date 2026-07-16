@@ -38,7 +38,7 @@ The source-of-record rule is:
 | --- | --- | --- | --- | --- |
 | OSM / Overpass | Existing broad place backbone and OSM evidence | Durable, with OSM attribution/ODbL obligations | Active | Already imported, enriched locally, and backfilled into `place_sources` for pizza rows |
 | Foursquare OS Places | Second broad open POI backbone | Durable under Apache 2.0 notice/license compliance | High | Read-only sample comparison tooling added; no imports yet |
-| All the Places | Chain and official location-finder supplement | Durable according to project output license; retain spider/source URL | High | Read-only sample adapter added; no imports yet |
+| All the Places | Chain and official location-finder supplement | Durable according to project output license; retain spider/source URL | High | Active for accepted pizza matches into `place_sources`; ambiguous and likely-new rows remain review artifacts |
 | Overture Places | External IDs, dedupe, confidence/source metadata | Generally durable, but release/theme attribution must be checked | Medium | Read-only sample adapter added; no imports yet |
 | Wikidata | Chain/notable-place enrichment and external IDs | Durable under CC0 structured data | Medium | Read-only sample adapter added; no imports yet |
 | Government/open data | License/inspection/existence overlays | Durable only when dataset license permits | Medium | Read-only sample adapter added; dataset registry still needed |
@@ -51,11 +51,13 @@ The source-of-record rule is:
 1. Keep OSM as the current production backbone.
 2. Add the shared `place_sources` provenance table before importing another broad source.
    The first implementation phase is pizza-only; do not backfill TacoBout yet.
-3. Use read-only source input adapters for FSQ, All the Places, Overture,
-   Wikidata, government/open data, DENUE, and official website samples.
+3. Use source input adapters for FSQ, All the Places, Overture, Wikidata,
+   government/open data, DENUE, and official website samples. Adapters are
+   dry-run by default and may write accepted matches only to `place_sources`.
 4. Prototype a Michigan or North America slice of Foursquare OS Places.
 5. Measure FSQ overlap and gaps against current OSM-derived `pizza_places`.
-6. Prototype All the Places for pizza/taco chains and regional restaurant groups.
+6. Continue All the Places pizza chain/regional spiders as provenance-only
+   imports. Do not backfill TacoBout yet.
 7. Evaluate Overture only after FSQ and ATP show their incremental coverage.
 8. Build a government/open-data registry for the jurisdictions that matter most.
 9. Treat DENUE as a separate future track for Mexico/TacoBout expansion.
@@ -114,6 +116,23 @@ enrichment and guarded sync pipeline.
 The simplified provenance table design lives in `docs/SOURCE_PROVENANCE_SCHEMA.md`.
 The FSQ sample-first workflow lives in `docs/FSQ_OS_PLACES_PROTOTYPE.md`.
 The shared input contract for all source families lives in `docs/SOURCE_INPUTS.md`.
+
+## Current APizza Source State
+
+As of 2026-07-16, the iMac local database has:
+
+- OSM pizza provenance backfilled for all OSM-backed `pizza_places` rows.
+- All the Places accepted matches persisted to `place_sources` for selected
+  pizza chain/regional spiders.
+- Review JSON artifacts for ambiguous and likely-new source rows under
+  `reports/source-review/` on the iMac. These files are intentionally ignored by
+  Git because they are generated operational artifacts.
+
+Use this to summarize the review backlog:
+
+```bash
+node scripts/ops/source-review-summary.mjs
+```
 
 ## Primary References
 

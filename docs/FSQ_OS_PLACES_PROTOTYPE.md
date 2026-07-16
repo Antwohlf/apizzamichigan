@@ -62,7 +62,8 @@ It also accepts common aliases such as `lat`, `lng`, `lon`, `city`, `state`,
 Run this against a small exported FSQ sample:
 
 ```bash
-node scripts/ops/fsq-os-places-sample-report.mjs \
+node scripts/ops/source-input-sample-report.mjs \
+  --source fsq_os_places \
   --input data/fsq-os-places-mi-pizza-sample.ndjson \
   --entity pizza \
   --max-distance-m 100 \
@@ -76,6 +77,9 @@ The report is read-only. It:
 2. Filters the sample to active pizza-ish candidates.
 3. Compares each candidate to `pizza_places` by distance and normalized name.
 4. Prints matched, ambiguous, and likely-new samples.
+
+Add `--review-output reports/source-review/fsq-mi-pizza-review.json` to preserve
+ambiguous and likely-new rows for later review.
 
 ## Match Meaning
 
