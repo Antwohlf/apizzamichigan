@@ -127,6 +127,16 @@ function StatusMessage({ children, tone = '#94a3b8' }) {
   )
 }
 
+const reviewFilterButtonStyle = {
+  border: '1px solid rgba(56, 189, 248, 0.45)',
+  borderRadius: 8,
+  background: 'transparent',
+  color: '#7dd3fc',
+  padding: '0.35rem 0.55rem',
+  fontWeight: 800,
+  cursor: 'pointer',
+}
+
 export default function AdminSourceProvenancePanel({ entity }) {
   const [payload, setPayload] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -282,6 +292,18 @@ export default function AdminSourceProvenancePanel({ entity }) {
     }
   }, [payload])
 
+  const focusReviewReport = (reportFile, kind = '') => {
+    setQueueStatus('pending')
+    setQueueSource('')
+    setQueueSearch('')
+    setQueueKind(kind)
+    setQueueReportFile(reportFile || '')
+    setQueuePage(0)
+    if (typeof document !== 'undefined') {
+      document.getElementById('source-review-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
   if (loading) {
     return <p style={{ color: '#fbbf24' }}>Loading source provenance…</p>
   }
@@ -328,7 +350,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
         </StatusMessage>
       ) : (
         <>
-          <section style={blockStyle}>
+          <section id="source-review-queue" style={blockStyle}>
             <h2 style={{ margin: '0 0 0.75rem', color: '#f8fafc', fontSize: '1rem' }}>Source Counts</h2>
             <div style={tableWrapStyle}>
               <table style={tableStyle}>
@@ -491,12 +513,13 @@ export default function AdminSourceProvenancePanel({ entity }) {
                     >
                       Next
                     </button>
-                    {queueSearch || queueSource || queueReportFile ? (
+                    {queueSearch || queueSource || queueReportFile || queueKind ? (
                       <button
                         type="button"
                         onClick={() => {
                           setQueueSearch('')
                           setQueueSource('')
+                          setQueueKind('')
                           setQueueReportFile('')
                         }}
                         style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: 'pointer' }}
@@ -614,12 +637,43 @@ export default function AdminSourceProvenancePanel({ entity }) {
               <tbody>
                 {(reviewArtifacts.reports || []).map(row => (
                   <tr key={row.file}>
-                    <td style={tdStyle}>{row.file}</td>
+                    <td style={tdStyle}>
+                      <button
+                        type="button"
+                        onClick={() => focusReviewReport(row.file)}
+                        style={{ ...reviewFilterButtonStyle, maxWidth: 260, overflowWrap: 'anywhere', textAlign: 'left' }}
+                        title="Show this report in the durable review queue"
+                      >
+                        {row.file}
+                      </button>
+                    </td>
                     <td style={tdStyle}>{row.sourceLabel || row.source}</td>
                     <td style={tdStyle}>{formatCount(row.inputRows)}</td>
                     <td style={tdStyle}>{formatCount(row.matched)}</td>
-                    <td style={tdStyle}>{formatCount(row.ambiguous)}</td>
-                    <td style={tdStyle}>{formatCount(row.likelyNew)}</td>
+                    <td style={tdStyle}>
+                      {Number(row.ambiguous) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => focusReviewReport(row.file, 'ambiguous')}
+                          style={reviewFilterButtonStyle}
+                          title="Show ambiguous rows from this report"
+                        >
+                          {formatCount(row.ambiguous)}
+                        </button>
+                      ) : formatCount(row.ambiguous)}
+                    </td>
+                    <td style={tdStyle}>
+                      {Number(row.likelyNew) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => focusReviewReport(row.file, 'likely_new')}
+                          style={reviewFilterButtonStyle}
+                          title="Show likely-new rows from this report"
+                        >
+                          {formatCount(row.likelyNew)}
+                        </button>
+                      ) : formatCount(row.likelyNew)}
+                    </td>
                     <td style={tdStyle}>{formatCount(row.accepted)}</td>
                   </tr>
                 ))}
