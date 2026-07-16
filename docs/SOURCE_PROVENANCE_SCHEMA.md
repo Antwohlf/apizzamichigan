@@ -1,6 +1,8 @@
 # Source Provenance Schema Design
 
-This is a design document, not an applied migration.
+This is the current simple provenance model. The table has been applied to the
+iMac local Postgres database for APizzaMichigan pizza rows only. It has not been
+applied to Supabase, and TacoBoutMichigan rows have not been backfilled.
 
 The near-term model is intentionally small:
 
@@ -147,12 +149,14 @@ not need a field-level provenance table until we feel real pain from ambiguity.
 
 ## Migration Strategy
 
-1. Create `place_sources` in local Postgres first.
-2. Backfill OSM rows from current `pizza_places.google_place_id` values:
+1. Create `place_sources` in local Postgres first. Completed on the iMac on
+   2026-07-16.
+2. Backfill OSM rows from current `pizza_places.google_place_id` values.
+   Completed on the iMac on 2026-07-16:
    - `google_place_id='osm:node/123'` becomes:
      - `source='osm'`
      - `source_id='node/123'`
-3. Do not backfill `taco_places` in the first phase.
+3. Do not backfill `taco_places` in the first phase. Current status: not done.
 4. Keep `google_place_id` in place until app and sync code no longer depend on it.
 5. Prototype Foursquare OS Places into staging/output files first.
 6. Add FSQ matches to `place_sources`, not directly to `pizza_places`.

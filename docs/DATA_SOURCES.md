@@ -36,7 +36,7 @@ The source-of-record rule is:
 
 | Source | Canonical Use | Persistence | Current Priority | Implementation Status |
 | --- | --- | --- | --- | --- |
-| OSM / Overpass | Existing broad place backbone and OSM evidence | Durable, with OSM attribution/ODbL obligations | Active | Already imported and enriched locally |
+| OSM / Overpass | Existing broad place backbone and OSM evidence | Durable, with OSM attribution/ODbL obligations | Active | Already imported, enriched locally, and backfilled into `place_sources` for pizza rows |
 | Foursquare OS Places | Second broad open POI backbone | Durable under Apache 2.0 notice/license compliance | High | Next prototype source |
 | All the Places | Chain and official location-finder supplement | Durable according to project output license; retain spider/source URL | High | Prototype after FSQ slice |
 | Overture Places | External IDs, dedupe, confidence/source metadata | Generally durable, but release/theme attribution must be checked | Medium | Evaluate after FSQ/ATP overlap measurement |
