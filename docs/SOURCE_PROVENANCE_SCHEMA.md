@@ -158,8 +158,8 @@ not need a field-level provenance table until we feel real pain from ambiguity.
      - `source_id='node/123'`
 3. Do not backfill `taco_places` in the first phase. Current status: not done.
 4. Keep `google_place_id` in place until app and sync code no longer depend on it.
-5. Prototype Foursquare OS Places into staging/output files first.
-6. Add FSQ matches to `place_sources`, not directly to `pizza_places`.
+5. Prototype new source families with read-only sample reports first.
+6. Add accepted matches to `place_sources`, not directly to `pizza_places`.
 7. Promote only clearly useful canonical fields after reviewing source quality.
 
 The first-phase tooling is:
@@ -168,6 +168,13 @@ The first-phase tooling is:
 node scripts/ops/backfill-place-sources.mjs
 node scripts/ops/backfill-place-sources.mjs --apply-schema
 node scripts/ops/backfill-place-sources.mjs --apply-backfill
+```
+
+The source input adapter is:
+
+```bash
+node scripts/ops/source-input-sample-report.mjs --list-sources
+node scripts/ops/source-input-sample-report.mjs --source all_the_places --input data/source-samples/example.geojson
 ```
 
 ## What We Are Not Adding Yet

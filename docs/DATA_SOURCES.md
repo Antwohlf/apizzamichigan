@@ -38,12 +38,12 @@ The source-of-record rule is:
 | --- | --- | --- | --- | --- |
 | OSM / Overpass | Existing broad place backbone and OSM evidence | Durable, with OSM attribution/ODbL obligations | Active | Already imported, enriched locally, and backfilled into `place_sources` for pizza rows |
 | Foursquare OS Places | Second broad open POI backbone | Durable under Apache 2.0 notice/license compliance | High | Read-only sample comparison tooling added; no imports yet |
-| All the Places | Chain and official location-finder supplement | Durable according to project output license; retain spider/source URL | High | Prototype after FSQ slice |
-| Overture Places | External IDs, dedupe, confidence/source metadata | Generally durable, but release/theme attribution must be checked | Medium | Evaluate after FSQ/ATP overlap measurement |
-| Wikidata | Chain/notable-place enrichment and external IDs | Durable under CC0 structured data | Medium | Add as enrichment after external IDs table exists |
-| Government/open data | License/inspection/existence overlays | Durable only when dataset license permits | Medium | Jurisdiction-by-jurisdiction registry |
-| DENUE / INEGI | Mexico establishment coverage | Likely durable with attribution/metadata obligations | Future high | Investigate before Mexico expansion |
-| Official restaurant websites | Field evidence from first-party sources | Store factual extracted fields and short evidence; avoid expressive content | Active/manual | Scraper exists but broad operation remains opt-in |
+| All the Places | Chain and official location-finder supplement | Durable according to project output license; retain spider/source URL | High | Read-only sample adapter added; no imports yet |
+| Overture Places | External IDs, dedupe, confidence/source metadata | Generally durable, but release/theme attribution must be checked | Medium | Read-only sample adapter added; no imports yet |
+| Wikidata | Chain/notable-place enrichment and external IDs | Durable under CC0 structured data | Medium | Read-only sample adapter added; no imports yet |
+| Government/open data | License/inspection/existence overlays | Durable only when dataset license permits | Medium | Read-only sample adapter added; dataset registry still needed |
+| DENUE / INEGI | Mexico establishment coverage | Likely durable with attribution/metadata obligations | Future high | Read-only sample adapter added for future TacoBout/Mexico work |
+| Official restaurant websites | Field evidence from first-party sources | Store factual extracted fields and short evidence; avoid expressive content | Active/manual | Read-only sample adapter added; broad operation remains opt-in |
 | Google Maps / Google Places | Navigation links only | Do not use for durable canonical ingestion | Navigation only | Popup/admin outbound links |
 
 ## Build Order
@@ -51,13 +51,14 @@ The source-of-record rule is:
 1. Keep OSM as the current production backbone.
 2. Add the shared `place_sources` provenance table before importing another broad source.
    The first implementation phase is pizza-only; do not backfill TacoBout yet.
-3. Prototype a Michigan or North America slice of Foursquare OS Places with a
-   read-only exported sample.
-4. Measure FSQ overlap and gaps against current OSM-derived `pizza_places`.
-5. Prototype All the Places for pizza/taco chains and regional restaurant groups.
-6. Evaluate Overture only after FSQ and ATP show their incremental coverage.
-7. Build a government/open-data registry for the jurisdictions that matter most.
-8. Treat DENUE as a separate future track for Mexico/TacoBout expansion.
+3. Use read-only source input adapters for FSQ, All the Places, Overture,
+   Wikidata, government/open data, DENUE, and official website samples.
+4. Prototype a Michigan or North America slice of Foursquare OS Places.
+5. Measure FSQ overlap and gaps against current OSM-derived `pizza_places`.
+6. Prototype All the Places for pizza/taco chains and regional restaurant groups.
+7. Evaluate Overture only after FSQ and ATP show their incremental coverage.
+8. Build a government/open-data registry for the jurisdictions that matter most.
+9. Treat DENUE as a separate future track for Mexico/TacoBout expansion.
 
 ## Google Maps Links
 
@@ -112,6 +113,7 @@ enrichment and guarded sync pipeline.
 
 The simplified provenance table design lives in `docs/SOURCE_PROVENANCE_SCHEMA.md`.
 The FSQ sample-first workflow lives in `docs/FSQ_OS_PLACES_PROTOTYPE.md`.
+The shared input contract for all source families lives in `docs/SOURCE_INPUTS.md`.
 
 ## Primary References
 
