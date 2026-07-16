@@ -60,6 +60,28 @@ By default, only `exact_name_nearby` and `strong_spatial_name` matches are
 eligible for persistence. `weak_spatial_name` rows stay review-only unless the
 operator explicitly adds `--include-weak`.
 
+For durable review output:
+
+```bash
+node scripts/ops/source-input-sample-report.mjs \
+  --source all_the_places \
+  --input /tmp/pizza_hut_us.geojson \
+  --entity pizza \
+  --review-output reports/source-review/pizza_hut_us-review.json
+```
+
+The review output contains:
+
+- `ambiguous`
+- `likely_new`
+- source fields
+- nearest canonical match, when one exists
+- review reason and distance/name scores
+
+The matcher prefetches canonical rows for the input bounding box and uses an
+in-memory coordinate grid. Large source files should still be run one source
+family at a time, but they no longer need one Postgres query per source row.
+
 ## Source Input Matrix
 
 | Source | Input Shape | First Use | Source Key |

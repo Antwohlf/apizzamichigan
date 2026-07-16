@@ -9,7 +9,7 @@
  */
 
 import pg from 'pg';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { extname, resolve } from 'path';
 
 const ENTITY_TABLES = {
@@ -127,6 +127,8 @@ function parseArgs(argv) {
     includeNonPizza: false,
     includeWeak: false,
     apply: false,
+    reviewOutput: null,
+    gridCellDegrees: 0.02,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -140,6 +142,8 @@ function parseArgs(argv) {
     else if (arg === '--include-non-pizza') out.includeNonPizza = true;
     else if (arg === '--include-weak') out.includeWeak = true;
     else if (arg === '--apply') out.apply = true;
+    else if (arg === '--review-output') out.reviewOutput = argv[++i];
+    else if (arg === '--grid-cell-degrees') out.gridCellDegrees = parseFloat(argv[++i]);
     else if (arg === '--list-sources') {
       for (const [key, config] of Object.entries(SOURCE_CONFIGS)) {
         console.log(`${key}\t${config.label}`);
@@ -159,6 +163,7 @@ function parseArgs(argv) {
   if (!Number.isFinite(out.maxDistanceM) || out.maxDistanceM <= 0) throw new Error('Invalid --max-distance-m');
   if (!Number.isFinite(out.limit) || out.limit <= 0) throw new Error('Invalid --limit');
   if (!Number.isFinite(out.sample) || out.sample < 0) throw new Error('Invalid --sample');
+  if (!Number.isFinite(out.gridCellDegrees) || out.gridCellDegrees <= 0) throw new Error('Invalid --grid-cell-degrees');
   return out;
 }
 
@@ -175,6 +180,8 @@ Options:
   --include-non-pizza       Compare all active records, not just pizza-ish rows
   --include-weak            Include weak_spatial_name matches in import set
   --apply                   Upsert accepted matched records into place_sources
+  --review-output <file>    Write ambiguous/new review candidates to JSON
+  --grid-cell-degrees <n>   Coordinate grid size for matching (default 0.02)
   --list-sources            Print supported source adapters
 
 Default mode is dry-run. With --apply, this writes source evidence only to
@@ -431,6 +438,17 @@ function matchMethod(distanceM, score) {
   return 'no_match';
 }
 
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const toRad = value => value * Math.PI / 180;
+  const earthRadiusM = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusM * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
 function matchConfidence(match) {
   const distanceScore = Math.max(0, 1 - (match.distance_m / 100));
   const confidence = (match.name_score * 0.75) + (distanceScore * 0.25);
@@ -444,9 +462,18 @@ function acceptedForImport(match, { includeWeak }) {
   return includeWeak && match.match_method === 'weak_spatial_name';
 }
 
-async function nearbyPlaces(client, tableName, candidate, maxDistanceM) {
-  const latSpan = maxDistanceM / 111320;
-  const lngSpan = maxDistanceM / (111320 * Math.max(Math.cos(candidate.lat * Math.PI / 180), 0.01));
+async function loadCanonicalPlaces(client, tableName, candidates, maxDistanceM) {
+  if (!candidates.length) return [];
+  const lats = candidates.map(candidate => candidate.lat);
+  const lngs = candidates.map(candidate => candidate.lng);
+  const latPad = maxDistanceM / 111320;
+  const minLat = Math.min(...lats) - latPad;
+  const maxLat = Math.max(...lats) + latPad;
+  const minLngRaw = Math.min(...lngs);
+  const maxLngRaw = Math.max(...lngs);
+  const lngPad = maxDistanceM / (111320 * Math.max(Math.cos(((minLat + maxLat) / 2) * Math.PI / 180), 0.01));
+  const minLng = minLngRaw - lngPad;
+  const maxLng = maxLngRaw + lngPad;
   const result = await client.query(`
     SELECT
       id,
@@ -456,27 +483,55 @@ async function nearbyPlaces(client, tableName, candidate, maxDistanceM) {
       google_place_id,
       lat::double precision AS lat,
       lng::double precision AS lng,
-      6371000 * acos(
-        least(1, greatest(-1,
-          cos(radians($1)) * cos(radians(lat::double precision)) *
-          cos(radians(lng::double precision) - radians($2)) +
-          sin(radians($1)) * sin(radians(lat::double precision))
-        ))
-      ) AS distance_m
     FROM ${tableName}
     WHERE lat IS NOT NULL
       AND lng IS NOT NULL
-      AND lat::double precision BETWEEN $1 - $3 AND $1 + $3
-      AND lng::double precision BETWEEN $2 - $4 AND $2 + $4
-    ORDER BY distance_m ASC
-    LIMIT 10
-  `, [candidate.lat, candidate.lng, latSpan, lngSpan]);
+      AND lat::double precision BETWEEN $1 AND $2
+      AND lng::double precision BETWEEN $3 AND $4
+  `, [minLat, maxLat, minLng, maxLng]);
 
-  return result.rows.map(row => ({
-    ...row,
-    distance_m: Number(row.distance_m),
-    name_score: nameScore(candidate.name, row.name),
-  }));
+  return result.rows;
+}
+
+function cellKey(lat, lng, cellDegrees) {
+  return `${Math.floor(lat / cellDegrees)}:${Math.floor(lng / cellDegrees)}`;
+}
+
+function buildPlaceGrid(places, cellDegrees) {
+  const grid = new Map();
+  for (const place of places) {
+    const key = cellKey(place.lat, place.lng, cellDegrees);
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(place);
+  }
+  return grid;
+}
+
+function nearbyPlacesFromGrid(grid, candidate, { maxDistanceM, cellDegrees }) {
+  const latCell = Math.floor(candidate.lat / cellDegrees);
+  const lngCell = Math.floor(candidate.lng / cellDegrees);
+  const cellRadius = Math.max(1, Math.ceil((maxDistanceM / 111320) / cellDegrees) + 1);
+  const rows = [];
+
+  for (let latOffset = -cellRadius; latOffset <= cellRadius; latOffset++) {
+    for (let lngOffset = -cellRadius; lngOffset <= cellRadius; lngOffset++) {
+      const places = grid.get(`${latCell + latOffset}:${lngCell + lngOffset}`) || [];
+      for (const place of places) {
+        const distanceM = haversineMeters(candidate.lat, candidate.lng, place.lat, place.lng);
+        if (distanceM <= maxDistanceM) {
+          rows.push({
+            ...place,
+            distance_m: distanceM,
+            name_score: nameScore(candidate.name, place.name),
+          });
+        }
+      }
+    }
+  }
+
+  return rows
+    .sort((a, b) => a.distance_m - b.distance_m)
+    .slice(0, 10);
 }
 
 function bestMatch(nearby) {
@@ -612,6 +667,63 @@ async function upsertPlaceSources(client, { args, config, importable }) {
   return written;
 }
 
+function reviewCandidate(kind, item) {
+  if (kind === 'ambiguous') {
+    const { candidate, match } = item;
+    return {
+      kind,
+      source: candidate.source,
+      source_id: candidate.source_id,
+      source_name: candidate.name,
+      source_url: sourceUrl(candidate),
+      source_data: sourceData(candidate),
+      nearest_place: {
+        id: match.id,
+        name: match.name,
+        google_place_id: match.google_place_id,
+        distance_m: Number(match.distance_m.toFixed(3)),
+        name_score: Number(match.name_score.toFixed(4)),
+        review_reason: match.match_method,
+      },
+    };
+  }
+
+  const { candidate, nearest } = item;
+  return {
+    kind,
+    source: candidate.source,
+    source_id: candidate.source_id,
+    source_name: candidate.name,
+    source_url: sourceUrl(candidate),
+    source_data: sourceData(candidate),
+    nearest_place: nearest ? {
+      id: nearest.id,
+      name: nearest.name,
+      google_place_id: nearest.google_place_id,
+      distance_m: Number(nearest.distance_m.toFixed(3)),
+      name_score: Number(nearest.name_score.toFixed(4)),
+    } : null,
+  };
+}
+
+function writeReviewOutput(path, { args, config, counts, ambiguous, unmatched }) {
+  if (!path) return;
+  const absPath = resolve(process.cwd(), path);
+  mkdirSync(resolve(absPath, '..'), { recursive: true });
+  const payload = {
+    generated_at: new Date().toISOString(),
+    source: args.source,
+    source_label: config.label,
+    entity: args.entity,
+    input: args.input,
+    mode: args.apply ? 'apply' : 'dry-run',
+    counts,
+    ambiguous: ambiguous.map(item => reviewCandidate('ambiguous', item)),
+    likely_new: unmatched.map(item => reviewCandidate('likely_new', item)),
+  };
+  writeFileSync(absPath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const config = SOURCE_CONFIGS[args.source];
@@ -631,8 +743,14 @@ async function main() {
   let importable = [];
 
   try {
+    const canonicalPlaces = await loadCanonicalPlaces(client, tableName, candidates, args.maxDistanceM);
+    const placeGrid = buildPlaceGrid(canonicalPlaces, args.gridCellDegrees);
+
     for (const candidate of candidates) {
-      const nearby = await nearbyPlaces(client, tableName, candidate, args.maxDistanceM);
+      const nearby = nearbyPlacesFromGrid(placeGrid, candidate, {
+        maxDistanceM: args.maxDistanceM,
+        cellDegrees: args.gridCellDegrees,
+      });
       const best = bestMatch(nearby);
       if (!best || best.match_method === 'no_match') {
         unmatched.push({ candidate, nearest: nearby[0] || null });
@@ -679,6 +797,19 @@ async function main() {
     nearest_distance_m: nearest?.distance_m?.toFixed(1) || '',
   }));
 
+  const counts = {
+    inputRowsInspected: rows.length,
+    usableActiveRows: active.length,
+    candidatesCompared: candidates.length,
+    matchedExistingPlaces: matched.length,
+    ambiguousReviewCandidates: ambiguous.length,
+    likelyNewUnmatchedCandidates: unmatched.length,
+    acceptedForPlaceSourcesImport: importable.length,
+    placeSourcesRowsWritten: rowsWritten,
+  };
+
+  writeReviewOutput(args.reviewOutput, { args, config, counts, ambiguous, unmatched });
+
   console.log(`# Source input sample report: ${config.label}`);
   console.log('');
   console.log(`Generated: ${new Date().toISOString()}`);
@@ -693,15 +824,18 @@ async function main() {
   console.log('');
   console.log('## Counts');
   console.log(table(['metric', 'count'], [
-    { metric: 'input rows inspected', count: rows.length },
-    { metric: 'rows with usable name/coordinates and active status', count: active.length },
-    { metric: args.includeNonPizza ? 'active candidates compared' : 'pizza-ish active candidates', count: candidates.length },
-    { metric: 'matched existing places', count: matched.length },
-    { metric: 'ambiguous/review candidates', count: ambiguous.length },
-    { metric: 'likely new/unmatched candidates', count: unmatched.length },
-    { metric: 'accepted for place_sources import', count: importable.length },
-    { metric: 'place_sources rows written', count: rowsWritten },
+    { metric: 'input rows inspected', count: counts.inputRowsInspected },
+    { metric: 'rows with usable name/coordinates and active status', count: counts.usableActiveRows },
+    { metric: args.includeNonPizza ? 'active candidates compared' : 'pizza-ish active candidates', count: counts.candidatesCompared },
+    { metric: 'matched existing places', count: counts.matchedExistingPlaces },
+    { metric: 'ambiguous/review candidates', count: counts.ambiguousReviewCandidates },
+    { metric: 'likely new/unmatched candidates', count: counts.likelyNewUnmatchedCandidates },
+    { metric: 'accepted for place_sources import', count: counts.acceptedForPlaceSourcesImport },
+    { metric: 'place_sources rows written', count: counts.placeSourcesRowsWritten },
   ]));
+  if (args.reviewOutput) {
+    console.log(`Review output: ${args.reviewOutput}`);
+  }
   console.log('');
   console.log('## Matched Sample');
   console.log(table(['source_id', 'name', 'category', 'address', 'website', 'phone', 'place_id', 'place_name', 'distance_m', 'name_score', 'match_method'], matchedRows));
