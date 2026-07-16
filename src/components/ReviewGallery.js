@@ -246,7 +246,18 @@ export default function ReviewGallery({ photos = [], placeName }) {
       >
         <div style={headerStyle}>
           <div style={captionStyle}>{captionText}</div>
-          <button type="button" onClick={close} style={controlButtonStyle} aria-label="Close photo viewer">
+          <button
+            type="button"
+            onClick={event => {
+              stopMapEvent(event)
+              close()
+            }}
+            onMouseDown={stopMapEvent}
+            onPointerDown={stopMapEvent}
+            onTouchStart={stopMapEvent}
+            style={controlButtonStyle}
+            aria-label="Close photo viewer"
+          >
             Close
           </button>
         </div>
@@ -255,10 +266,30 @@ export default function ReviewGallery({ photos = [], placeName }) {
         </div>
         {hasMultiplePhotos && (
           <div style={controlsStyle}>
-            <button type="button" onClick={showPrev} style={controlButtonStyle}>
+            <button
+              type="button"
+              onClick={event => {
+                stopMapEvent(event)
+                showPrev()
+              }}
+              onMouseDown={stopMapEvent}
+              onPointerDown={stopMapEvent}
+              onTouchStart={stopMapEvent}
+              style={controlButtonStyle}
+            >
               Prev
             </button>
-            <button type="button" onClick={showNext} style={controlButtonStyle}>
+            <button
+              type="button"
+              onClick={event => {
+                stopMapEvent(event)
+                showNext()
+              }}
+              onMouseDown={stopMapEvent}
+              onPointerDown={stopMapEvent}
+              onTouchStart={stopMapEvent}
+              style={controlButtonStyle}
+            >
               Next
             </button>
           </div>

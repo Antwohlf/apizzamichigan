@@ -34,6 +34,11 @@ type Place = {
 
 const roots = new WeakMap<HTMLElement, Root>()
 
+const stopPopupEvent = (event: React.SyntheticEvent) => {
+  event.stopPropagation()
+  event.nativeEvent?.stopImmediatePropagation?.()
+}
+
 function displayPrice(place: Place) {
   return place.price_range || place.priceRange || place.price || null
 }
@@ -91,7 +96,16 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       onMouseDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()}
     >
-      <button className="close" onClick={onClose} aria-label="Close">
+      <button
+        className="close"
+        onClick={event => {
+          stopPopupEvent(event)
+          onClose()
+        }}
+        onMouseDown={stopPopupEvent}
+        onPointerDown={stopPopupEvent}
+        aria-label="Close"
+      >
         ×
       </button>
       <div className="title">{place.name}</div>
@@ -119,6 +133,9 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
           target="_blank"
           rel="noopener noreferrer"
           href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`}
+          onClick={stopPopupEvent}
+          onMouseDown={stopPopupEvent}
+          onPointerDown={stopPopupEvent}
         >
           Directions
         </a>
@@ -127,6 +144,9 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
           target="_blank"
           rel="noopener noreferrer"
           className="popup-link--details"
+          onClick={stopPopupEvent}
+          onMouseDown={stopPopupEvent}
+          onPointerDown={stopPopupEvent}
         >
           View details
         </a>
