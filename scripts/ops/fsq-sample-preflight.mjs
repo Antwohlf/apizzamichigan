@@ -103,6 +103,15 @@ function main() {
   console.log('');
   console.log('Adapter command:');
   console.log(command.map(part => (/\s/.test(part) ? JSON.stringify(part) : part)).join(' '));
+  console.log('');
+  console.log('Hugging Face sample export command:');
+  console.log([
+    process.execPath,
+    'scripts/ops/export-fsq-hf-sample.mjs',
+    '--query', 'pizza',
+    '--length', '100',
+    '--output', args.input || 'data/source-samples/fsq-os-places-pizza-sample.json',
+  ].map(part => (/\s/.test(part) ? JSON.stringify(part) : part)).join(' '));
 
   if (missing.length) {
     console.log('');

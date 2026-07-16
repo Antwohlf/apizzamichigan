@@ -26,6 +26,12 @@ Foursquare also lists Hugging Face as an additional delivery option, but the
 dataset is gated there too. Either way, APizzaMichigan needs an exported slice
 before the local source adapter can run.
 
+For small samples, Hugging Face's Dataset Viewer API can export JSON rows after
+the user has been granted gated dataset access and provides `HF_TOKEN` or
+`HUGGINGFACE_HUB_TOKEN`. The viewer API limits each `/rows` or `/search` request
+to small slices, so this is a prototype/sample path rather than a full-ingest
+path.
+
 ## Why Sample-Driven
 
 Foursquare OS Places is currently distributed through the Foursquare Places
@@ -83,12 +89,22 @@ Check local readiness with:
 node scripts/ops/fsq-sample-preflight.mjs
 ```
 
+If Hugging Face access has been granted, export a small text-search sample:
+
+```bash
+HF_TOKEN=... \
+node scripts/ops/export-fsq-hf-sample.mjs \
+  --query pizza \
+  --length 100 \
+  --output data/source-samples/fsq-os-places-pizza-sample.json
+```
+
 Run this against a small exported FSQ sample:
 
 ```bash
 node scripts/ops/source-input-sample-report.mjs \
-  --source fsq_os_places \
   --input data/fsq-os-places-mi-pizza-sample.ndjson \
+  --source fsq_os_places \
   --entity pizza \
   --max-distance-m 100 \
   --limit 1000 \
