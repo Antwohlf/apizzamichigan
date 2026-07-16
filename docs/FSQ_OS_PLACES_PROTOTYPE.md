@@ -15,6 +15,17 @@ Do not write FSQ rows into `pizza_places`, `taco_places`, Supabase, or
 `place_sources` until a sample report shows useful incremental coverage and
 manageable ambiguity.
 
+## Current Access Reality
+
+Foursquare now delivers FSQ OS Places primarily through the Foursquare Places
+Portal using an Iceberg-based catalog. A user has to create a Places Portal
+account, browse the open datasets, and generate an access token before querying
+the catalog with DuckDB, Spark, PyIceberg, or another Iceberg-compatible engine.
+
+Foursquare also lists Hugging Face as an additional delivery option, but the
+dataset is gated there too. Either way, APizzaMichigan needs an exported slice
+before the local source adapter can run.
+
 ## Why Sample-Driven
 
 Foursquare OS Places is currently distributed through the Foursquare Places
@@ -33,6 +44,9 @@ So the repo accepts a small exported sample in one of these formats:
 - JSON object with `rows` or `places`
 - NDJSON / JSONL
 - CSV
+
+Keep the full FSQ/Iceberg/Spark/DuckDB dependency outside the web app. Export a
+small slice first, then feed that file into the generic source adapter.
 
 ## Expected FSQ Fields
 
@@ -58,6 +72,10 @@ It also accepts common aliases such as `lat`, `lng`, `lon`, `city`, `state`,
 `phone`, `categories`, and `category`.
 
 ## Report Command
+
+Prerequisite: export a small FSQ slice to a local JSON/CSV/NDJSON file with at
+least `fsq_place_id`, `name`, `latitude`, `longitude`, category fields, and
+status/closed fields. The source adapter is the import boundary.
 
 Run this against a small exported FSQ sample:
 

@@ -249,10 +249,16 @@ export default function AdminReviewsPage() {
 
       const haystack = normalizeSearchText([
         review.name,
+        review.address,
+        review.city,
+        review.state,
         review.notes,
         review.rating,
         review.status,
         review.style,
+        review.type,
+        review.price_range,
+        review.google_place_id,
       ].filter(Boolean).join(' '))
       return terms.every(term => haystack.includes(term))
     })
@@ -419,7 +425,7 @@ export default function AdminReviewsPage() {
                     type="search"
                     value={reviewSearch}
                     onChange={event => setReviewSearch(event.target.value)}
-                    placeholder="Search name, style, rating, or notes"
+                    placeholder="Search name, address, style, rating, or notes"
                     style={{
                       width: '100%',
                       minWidth: 0,

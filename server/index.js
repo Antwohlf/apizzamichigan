@@ -248,10 +248,11 @@ app.get('/api/admin/reviews', requireAdminAuth, async (req, res) => {
   try {
     const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
     const table = getPlaceTable(entity)
+    const reviewFields = 'id, name, notes, rating, status, style, address, state, price, price_range, google_place_id'
 
     const { data: reviews, error } = await serviceClient
       .from(table)
-      .select('id, name, notes, rating, status, style')
+      .select(reviewFields)
       .or('notes.not.is.null,rating.not.is.null')
       .order('name', { ascending: true })
 
