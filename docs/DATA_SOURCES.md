@@ -123,12 +123,32 @@ As of 2026-07-16, the iMac local database has:
 
 - OSM pizza provenance backfilled for all OSM-backed `pizza_places` rows.
 - All the Places accepted matches persisted to `place_sources` for selected
-  pizza chain/regional spiders.
+  pizza chain/regional spiders:
+  - `10,067` accepted `all_the_places` source links
+  - `164,487` accepted `osm` source links
 - Review JSON artifacts for ambiguous and likely-new source rows under
   `reports/source-review/` on the iMac. These files are intentionally ignored by
   Git because they are generated operational artifacts.
 - A durable local `source_review_queue` table can track those review rows after
   import. It is local operator state, not a Supabase/public product table.
+- Current local review backlog:
+  - `1,245` ambiguous ATP rows pending review
+  - `11,858` likely-new ATP rows pending review
+
+The current ATP batch set includes the original chain shortlist plus a small
+regional batch:
+
+- Original shortlist: `little_caesars_us`, `pizza_hut_us`,
+  `dominos_pizza_us`, `papa_johns`, `marcos`, `papa_murphys`, `mod_pizza`,
+  `california_pizza_kitchen`, `foxs_pizza`, `monicals_pizza_us`,
+  `mr_gattis_pizza_us`, `and_pizza`, `grimaldis_pizzeria`
+- Regional batch: `round_table_pizza`, `simple_simons_pizza_us`,
+  `pizza_ranch_us`, `vocelli_pizza_us`, `sals_pizza_us`,
+  `flippin_pizza_us`
+
+Current ATP spider gaps: Hungry Howie's has no matching spider in the July 2026
+ATP stats, and `jet` matches non-pizza fuel/convenience spiders rather than
+Jet's Pizza.
 
 Use this to summarize the review backlog:
 
