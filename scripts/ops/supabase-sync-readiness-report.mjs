@@ -15,9 +15,12 @@ import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
   FILL_IF_NULL_COLS,
+  LOCAL_ONLY_SUPABASE_TABLES,
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
+  SUPABASE_SYNC_TARGET_TABLE,
   SUPABASE_SYNC_SELECT_COLS,
+  assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
   localSyncSelectSql,
@@ -151,6 +154,7 @@ async function main() {
   const options = parseArgs(process.argv);
   const root = repoRoot();
   const env = loadEnvLocal();
+  const syncBoundary = assertSupabaseSyncTableBoundary();
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
@@ -180,7 +184,7 @@ async function main() {
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
     const { data: sbRows, error } = await supabase
-      .from('pizza_places')
+      .from(SUPABASE_SYNC_TARGET_TABLE)
       .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
       .in('id', ids);
 
@@ -233,6 +237,11 @@ async function main() {
       generatedAt: new Date().toISOString(),
       state,
       repo: { root, ...gitReport(root) },
+      syncBoundary: {
+        ...syncBoundary,
+        status: 'OK',
+        note: 'Only canonical pizza_places rows are eligible for Supabase sync; provenance/review tables remain local-only.',
+      },
       options: {
         ...options,
         checkpointAfter,
@@ -286,6 +295,13 @@ async function main() {
     console.log(`- protected field conflicts: ${result.totals.protectedFieldConflicts}`);
     console.log(`- overwrite-field writes: ${result.totals.overwriteWrites}`);
     console.log(`- QA default writes: ${result.totals.qaDefaults}`);
+    console.log('');
+
+    console.log('## Sync Boundary');
+    console.log(`- target table: \`${result.syncBoundary.targetTable}\``);
+    console.log(`- local-only tables: ${LOCAL_ONLY_SUPABASE_TABLES.map(tableName => `\`${tableName}\``).join(', ')}`);
+    console.log(`- status: ${result.syncBoundary.status}`);
+    console.log(`- note: ${result.syncBoundary.note}`);
     console.log('');
 
     console.log('## Field Counts');

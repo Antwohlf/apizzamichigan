@@ -24,7 +24,9 @@ import {
   writeSyncCheckpoint,
 } from './lib/supabase-sync-checkpoint.mjs';
 import {
+  SUPABASE_SYNC_TARGET_TABLE,
   buildSupabasePayload,
+  assertSupabaseSyncTableBoundary,
   localSyncSelectParams,
   localSyncSelectSql,
   SUPABASE_SYNC_SELECT_COLS,
@@ -95,6 +97,7 @@ function loadEnvLocal() {
 async function main() {
   const args = parseArgs(process.argv);
   const env = loadEnvLocal();
+  assertSupabaseSyncTableBoundary();
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
@@ -143,7 +146,7 @@ async function main() {
 
       // Fetch current supabase state for protected fields + QA.
       const { data: sbRows, error: sbErr } = await sb
-        .from('pizza_places')
+        .from(SUPABASE_SYNC_TARGET_TABLE)
         .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
         .in('id', ids);
 
@@ -202,7 +205,7 @@ async function main() {
       for (const payload of updates) {
         const { id, ...fields } = payload;
         const { data, error: upErr } = await sb
-          .from('pizza_places')
+          .from(SUPABASE_SYNC_TARGET_TABLE)
           .update(fields)
           .eq('id', id)
           .select('id');

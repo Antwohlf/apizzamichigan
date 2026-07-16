@@ -1,3 +1,10 @@
+export const SUPABASE_SYNC_TARGET_TABLE = 'pizza_places';
+
+export const LOCAL_ONLY_SUPABASE_TABLES = [
+  'place_sources',
+  'source_review_queue',
+];
+
 export const OVERWRITE_COLS = [
   'created_at',
   'updated_at',
@@ -74,6 +81,24 @@ export const LOCAL_SYNC_VALUE_COLS = [
   ...FILL_IF_NULL_COLS,
   ...OVERWRITE_COLS,
 ];
+
+export function assertSupabaseSyncTableBoundary({
+  targetTable = SUPABASE_SYNC_TARGET_TABLE,
+  localOnlyTables = LOCAL_ONLY_SUPABASE_TABLES,
+} = {}) {
+  if (localOnlyTables.includes(targetTable)) {
+    throw new Error(`Refusing to sync local-only provenance/review table to Supabase: ${targetTable}`);
+  }
+
+  if (targetTable !== SUPABASE_SYNC_TARGET_TABLE) {
+    throw new Error(`Unsupported Supabase sync target table: ${targetTable}`);
+  }
+
+  return {
+    targetTable,
+    localOnlyTables: [...localOnlyTables],
+  };
+}
 
 export function normalizeSyncSelectorOptions(options = {}) {
   const checkpointAfter = options.checkpointAfter || null;

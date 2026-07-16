@@ -111,6 +111,12 @@ Supabase sync is automated through `com.apizzamichigan.supabase-sync`, but only
 through the guarded wrapper. The wrapper runs health, QA, readiness, dry-run,
 bounded write, and post-check gates before applying at most one configured batch.
 
+The sync target is intentionally narrow: only canonical `pizza_places` rows are
+eligible. `place_sources` and `source_review_queue` are local-only provenance
+and review tables. The sync policy in `scripts/lib/supabase-sync-policy.mjs`
+defines that boundary, and both readiness/status reports print it before any
+operator uses the results.
+
 Run QA before any sync:
 
 ```bash
