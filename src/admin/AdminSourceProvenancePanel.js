@@ -18,6 +18,29 @@ const formatDateTime = value => {
   return date.toLocaleString()
 }
 
+const safeHttpUrl = value => {
+  if (!value || typeof value !== 'string') return ''
+  if (!/^https?:\/\//i.test(value)) return ''
+  return value
+}
+
+const googleMapsSearchUrl = row => {
+  const query = [
+    row?.source_name,
+    row?.source_data?.address || row?.source_data?.['addr:full'],
+  ].filter(Boolean).join(' ').trim()
+  return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : ''
+}
+
+const osmUrl = value => {
+  if (!value || typeof value !== 'string' || !value.startsWith('osm:')) return ''
+  const [, rawId] = value.split(':')
+  const [type, id] = String(rawId || '').split('/')
+  if (!type || !id) return ''
+  const normalizedType = type === 'node' || type === 'way' || type === 'relation' ? type : ''
+  return normalizedType ? `https://www.openstreetmap.org/${normalizedType}/${encodeURIComponent(id)}` : ''
+}
+
 const panelStyle = {
   display: 'grid',
   gap: '1rem',
@@ -479,7 +502,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
                   <div style={{ display: 'grid', gap: '0.75rem' }}>
                     {queueRows.map(row => {
                       const sourceAddress = row.source_data?.address || row.source_data?.['addr:full'] || ''
-                      const sourceWebsite = row.source_data?.website || row.source_data?.['contact:website'] || ''
+                      const sourceWebsite = safeHttpUrl(row.source_data?.website || row.source_data?.['contact:website'] || '')
+                      const sourceUrl = safeHttpUrl(row.source_url || row.source_data?.source_url || '')
+                      const mapsUrl = googleMapsSearchUrl(row)
+                      const nearestOsmUrl = osmUrl(row.nearest_google_place_id)
+                      const sourcePhone = row.source_data?.phone || row.source_data?.['contact:phone'] || ''
                       const busy = Boolean(actionState[row.id])
                       return (
                         <article key={row.id} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: 10, padding: '0.9rem', background: '#101418' }}>
@@ -496,7 +523,12 @@ export default function AdminSourceProvenancePanel({ entity }) {
                             <div>
                               <strong style={{ color: '#f8fafc' }}>Source</strong>
                               <div>{sourceAddress || 'no address'}</div>
-                              {sourceWebsite ? <div><a href={sourceWebsite} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Website</a></div> : null}
+                              {sourcePhone ? <div>{sourcePhone}</div> : null}
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.55rem', marginTop: '0.35rem' }}>
+                                {sourceWebsite ? <a href={sourceWebsite} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Website</a> : null}
+                                {sourceUrl && sourceUrl !== sourceWebsite ? <a href={sourceUrl} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Source page</a> : null}
+                                {mapsUrl ? <a href={mapsUrl} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Google Maps search</a> : null}
+                              </div>
                             </div>
                             <div>
                               <strong style={{ color: '#f8fafc' }}>Nearest canonical</strong>
@@ -506,6 +538,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
                                 {row.nearest_distance_m != null ? `${Number(row.nearest_distance_m).toFixed(1)}m` : 'no distance'}
                                 {row.nearest_name_score != null ? ` · score ${Number(row.nearest_name_score).toFixed(2)}` : ''}
                               </div>
+                              {nearestOsmUrl ? (
+                                <div style={{ marginTop: '0.35rem' }}>
+                                  <a href={nearestOsmUrl} target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>Open nearest OSM row</a>
+                                </div>
+                              ) : null}
                             </div>
                             <div>
                               <strong style={{ color: '#f8fafc' }}>Review</strong>
