@@ -1,5 +1,5 @@
 import { act } from 'react'
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { renderExpanded, teardownPopup } from './renderPopup'
 
 describe('renderExpanded', () => {
@@ -50,5 +50,34 @@ describe('renderExpanded', () => {
       'src',
       expect.stringContaining('width=480&quality=70&format=webp')
     )
+  })
+
+  test('opens and closes the photo viewer from a popup thumbnail', () => {
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Gallery Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          photos: [
+            {
+              id: 'photo-1',
+              publicUrl: 'https://example.com/storage/v1/object/public/review-photos/123/pie.webp',
+              sortOrder: 1,
+            },
+          ],
+        },
+        jest.fn()
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /open photo 1 for gallery pizza/i }))
+    expect(screen.getByRole('dialog', { name: /gallery pizza detail 1 of 1/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('dialog', { name: /gallery pizza detail 1 of 1/i }))
+    expect(screen.queryByRole('dialog', { name: /gallery pizza detail 1 of 1/i })).not.toBeInTheDocument()
   })
 })

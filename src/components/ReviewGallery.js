@@ -35,7 +35,9 @@ const normalizePhoto = (photo, index) => {
 }
 
 const stopMapEvent = event => {
+  event.preventDefault?.()
   event.stopPropagation()
+  event.nativeEvent?.stopImmediatePropagation?.()
 }
 
 export default function ReviewGallery({ photos = [], placeName }) {
@@ -216,13 +218,32 @@ export default function ReviewGallery({ photos = [], placeName }) {
       aria-modal="true"
       aria-label={captionText}
       onClick={event => {
-        event.stopPropagation()
+        stopMapEvent(event)
         close()
       }}
+      onContextMenu={stopMapEvent}
+      onDoubleClick={stopMapEvent}
       onMouseDown={stopMapEvent}
+      onMouseUp={stopMapEvent}
       onPointerDown={stopMapEvent}
+      onPointerUp={stopMapEvent}
+      onTouchStart={stopMapEvent}
+      onTouchEnd={stopMapEvent}
+      onWheel={stopMapEvent}
     >
-      <div style={dialogStyle} onClick={event => event.stopPropagation()}>
+      <div
+        style={dialogStyle}
+        onClick={stopMapEvent}
+        onContextMenu={stopMapEvent}
+        onDoubleClick={stopMapEvent}
+        onMouseDown={stopMapEvent}
+        onMouseUp={stopMapEvent}
+        onPointerDown={stopMapEvent}
+        onPointerUp={stopMapEvent}
+        onTouchStart={stopMapEvent}
+        onTouchEnd={stopMapEvent}
+        onWheel={stopMapEvent}
+      >
         <div style={headerStyle}>
           <div style={captionStyle}>{captionText}</div>
           <button type="button" onClick={close} style={controlButtonStyle} aria-label="Close photo viewer">
@@ -254,11 +275,16 @@ export default function ReviewGallery({ photos = [], placeName }) {
             key={photo.id}
             type="button"
             onClick={event => {
-              event.stopPropagation()
+              stopMapEvent(event)
               openAt(index)
             }}
+            onDoubleClick={stopMapEvent}
             onMouseDown={stopMapEvent}
+            onMouseUp={stopMapEvent}
             onPointerDown={stopMapEvent}
+            onPointerUp={stopMapEvent}
+            onTouchStart={stopMapEvent}
+            onTouchEnd={stopMapEvent}
             style={{
               padding: 0,
               border: '1px solid var(--app-border)',
