@@ -394,7 +394,7 @@ function normalizeSourceRow(row, sourceKey) {
     name: valueFor(map, ['name', 'label', 'title', 'business_name', 'facility_name', 'dba', 'trade_name']),
     lat: Number.isFinite(lat) ? lat : null,
     lng: Number.isFinite(lng) ? lng : null,
-    address: valueFor(map, ['address', 'addr:full', 'street_address', 'address1', 'location_address']),
+    address: valueFor(map, ['address', 'addr:full', 'addr:street_address', 'street_address', 'address1', 'location_address']),
     locality: valueFor(map, ['locality', 'city', 'addr:city', 'municipality']),
     region: valueFor(map, ['region', 'state', 'addr:state', 'province']),
     postcode: valueFor(map, ['postcode', 'postal_code', 'zip', 'addr:postcode']),
@@ -424,6 +424,7 @@ function isPizzaCandidate(candidate) {
 
 function matchMethod(distanceM, score) {
   if (distanceM <= 25 && score >= 0.99) return 'exact_name_nearby';
+  if (distanceM <= 75 && score >= 0.99) return 'strong_spatial_name';
   if (distanceM <= 50 && score >= 0.6) return 'strong_spatial_name';
   if (distanceM <= 100 && score >= 0.35) return 'weak_spatial_name';
   if (distanceM <= 25) return 'spatial_only_review';
