@@ -2,6 +2,15 @@ import React, { useEffect, useState } from 'react'
 import './MapControls.css'
 
 const placePrice = place => place?.price_range || place?.priceRange || place?.price || ''
+const placeLocation = place => {
+  const parts = [place?.address, place?.city, place?.state].filter(Boolean)
+  return [...new Set(parts)].join(' · ')
+}
+const placeMeta = place => {
+  const parts = [place?.style, placePrice(place), place?.status].filter(Boolean)
+  if (typeof place?.rating === 'number' && !Number.isNaN(place.rating)) parts.unshift(`★ ${place.rating}`)
+  return parts.join(' · ')
+}
 
 // Debounced search bar component
 function SearchBar({ value, onChange }) {
@@ -154,11 +163,12 @@ export function MapControls({
               >
                 <span className="map-result-main">
                   <span className="map-result-name">{place.name}</span>
-                  {(place.style || placePrice(place)) && (
-                    <span className="map-result-meta">
-                      {[place.style, placePrice(place)].filter(Boolean).join(' · ')}
-                    </span>
-                  )}
+                  {placeLocation(place) ? (
+                    <span className="map-result-location">{placeLocation(place)}</span>
+                  ) : null}
+                  {placeMeta(place) ? (
+                    <span className="map-result-meta">{placeMeta(place)}</span>
+                  ) : null}
                 </span>
                 <span className="map-result-side">
                   {typeof place._distance === 'number' ? `${place._distance.toFixed(1)} mi` : ''}

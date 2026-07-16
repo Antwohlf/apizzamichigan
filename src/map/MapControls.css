@@ -218,6 +218,7 @@
 }
 
 .map-result-name,
+.map-result-location,
 .map-result-meta {
   white-space: nowrap;
   overflow: hidden;
@@ -231,6 +232,12 @@
 .map-result-meta {
   font-size: 0.76rem;
   color: var(--app-text-muted);
+}
+
+.map-result-location {
+  font-size: 0.76rem;
+  color: var(--app-text);
+  opacity: 0.82;
 }
 
 .map-result-side {

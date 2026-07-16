@@ -135,13 +135,24 @@ const searchablePlaceText = place => normalizeSearchText([
   place?.status,
 ].filter(Boolean).join(' '))
 
-const placeSearchRank = (place, query) => {
-  if (!query) return 0
+const searchWords = value => normalizeSearchText(value).split(/\s+/).filter(Boolean)
+
+const placeSearchRank = (place, query, terms = searchWords(query)) => {
+  if (!query || terms.length === 0) return 0
   const name = normalizeSearchText(place?.name)
+  const address = normalizeSearchText(place?.address)
+  const cityState = normalizeSearchText([place?.city, place?.state].filter(Boolean).join(' '))
+  const fullText = searchablePlaceText(place)
+  const nameWords = searchWords(place?.name)
+
   if (name === query) return 0
   if (name.startsWith(query)) return 1
-  if (name.includes(query)) return 2
-  return 3
+  if (terms.every(term => nameWords.some(word => word.startsWith(term)))) return 2
+  if (terms.every(term => name.includes(term))) return 3
+  if (terms.every(term => address.includes(term))) return 4
+  if (terms.every(term => cityState.includes(term))) return 5
+  if (terms.every(term => fullText.includes(term))) return 6
+  return 99
 }
 
 const PLACE_TABLE_BY_THEME = {
@@ -689,7 +700,7 @@ function SiteContainer({ themeKey }) {
       }
 
       if (searchLower) {
-        place._searchRank = placeSearchRank(place, searchLower)
+        place._searchRank = placeSearchRank(place, searchLower, searchTerms)
       } else if (place._searchRank !== undefined) {
         delete place._searchRank
       }
@@ -726,6 +737,8 @@ function SiteContainer({ themeKey }) {
       results = results.slice().sort((a, b) => {
         const rankDelta = (a._searchRank ?? 99) - (b._searchRank ?? 99)
         if (rankDelta !== 0) return rankDelta
+        const ratingDelta = (Number(b.rating) || 0) - (Number(a.rating) || 0)
+        if (ratingDelta !== 0) return ratingDelta
         return String(a.name || '').localeCompare(String(b.name || ''))
       })
     }
