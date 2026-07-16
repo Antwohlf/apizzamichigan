@@ -84,6 +84,14 @@ Summarize generated review files with:
 node scripts/ops/source-review-summary.mjs
 ```
 
+Export a spreadsheet-friendly review queue with blank decision columns:
+
+```bash
+node scripts/ops/source-review-export.mjs \
+  --kind all \
+  --output reports/source-review-queue.csv
+```
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.

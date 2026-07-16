@@ -115,6 +115,35 @@ async function fetchStateCounts(table, {
 
 const MapView = lazy(() => import('./map'))
 
+const normalizeSearchText = value =>
+  String(value ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+const searchablePlaceText = place => normalizeSearchText([
+  place?.name,
+  place?.address,
+  place?.city,
+  place?.state,
+  place?.style,
+  place?.type,
+  place?.price_range,
+  place?.price,
+  place?.status,
+].filter(Boolean).join(' '))
+
+const placeSearchRank = (place, query) => {
+  if (!query) return 0
+  const name = normalizeSearchText(place?.name)
+  if (name === query) return 0
+  if (name.startsWith(query)) return 1
+  if (name.includes(query)) return 2
+  return 3
+}
+
 const PLACE_TABLE_BY_THEME = {
   [ThemeKeys.PIZZA]: 'pizza_places',
   [ThemeKeys.TACO]: 'taco_places',
@@ -647,11 +676,25 @@ function SiteContainer({ themeKey }) {
   )
 
   const filteredPlaces = useMemo(() => {
-    const searchLower = searchQuery.toLowerCase().trim()
+    const searchLower = normalizeSearchText(searchQuery)
+    const searchTerms = searchLower.split(/\s+/).filter(Boolean)
 
     let results = allLoadedPlaces.filter(place => {
       // Search filter
-      if (searchLower && !place.name?.toLowerCase().includes(searchLower)) {
+      if (searchTerms.length > 0) {
+        const haystack = searchablePlaceText(place)
+        if (!searchTerms.every(term => haystack.includes(term))) {
+          return false
+        }
+      }
+
+      if (searchLower) {
+        place._searchRank = placeSearchRank(place, searchLower)
+      } else if (place._searchRank !== undefined) {
+        delete place._searchRank
+      }
+
+      if (searchLower && place._searchRank === undefined) {
         return false
       }
 
@@ -676,9 +719,15 @@ function SiteContainer({ themeKey }) {
       )
     })
 
-    // Sort by distance when near me is active
+    // Sort by distance when near me is active, otherwise by search relevance.
     if (nearMeActive && userLocation) {
       results = results.slice().sort((a, b) => (a._distance || 0) - (b._distance || 0))
+    } else if (searchLower) {
+      results = results.slice().sort((a, b) => {
+        const rankDelta = (a._searchRank ?? 99) - (b._searchRank ?? 99)
+        if (rankDelta !== 0) return rankDelta
+        return String(a.name || '').localeCompare(String(b.name || ''))
+      })
     }
 
     return results

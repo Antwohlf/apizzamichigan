@@ -134,6 +134,12 @@ Use this to summarize the review backlog:
 node scripts/ops/source-review-summary.mjs
 ```
 
+Use this to export ambiguous and likely-new rows into an operator review CSV:
+
+```bash
+node scripts/ops/source-review-export.mjs --kind all --output reports/source-review-queue.csv
+```
+
 ## Primary References
 
 - Foursquare OS Places: https://opensource.foursquare.com/os-places/
