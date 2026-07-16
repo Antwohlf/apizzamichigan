@@ -116,19 +116,31 @@ async function sourceReviewQueueExists(client) {
 
 function rowToExport(row) {
   const sourceData = row.source_data || {};
+  const sourceLat = sourceData.lat ?? sourceData.latitude ?? null;
+  const sourceLng = sourceData.lng ?? sourceData.lon ?? sourceData.longitude ?? null;
+  const missingSourceCoordinates = sourceLat == null || sourceLng == null;
   return {
     id: row.id,
     entity_type: row.entity_type,
     review_kind: row.review_kind,
     status: row.status,
     decision: row.decision,
+    import_readiness: row.status === 'accepted' && row.review_kind === 'likely_new' && missingSourceCoordinates
+      ? 'missing_source_coordinates'
+      : 'ready_for_handoff',
     canonical_place_id: row.canonical_place_id,
     source: row.source,
     source_id: row.source_id,
     source_name: row.source_name,
     source_url: row.source_url,
+    source_lat: sourceLat,
+    source_lng: sourceLng,
     source_category: sourceData.category,
     source_address: sourceData.address || sourceData['addr:full'],
+    source_locality: sourceData.locality,
+    source_region: sourceData.region,
+    source_postcode: sourceData.postcode,
+    source_country: sourceData.country,
     source_website: sourceData.website || sourceData['contact:website'],
     source_phone: sourceData.phone || sourceData['contact:phone'],
     nearest_place_id: row.nearest_place_id,
@@ -205,13 +217,20 @@ function writeCsv(rows, output) {
     'review_kind',
     'status',
     'decision',
+    'import_readiness',
     'canonical_place_id',
     'source',
     'source_id',
     'source_name',
     'source_url',
+    'source_lat',
+    'source_lng',
     'source_category',
     'source_address',
+    'source_locality',
+    'source_region',
+    'source_postcode',
+    'source_country',
     'source_website',
     'source_phone',
     'nearest_place_id',
@@ -246,6 +265,10 @@ async function main() {
     }
     const rows = await fetchRows(client, args);
     writeCsv(rows, args.output);
+    const readinessCounts = rows.reduce((acc, row) => {
+      acc[row.import_readiness] = (acc[row.import_readiness] || 0) + 1;
+      return acc;
+    }, {});
 
     console.log('# Reviewed Source Candidate Export');
     console.log('');
@@ -254,6 +277,7 @@ async function main() {
     console.log(`Kind: ${args.kind}`);
     console.log(`Rows exported: ${rows.length}`);
     console.log(`Output: ${args.output}`);
+    console.log(`Readiness: ${Object.entries(readinessCounts).map(([key, count]) => `${key}=${count}`).join(', ') || 'none'}`);
     console.log('');
     console.log('No canonical places, place_sources rows, or Supabase records were written.');
   } finally {

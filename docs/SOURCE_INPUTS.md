@@ -130,6 +130,12 @@ node scripts/ops/export-reviewed-source-candidates.mjs \
 This export reads `source_review_queue` only. It does not create canonical
 places, write `place_sources`, or sync anything to Supabase.
 
+Reviewed exports include `source_lat`, `source_lng`, source locality/region, and
+an `import_readiness` column. Accepted `likely_new` rows without source
+coordinates are not import-ready; regenerate/reimport the review artifact after
+the adapter preserves coordinates instead of creating a canonical place from an
+incomplete row.
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.

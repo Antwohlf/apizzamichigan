@@ -560,8 +560,14 @@ function sourceData(candidate) {
   return {
     source_id: candidate.source_id,
     name: candidate.name,
+    lat: candidate.lat,
+    lng: candidate.lng,
     category: candidate.categories.slice(0, 3).join('; '),
     address: [candidate.address, candidate.locality, candidate.region].filter(Boolean).join(', '),
+    locality: candidate.locality,
+    region: candidate.region,
+    postcode: candidate.postcode,
+    country: candidate.country,
     website: candidate.website,
     phone: candidate.phone,
   };
