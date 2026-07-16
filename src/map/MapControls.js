@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import './MapControls.css'
 
 const placePrice = place => place?.price_range || place?.priceRange || place?.price || ''
@@ -13,7 +13,7 @@ const placeMeta = place => {
 }
 
 // Debounced search bar component
-function SearchBar({ value, onChange }) {
+function SearchBar({ value, onChange, onKeyDown, onFocus }) {
   const [localValue, setLocalValue] = useState(value || '')
 
   useEffect(() => {
@@ -37,6 +37,13 @@ function SearchBar({ value, onChange }) {
         placeholder="Search places..."
         value={localValue}
         onChange={e => setLocalValue(e.target.value)}
+        onFocus={onFocus}
+        onKeyDown={event => {
+          if (event.key === 'Enter') {
+            onChange(localValue)
+          }
+          if (onKeyDown) onKeyDown(event)
+        }}
         aria-label="Search places"
       />
       {localValue && (
@@ -62,18 +69,52 @@ export function MapControls({
   nearMeActive = false,
   nearMeRadius = 25,
   locationError = null,
+  searchLoading = false,
+  searchError = null,
   onNearMeToggle,
   onRadiusChange,
   filteredPlaces = [],
   onPlaceClick,
 }) {
   const [isResultsOpen, setIsResultsOpen] = useState(true)
+  const [activeResultIndex, setActiveResultIndex] = useState(0)
+  const hasSearch = Boolean(searchQuery.trim())
+  const shouldShowResultPanel = hasSearch || nearMeActive
+  const resultLimit = hasSearch ? 12 : 20
+  const visibleResults = useMemo(
+    () => filteredPlaces.slice(0, resultLimit),
+    [filteredPlaces, resultLimit]
+  )
 
   useEffect(() => {
-    if ((searchQuery.trim() || nearMeActive) && filteredPlaces.length > 0) {
+    if (shouldShowResultPanel) {
       setIsResultsOpen(true)
     }
-  }, [searchQuery, nearMeActive, filteredPlaces.length])
+    setActiveResultIndex(0)
+  }, [shouldShowResultPanel, filteredPlaces.length])
+
+  const openResult = (place) => {
+    if (!place || !onPlaceClick) return
+    setIsResultsOpen(false)
+    onPlaceClick(place)
+  }
+
+  const handleSearchKeyDown = (event) => {
+    if (!shouldShowResultPanel || !visibleResults.length) return
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setIsResultsOpen(true)
+      setActiveResultIndex(index => Math.min(index + 1, visibleResults.length - 1))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setIsResultsOpen(true)
+      setActiveResultIndex(index => Math.max(index - 1, 0))
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      openResult(visibleResults[activeResultIndex] || visibleResults[0])
+    }
+  }
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -97,13 +138,20 @@ export function MapControls({
     }
   }, [])
 
-  const showResults = isResultsOpen && (searchQuery.trim() || nearMeActive) && filteredPlaces.length > 0
+  const showResults = isResultsOpen && shouldShowResultPanel && onPlaceClick
 
   return (
     <div className="map-controls">
       <div className="map-controls-row">
         {onSearchChange && (
-          <SearchBar value={searchQuery} onChange={onSearchChange} />
+          <SearchBar
+            value={searchQuery}
+            onChange={onSearchChange}
+            onFocus={() => {
+              if (shouldShowResultPanel) setIsResultsOpen(true)
+            }}
+            onKeyDown={handleSearchKeyDown}
+          />
         )}
 
         {onNearMeToggle && (
@@ -138,9 +186,13 @@ export function MapControls({
       )}
 
       {showResults && onPlaceClick && (
-        <div className="map-results-dropdown">
+        <div className="map-results-dropdown" id="map-search-results">
           <div className="map-results-header">
-            <span>{filteredPlaces.length} {filteredPlaces.length === 1 ? 'place' : 'places'} found</span>
+            <span>
+              {searchLoading
+                ? 'Searching places'
+                : `${filteredPlaces.length} ${filteredPlaces.length === 1 ? 'place' : 'places'} found${filteredPlaces.length > visibleResults.length ? ` · showing ${visibleResults.length}` : ''}`}
+            </span>
             <button
               type="button"
               className="map-results-close"
@@ -151,15 +203,24 @@ export function MapControls({
             </button>
           </div>
           <div className="map-results-list">
-            {filteredPlaces.slice(0, 50).map(place => (
+            {searchError ? (
+              <div className="map-results-empty">Search is unavailable right now</div>
+            ) : null}
+            {!searchError && searchLoading ? (
+              <div className="map-results-empty">Searching...</div>
+            ) : null}
+            {!searchError && !searchLoading && visibleResults.length === 0 ? (
+              <div className="map-results-empty">No matching places found</div>
+            ) : null}
+            {visibleResults.map((place, index) => (
               <button
                 key={place.id}
                 type="button"
-                className="map-result-item"
+                className={`map-result-item${index === activeResultIndex ? ' active' : ''}`}
                 onClick={() => {
-                  setIsResultsOpen(false)
-                  onPlaceClick(place)
+                  openResult(place)
                 }}
+                onMouseEnter={() => setActiveResultIndex(index)}
               >
                 <span className="map-result-main">
                   <span className="map-result-name">{place.name}</span>
@@ -175,8 +236,8 @@ export function MapControls({
                 </span>
               </button>
             ))}
-            {filteredPlaces.length > 50 && (
-              <div className="map-results-more">+ {filteredPlaces.length - 50} more</div>
+            {filteredPlaces.length > visibleResults.length && (
+              <div className="map-results-more">+ {filteredPlaces.length - visibleResults.length} more matches</div>
             )}
           </div>
         </div>

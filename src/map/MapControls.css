@@ -28,10 +28,10 @@
   align-items: center;
   background: var(--app-card);
   border: 1px solid var(--app-border);
-  border-radius: 24px;
+  border-radius: 8px;
   padding: 0 16px;
-  min-width: 220px;
-  max-width: 320px;
+  min-width: 280px;
+  max-width: 420px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
   backdrop-filter: blur(8px);
 }
@@ -44,7 +44,7 @@
 
 .map-search-bar input {
   flex: 1;
-  padding: 10px 0;
+  padding: 11px 0;
   background: transparent;
   border: none;
   color: var(--app-text);
@@ -86,7 +86,7 @@
   padding: 10px 16px;
   background: var(--app-card);
   border: 1px solid var(--app-border);
-  border-radius: 24px;
+  border-radius: 8px;
   color: var(--app-text);
   cursor: pointer;
   font-size: 0.9rem;
@@ -115,7 +115,7 @@
   padding: 10px 12px;
   background: var(--app-card);
   border: 1px solid var(--app-border);
-  border-radius: 24px;
+  border-radius: 8px;
   color: var(--app-text);
   font-size: 0.85rem;
   cursor: pointer;
@@ -142,11 +142,12 @@
 
 /* Results Dropdown */
 .map-results-dropdown {
-  background: var(--app-card);
+  background: color-mix(in srgb, var(--app-card) 94%, black 6%);
   border: 1px solid var(--app-border);
-  border-radius: 16px;
+  border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  max-width: 350px;
+  width: min(520px, calc(100vw - 96px));
+  max-width: 520px;
   margin: 0 auto;
   overflow: hidden;
   backdrop-filter: blur(8px);
@@ -181,7 +182,7 @@
 }
 
 .map-results-list {
-  max-height: 240px;
+  max-height: 360px;
   overflow-y: auto;
 }
 
@@ -209,6 +210,10 @@
   background: var(--app-bg);
 }
 
+.map-result-item.active {
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
+}
+
 .map-result-main {
   display: flex;
   flex: 1;
@@ -226,7 +231,8 @@
 }
 
 .map-result-name {
-  font-size: 0.88rem;
+  font-size: 0.92rem;
+  font-weight: 700;
 }
 
 .map-result-meta {
@@ -256,6 +262,12 @@
   border-top: 1px solid var(--app-border);
 }
 
+.map-results-empty {
+  color: var(--app-text-muted);
+  font-size: 0.86rem;
+  padding: 14px 16px;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .map-controls {
@@ -280,6 +292,7 @@
   }
 
   .map-results-dropdown {
+    width: 100%;
     max-width: 100%;
   }
 }

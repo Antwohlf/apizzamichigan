@@ -49,6 +49,26 @@ async function fetchPlacesForState(table, stateCode) {
   return allData
 }
 
+async function fetchPlacesForSearch(table, searchTerm) {
+  const term = String(searchTerm || '').trim()
+  if (term.length < 2) return []
+
+  const escaped = term.replace(/[%_]/g, value => `\\${value}`)
+  const pattern = `%${escaped}%`
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .or([
+      `name.ilike.${pattern}`,
+      `address.ilike.${pattern}`,
+      `state.ilike.${pattern}`,
+    ].join(','))
+    .limit(80)
+
+  if (error) throw error
+  return data || []
+}
+
 // Helper to fetch state counts for aggregate markers, with optional filtering/progressive updates
 async function fetchStateCounts(table, {
   includeStates,
@@ -146,12 +166,13 @@ const placeSearchRank = (place, query, terms = searchWords(query)) => {
   const nameWords = searchWords(place?.name)
 
   if (name === query) return 0
-  if (name.startsWith(query)) return 1
-  if (terms.every(term => nameWords.some(word => word.startsWith(term)))) return 2
-  if (terms.every(term => name.includes(term))) return 3
-  if (terms.every(term => address.includes(term))) return 4
-  if (terms.every(term => cityState.includes(term))) return 5
-  if (terms.every(term => fullText.includes(term))) return 6
+  if (terms.every(term => nameWords.includes(term))) return 1
+  if (name.startsWith(query)) return 2
+  if (terms.every(term => nameWords.some(word => word.startsWith(term)))) return 3
+  if (terms.every(term => name.includes(term))) return 4
+  if (terms.every(term => address.includes(term))) return 5
+  if (terms.every(term => cityState.includes(term))) return 6
+  if (terms.every(term => fullText.includes(term))) return 7
   return 99
 }
 
@@ -326,6 +347,9 @@ function SiteContainer({ themeKey }) {
 
   // Search and Near Me state
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchPlaces, setSearchPlaces] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState(null)
   const [userLocation, setUserLocation] = useState(null)
   const [nearMeActive, setNearMeActive] = useState(false)
   const [nearMeRadius, setNearMeRadius] = useState(25)
@@ -633,6 +657,58 @@ function SiteContainer({ themeKey }) {
     }
   }, [regionStates, isPizza, themeKey, normalizePlaceData])
 
+  useEffect(() => {
+    let isMounted = true
+    const searchTerms = searchWords(searchQuery).filter(term => term.length >= 2)
+    const searchTerm = searchTerms.slice().sort((a, b) => b.length - a.length)[0] || ''
+
+    if (searchTerm.length < 2) {
+      setSearchPlaces([])
+      setSearchError(null)
+      setSearchLoading(false)
+      return () => {
+        isMounted = false
+      }
+    }
+
+    async function loadSearchPlaces() {
+      setSearchLoading(true)
+      setSearchError(null)
+      const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+      const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
+
+      try {
+        const rows = await fetchPlacesForSearch(table, searchTerm)
+        if (!isMounted) return
+
+        let photoMap = {}
+        const placeIds = rows.map(p => p.id).filter(Boolean)
+        if (placeIds.length) {
+          try {
+            photoMap = await fetchPhotoMap(placeIds)
+          } catch (err) {
+            console.warn('[App] Search photo fetch failed:', err)
+          }
+        }
+
+        if (!isMounted) return
+        setSearchPlaces(normalizePlaceData(rows, photoMap, defaultPlaceType))
+      } catch (err) {
+        if (!isMounted) return
+        setSearchPlaces([])
+        setSearchError(err)
+        console.warn('[App] Search lookup failed:', err)
+      } finally {
+        if (isMounted) setSearchLoading(false)
+      }
+    }
+
+    loadSearchPlaces()
+    return () => {
+      isMounted = false
+    }
+  }, [searchQuery, themeKey, isPizza, normalizePlaceData])
+
   // Handle Near Me toggle
   const handleNearMeToggle = useCallback(() => {
     if (nearMeActive) {
@@ -689,8 +765,9 @@ function SiteContainer({ themeKey }) {
   const filteredPlaces = useMemo(() => {
     const searchLower = normalizeSearchText(searchQuery)
     const searchTerms = searchLower.split(/\s+/).filter(Boolean)
+    const sourcePlaces = searchLower ? searchPlaces : allLoadedPlaces
 
-    let results = allLoadedPlaces.filter(place => {
+    let results = sourcePlaces.filter(place => {
       // Search filter
       if (searchTerms.length > 0) {
         const haystack = searchablePlaceText(place)
@@ -744,7 +821,7 @@ function SiteContainer({ themeKey }) {
     }
 
     return results
-  }, [allLoadedPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits])
+  }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits])
 
   const shouldDimUnloadedAggregates = useMemo(() => {
     return (
@@ -941,6 +1018,8 @@ function SiteContainer({ themeKey }) {
                     nearMeActive={nearMeActive}
                     nearMeRadius={nearMeRadius}
                     locationError={locationError}
+                    searchLoading={searchLoading}
+                    searchError={searchError}
                     onNearMeToggle={handleNearMeToggle}
                     onRadiusChange={setNearMeRadius}
                     filteredPlaces={filteredPlaces}
