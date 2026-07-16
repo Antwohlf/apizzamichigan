@@ -50,6 +50,7 @@ The source-of-record rule is:
 
 1. Keep OSM as the current production backbone.
 2. Add the shared `place_sources` provenance table before importing another broad source.
+   The first implementation phase is pizza-only; do not backfill TacoBout yet.
 3. Prototype a Michigan or North America slice of Foursquare OS Places.
 4. Measure FSQ overlap and gaps against current OSM-derived `pizza_places`.
 5. Prototype All the Places for pizza/taco chains and regional restaurant groups.

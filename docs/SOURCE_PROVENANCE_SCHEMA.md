@@ -148,14 +148,23 @@ not need a field-level provenance table until we feel real pain from ambiguity.
 ## Migration Strategy
 
 1. Create `place_sources` in local Postgres first.
-2. Backfill OSM rows from current `google_place_id` values:
+2. Backfill OSM rows from current `pizza_places.google_place_id` values:
    - `google_place_id='osm:node/123'` becomes:
      - `source='osm'`
      - `source_id='node/123'`
-3. Keep `google_place_id` in place until app and sync code no longer depend on it.
-4. Prototype Foursquare OS Places into staging/output files first.
-5. Add FSQ matches to `place_sources`, not directly to `pizza_places`.
-6. Promote only clearly useful canonical fields after reviewing source quality.
+3. Do not backfill `taco_places` in the first phase.
+4. Keep `google_place_id` in place until app and sync code no longer depend on it.
+5. Prototype Foursquare OS Places into staging/output files first.
+6. Add FSQ matches to `place_sources`, not directly to `pizza_places`.
+7. Promote only clearly useful canonical fields after reviewing source quality.
+
+The first-phase tooling is:
+
+```bash
+node scripts/ops/backfill-place-sources.mjs
+node scripts/ops/backfill-place-sources.mjs --apply-schema
+node scripts/ops/backfill-place-sources.mjs --apply-backfill
+```
 
 ## What We Are Not Adding Yet
 
