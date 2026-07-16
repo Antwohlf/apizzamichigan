@@ -262,6 +262,10 @@ const safeInteger = (value, fallback, { min = 0, max = 1000 } = {}) => {
 
 const allowedSourceReviewStatuses = new Set(['pending', 'accepted', 'linked', 'rejected', 'ignored'])
 const allowedSourceReviewKinds = new Set(['ambiguous', 'likely_new'])
+const SOURCE_REVIEW_ENTITY_TABLES = {
+  pizza: 'pizza_places',
+  taco: 'taco_places',
+}
 
 const getStorageClient = () => {
   if (!serviceClient?.storage) {
@@ -856,6 +860,40 @@ app.patch('/api/admin/source-review-queue/:id', requireAdminAuth, async (req, re
         throw error
       }
 
+      const current = await client.query(`
+        SELECT id, entity_type, review_kind, source_name, source_id
+        FROM source_review_queue
+        WHERE id = $1
+      `, [id])
+
+      const row = current.rows[0]
+      if (!row) {
+        const error = new Error('Source review queue row not found.')
+        error.status = 404
+        throw error
+      }
+
+      if (status === 'accepted' && row.review_kind !== 'likely_new') {
+        const error = new Error('Accept new is only valid for likely-new source rows. Link, reject, or ignore ambiguous rows.')
+        error.status = 400
+        throw error
+      }
+
+      if (status === 'linked') {
+        const tableName = SOURCE_REVIEW_ENTITY_TABLES[row.entity_type]
+        if (!tableName) {
+          const error = new Error('Unsupported source review entity type.')
+          error.status = 400
+          throw error
+        }
+        const canonical = await client.query(`SELECT id FROM ${tableName} WHERE id = $1 LIMIT 1`, [canonicalPlaceId])
+        if (!canonical.rows[0]) {
+          const error = new Error(`Canonical ${row.entity_type} place id ${canonicalPlaceId} was not found.`)
+          error.status = 400
+          throw error
+        }
+      }
+
       const result = await client.query(`
         UPDATE source_review_queue
         SET
@@ -869,12 +907,6 @@ app.patch('/api/admin/source-review-queue/:id', requireAdminAuth, async (req, re
         WHERE id = $1
         RETURNING *
       `, [id, status, canonicalPlaceId, reviewerNotes])
-
-      if (!result.rows[0]) {
-        const error = new Error('Source review queue row not found.')
-        error.status = 404
-        throw error
-      }
 
       return { data: result.rows[0] }
     })

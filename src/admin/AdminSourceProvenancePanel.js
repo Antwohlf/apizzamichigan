@@ -508,6 +508,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       const nearestOsmUrl = osmUrl(row.nearest_google_place_id)
                       const sourcePhone = row.source_data?.phone || row.source_data?.['contact:phone'] || ''
                       const busy = Boolean(actionState[row.id])
+                      const canAcceptNew = row.review_kind === 'likely_new'
                       return (
                         <article key={row.id} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: 10, padding: '0.9rem', background: '#101418' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
@@ -552,7 +553,9 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           </div>
                           {queueStatus === 'pending' ? (
                             <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                              <button type="button" disabled={busy} onClick={() => recordDecision(row, 'accepted')} style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Accept new</button>
+                              {canAcceptNew ? (
+                                <button type="button" disabled={busy} onClick={() => recordDecision(row, 'accepted')} style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Accept new</button>
+                              ) : null}
                               <button type="button" disabled={busy} onClick={() => recordDecision(row, 'linked')} style={{ border: '1px solid #38bdf8', borderRadius: 8, background: 'transparent', color: '#7dd3fc', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Link</button>
                               <button type="button" disabled={busy} onClick={() => recordDecision(row, 'rejected')} style={{ border: '1px solid #f87171', borderRadius: 8, background: 'transparent', color: '#fca5a5', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Reject</button>
                               <button type="button" disabled={busy} onClick={() => recordDecision(row, 'ignored')} style={{ border: '1px solid #64748b', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: 'pointer' }}>Ignore</button>
