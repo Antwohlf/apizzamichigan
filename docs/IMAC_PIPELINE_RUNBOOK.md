@@ -6,8 +6,9 @@ This is the APizzaMichigan home-runner playbook for the Michigan iMac.
 
 - Remote access: Tailscale SSH from the MacBook via `ssh apizza-imac`.
 - Process manager: macOS `launchd`.
-- First production service: classifier only.
-- Manual-only until approved: OSM extraction, website scraping, menu parse, QA, and Supabase sync.
+- Production services: classifier plus guarded Supabase sync.
+- Manual-only until approved: OSM extraction, website scraping, menu parse, and
+  new source imports.
 - Working DB: local Postgres database `pizza_enrichment`.
 - Queue: SQLite `scripts/.job-queue.db`.
 - Local model: Ollama `llama3.2:latest`.
@@ -16,7 +17,8 @@ OpenClaw may remain installed for unrelated local-agent work, but APizzaMichigan
 pipeline operation should not depend on OpenClaw, Discord, or GitHub Issues.
 
 APizzaMichigan OpenClaw cron jobs should remain disabled. The launchd classifier
-is the only approved always-on APizza process in this phase.
+is the only approved always-on enrichment process in this phase. Guarded
+Supabase sync runs as a bounded launchd interval job and should not overlap.
 
 ## Baseline Checks
 
@@ -103,9 +105,11 @@ ssh apizza-imac 'ps -axo pid,ppid,command | egrep "watchdog-keepalive|keepalive.
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ```
 
-## Manual Sync Policy
+## Guarded Sync Policy
 
-Supabase sync is manual-only in this phase.
+Supabase sync is automated through `com.apizzamichigan.supabase-sync`, but only
+through the guarded wrapper. The wrapper runs health, QA, readiness, dry-run,
+bounded write, and post-check gates before applying at most one configured batch.
 
 Run QA before any sync:
 
@@ -148,6 +152,10 @@ ssh apizza-imac 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
 
 The service applies at most one 100-row batch every 30 minutes. It should remain
 disabled if classification QA is not healthy.
+
+The wrapper owns `/tmp/apizzamichigan/supabase-sync.lock` to avoid overlapping
+runs. If a prior process exits badly, locks older than 25 minutes are treated as
+stale and removed on the next scheduled run.
 
 ## Legacy Material
 
