@@ -55,7 +55,7 @@ reviewer_notes.
 }
 
 function csvCell(value) {
-  const text = value == null ? '' : String(value);
+  const text = value == null ? '' : String(value).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
   return text;
 }
