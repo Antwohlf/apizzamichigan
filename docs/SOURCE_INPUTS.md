@@ -215,6 +215,15 @@ Run repeatable ATP spider batches with:
 node scripts/ops/import-atp-spiders.mjs --default-spiders
 ```
 
+Before a large ATP run, preflight the exact spider set against the current ATP
+stats:
+
+```bash
+node scripts/ops/import-atp-spiders.mjs \
+  --default-spiders \
+  --preflight-only
+```
+
 Discover current spider names from the latest ATP run before adding new chains:
 
 ```bash

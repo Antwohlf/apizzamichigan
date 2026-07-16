@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { basename, join, resolve } from 'path';
 
 const DEFAULT_BASE_URL = 'https://data.alltheplaces.xyz/runs/latest/output';
+const DEFAULT_LATEST_URL = 'https://data.alltheplaces.xyz/runs/latest.json';
 const DEFAULT_SPIDERS = [
   'little_caesars_us',
   'pizza_hut_us',
@@ -34,6 +35,9 @@ function parseArgs(argv) {
     outputDir: 'reports/source-review',
     downloadDir: '/tmp',
     baseUrl: DEFAULT_BASE_URL,
+    latestUrl: DEFAULT_LATEST_URL,
+    preflight: true,
+    preflightOnly: false,
     apply: false,
     sample: 3,
     limit: 20000,
@@ -48,6 +52,9 @@ function parseArgs(argv) {
     else if (arg === '--output-dir') args.outputDir = argv[++i];
     else if (arg === '--download-dir') args.downloadDir = argv[++i];
     else if (arg === '--base-url') args.baseUrl = argv[++i].replace(/\/$/, '');
+    else if (arg === '--latest-url') args.latestUrl = argv[++i];
+    else if (arg === '--skip-preflight') args.preflight = false;
+    else if (arg === '--preflight-only') args.preflightOnly = true;
     else if (arg === '--apply') args.apply = true;
     else if (arg === '--sample') args.sample = parseInt(argv[++i], 10);
     else if (arg === '--limit') args.limit = parseInt(argv[++i], 10);
@@ -77,12 +84,63 @@ Options:
   --output-dir <dir>    Review JSON directory (default reports/source-review)
   --download-dir <dir>  GeoJSON download directory (default /tmp)
   --base-url <url>      ATP output base URL (default latest run output)
+  --latest-url <url>    ATP latest metadata URL for spider preflight
+  --skip-preflight      Do not validate spider names against ATP run stats
+  --preflight-only      Validate spider names and exit before downloading
   --apply               Write accepted matches to place_sources
   --sample <n>          Printed sample rows per bucket (default 3)
   --limit <n>           Max rows per spider (default 20000)
 
 Without --apply, this only downloads inputs and writes review JSON.
 `);
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+async function preflightSpiders(args) {
+  const latest = await fetchJson(args.latestUrl);
+  const stats = await fetchJson(latest.stats_url);
+  const rows = Array.isArray(stats.results) ? stats.results : [];
+  const bySpider = new Map(rows.map(row => [row.spider, row]));
+  const missing = [];
+  const empty = [];
+  const warnings = [];
+
+  console.log('# ATP Spider Preflight');
+  if (latest.run_id) console.log(`run_id=${latest.run_id}`);
+  if (latest.end_time) console.log(`run_ended=${latest.end_time}`);
+  console.log('| spider | features | errors | status |');
+  console.log('| --- | ---: | ---: | --- |');
+
+  for (const spider of args.spiders) {
+    const row = bySpider.get(spider);
+    if (!row) {
+      missing.push(spider);
+      console.log(`| ${spider} | - | - | missing |`);
+      continue;
+    }
+
+    const features = Number.isFinite(row.features) ? row.features : 0;
+    const errors = Number.isFinite(row.errors) ? row.errors : 0;
+    if (features <= 0) empty.push(spider);
+    if (errors > 0) warnings.push(`${spider} has ${errors} ATP spider errors`);
+    console.log(`| ${spider} | ${features} | ${errors} | ${features > 0 ? 'present' : 'empty'} |`);
+  }
+  console.log('');
+
+  if (warnings.length) {
+    console.warn(`Preflight warnings: ${warnings.join('; ')}`);
+  }
+  if (missing.length || empty.length) {
+    const parts = [];
+    if (missing.length) parts.push(`missing spiders: ${missing.join(', ')}`);
+    if (empty.length) parts.push(`empty spiders: ${empty.join(', ')}`);
+    throw new Error(`ATP preflight failed (${parts.join('; ')}). Use scripts/ops/discover-atp-spiders.mjs to find current names.`);
+  }
 }
 
 function run(command, args, options = {}) {
@@ -99,10 +157,13 @@ function featureCount(path) {
   return Array.isArray(parsed.features) ? parsed.features.length : 0;
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv);
   mkdirSync(resolve(process.cwd(), args.outputDir), { recursive: true });
   mkdirSync(args.downloadDir, { recursive: true });
+
+  if (args.preflight) await preflightSpiders(args);
+  if (args.preflightOnly) return;
 
   const rows = [];
   for (const spider of args.spiders) {
@@ -154,4 +215,7 @@ function main() {
   }
 }
 
-main();
+main().catch(error => {
+  console.error(error.message);
+  process.exit(1);
+});
