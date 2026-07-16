@@ -95,6 +95,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const [queueTotal, setQueueTotal] = useState(0)
   const [queueStatus, setQueueStatus] = useState('pending')
   const [queueKind, setQueueKind] = useState('')
+  const [queueSource, setQueueSource] = useState('')
+  const [queueReportFile, setQueueReportFile] = useState('')
   const [queueSearch, setQueueSearch] = useState('')
   const [queuePage, setQueuePage] = useState(0)
   const [queueLoading, setQueueLoading] = useState(false)
@@ -144,6 +146,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
           offset: String(queuePage * QUEUE_PAGE_SIZE),
         })
         if (queueKind) params.set('kind', queueKind)
+        if (queueSource) params.set('source', queueSource)
+        if (queueReportFile) params.set('reportFile', queueReportFile)
         if (queueSearch.trim()) params.set('search', queueSearch.trim())
         const res = await fetch(`/api/admin/source-review-queue?${params.toString()}`, { credentials: 'include' })
         if (!res.ok) {
@@ -170,11 +174,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [entity, queueKind, queuePage, queueSearch, queueStatus])
+  }, [entity, queueKind, queuePage, queueReportFile, queueSearch, queueSource, queueStatus])
 
   useEffect(() => {
     setQueuePage(0)
-  }, [entity, queueKind, queueSearch, queueStatus])
+  }, [entity, queueKind, queueReportFile, queueSearch, queueSource, queueStatus])
 
   const recordDecision = async (row, status) => {
     let reviewerNotes = ''
@@ -256,6 +260,12 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const pageCount = Math.max(1, Math.ceil(queueTotal / QUEUE_PAGE_SIZE))
   const pageStart = queueTotal === 0 ? 0 : queuePage * QUEUE_PAGE_SIZE + 1
   const pageEnd = Math.min(queueTotal, (queuePage + 1) * QUEUE_PAGE_SIZE)
+  const queueSourceOptions = [...new Set((database.reviewQueue?.sourceCounts || []).map(row => row.source).filter(Boolean))].sort()
+  const queueReportOptions = (reviewArtifacts.reports || [])
+    .filter(row => row.source && (!queueSource || row.source === queueSource))
+    .map(row => row.file)
+    .filter(Boolean)
+    .sort()
 
   return (
     <div style={panelStyle}>
@@ -364,7 +374,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       type="search"
                       value={queueSearch}
                       onChange={event => setQueueSearch(event.target.value)}
-                      placeholder="Name, address, source id, nearest place"
+                      placeholder="Name, address, website, phone, source id, report"
                       style={{ minWidth: 0, padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
                     />
                   </label>
@@ -392,6 +402,35 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       ))}
                     </select>
                   </label>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
+                    Source
+                    <select
+                      value={queueSource}
+                      onChange={event => {
+                        setQueueSource(event.target.value)
+                        setQueueReportFile('')
+                      }}
+                      style={{ padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    >
+                      <option value="">All sources</option>
+                      {queueSourceOptions.map(source => (
+                        <option key={source} value={source}>{source}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700, flex: '1 1 220px' }}>
+                    Report
+                    <select
+                      value={queueReportFile}
+                      onChange={event => setQueueReportFile(event.target.value)}
+                      style={{ minWidth: 0, padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    >
+                      <option value="">All reports</option>
+                      {queueReportOptions.map(file => (
+                        <option key={file} value={file}>{file.replace(/-review\.json$/, '')}</option>
+                      ))}
+                    </select>
+                  </label>
                   <div style={{ color: '#94a3b8', fontWeight: 700 }}>
                     Showing {formatCount(pageStart)}-{formatCount(pageEnd)} of {formatCount(queueTotal)}
                   </div>
@@ -412,10 +451,14 @@ export default function AdminSourceProvenancePanel({ entity }) {
                     >
                       Next
                     </button>
-                    {queueSearch ? (
+                    {queueSearch || queueSource || queueReportFile ? (
                       <button
                         type="button"
-                        onClick={() => setQueueSearch('')}
+                        onClick={() => {
+                          setQueueSearch('')
+                          setQueueSource('')
+                          setQueueReportFile('')
+                        }}
                         style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: 'pointer' }}
                       >
                         Clear

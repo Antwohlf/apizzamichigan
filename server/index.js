@@ -726,6 +726,8 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
   const status = (req.query?.status || 'pending').toString()
   const kind = (req.query?.kind || '').toString()
+  const source = (req.query?.source || '').toString().trim().slice(0, 80)
+  const reportFile = (req.query?.reportFile || '').toString().trim().slice(0, 160)
   const search = (req.query?.search || '').toString().trim().slice(0, 120)
   const limit = safeInteger(req.query?.limit, 50, { min: 1, max: 100 })
   const offset = safeInteger(req.query?.offset, 0, { min: 0, max: 1000000 })
@@ -749,6 +751,14 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
         values.push(kind)
         filters.push(`review_kind = $${values.length}`)
       }
+      if (source) {
+        values.push(source)
+        filters.push(`source = $${values.length}`)
+      }
+      if (reportFile) {
+        values.push(reportFile)
+        filters.push(`report_file = $${values.length}`)
+      }
       if (search) {
         values.push(`%${search.toLowerCase()}%`)
         filters.push(`(
@@ -757,9 +767,14 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
           OR lower(COALESCE(source_url, '')) LIKE $${values.length}
           OR lower(COALESCE(source_data->>'address', '')) LIKE $${values.length}
           OR lower(COALESCE(source_data->>'addr:full', '')) LIKE $${values.length}
+          OR lower(COALESCE(source_data->>'website', '')) LIKE $${values.length}
+          OR lower(COALESCE(source_data->>'phone', '')) LIKE $${values.length}
           OR lower(COALESCE(source_data->>'locality', '')) LIKE $${values.length}
+          OR lower(COALESCE(source_data->>'region', '')) LIKE $${values.length}
           OR lower(COALESCE(nearest_place_name, '')) LIKE $${values.length}
           OR lower(COALESCE(nearest_google_place_id, '')) LIKE $${values.length}
+          OR lower(COALESCE(review_reason, '')) LIKE $${values.length}
+          OR lower(COALESCE(report_file, '')) LIKE $${values.length}
         )`)
       }
       const where = filters.join(' AND ')
