@@ -300,6 +300,12 @@ function valueFor(rowMap, keys = []) {
   return null;
 }
 
+function valuesFor(rowMap, keys = []) {
+  return keys
+    .filter(key => rowMap.has(key.toLowerCase()))
+    .map(key => rowMap.get(key.toLowerCase()));
+}
+
 function parseMaybeJson(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === 'object') return value;
@@ -366,7 +372,7 @@ function normalizeSourceRow(row, sourceKey) {
   const website = firstUrl(valueFor(map, config.website));
   const phone = firstUrl(valueFor(map, config.phone));
   const categories = [
-    ...flattenStrings(valueFor(map, config.category)),
+    ...valuesFor(map, config.category).flatMap(flattenStrings),
     ...flattenStrings(row.categories),
     ...flattenStrings(row.taxonomy),
   ];
