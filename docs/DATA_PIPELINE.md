@@ -29,6 +29,31 @@ Current production rollout is classifier-first with guarded automated Supabase
 sync. OSM extraction, scraping, and menu parse remain manual/opt-in until their
 source and quality policies are tightened.
 
+## Supabase Sync Scope
+
+Supabase sync writes only canonical `pizza_places` rows. Provenance and review
+tables such as `place_sources` and `source_review_queue` are local operator
+state and are not public sync targets.
+
+The normal automated path is the guarded recent-classification window:
+
+```bash
+node scripts/ops/guarded-supabase-sync.mjs
+```
+
+For reviewed/manual batches, use exact ID scope so unrelated recent
+classifier/scraper changes are not swept into the same operation:
+
+```bash
+node scripts/ops/supabase-sync-readiness-report.mjs --ids 123,456
+node scripts/ops/guarded-supabase-sync.mjs --ids 123,456
+node scripts/ops/guarded-supabase-sync.mjs --ids 123,456 --apply
+```
+
+The ID-scoped guarded runner still performs health, QA, readiness, dry-run, and
+post-check gates. It disables checkpoint mode for that run because the selected
+IDs are the complete sync scope.
+
 ## Classifier Runtime
 
 The classifier runs locally against Ollama:

@@ -24,6 +24,13 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classifier-health-r
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/home-status-report.mjs'
 ```
 
+If `node` is unavailable in a non-interactive SSH command, wrap the command in
+the iMac login shell:
+
+```bash
+ssh example-host 'zsh -lc "cd /srv/apizzamichigan && node scripts/ops/home-status-report.mjs"'
+```
+
 Use `classifier-health-report.mjs` for the normal "is the launchd classifier
 healthy and advancing?" check. Use `home-status-report.mjs` when you need the
 broader queue/Postgres/Ollama/process details.

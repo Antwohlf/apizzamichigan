@@ -34,6 +34,11 @@ type Place = {
 
 const roots = new WeakMap<HTMLElement, Root>()
 
+const stopPopupEvent = (event: React.SyntheticEvent) => {
+  event.stopPropagation()
+  event.nativeEvent?.stopImmediatePropagation?.()
+}
+
 function displayPrice(place: Place) {
   return place.price_range || place.priceRange || place.price || null
 }
@@ -76,6 +81,7 @@ export function renderPreview(node: HTMLElement, place: Place) {
 export function renderExpanded(node: HTMLElement, place: Place, onClose: () => void) {
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
   const price = displayPrice(place)
+  const photos = Array.isArray(place.photos) ? place.photos.filter(Boolean) : []
   const classNames = ['popup-card']
   if (isGolden) {
     classNames.push('popup-card--favorited', 'golden-glow')
@@ -86,39 +92,56 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       data-mode="expanded"
       role="dialog"
       aria-modal="true"
+      aria-label={`${place.name} details`}
       data-favorited={isGolden ? 'true' : 'false'}
       onClick={event => event.stopPropagation()}
       onMouseDown={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()}
     >
-      <button className="close" onClick={onClose} aria-label="Close">
+      <button
+        className="close"
+        onClick={event => {
+          stopPopupEvent(event)
+          onClose()
+        }}
+        onMouseDown={stopPopupEvent}
+        onPointerDown={stopPopupEvent}
+        aria-label="Close"
+      >
         ×
       </button>
-      <div className="title">{place.name}</div>
-      {(place.style || price) ? (
-        <div className="style-label">
-          {[place.style, price].filter(Boolean).join(' · ')}
-        </div>
-      ) : null}
-      {typeof place.rating === 'number' ? (
-        <div className="rating">★ {place.rating.toFixed(1)}</div>
-      ) : null}
-      {place.address ? (
-        <div className="addr">
-          {place.address}
-          {place.city && !place.address.toLowerCase().includes(place.city.toLowerCase())
-            ? `, ${place.city}`
-            : null}
-        </div>
-      ) : null}
-      <div className="review-gallery-wrap">
-        <ReviewGallery photos={place.photos || []} placeName={place.name} />
+      <div className="popup-card__body">
+        <div className="title">{place.name}</div>
+        {(place.style || price) ? (
+          <div className="style-label">
+            {[place.style, price].filter(Boolean).join(' · ')}
+          </div>
+        ) : null}
+        {typeof place.rating === 'number' ? (
+          <div className="rating">★ {place.rating.toFixed(1)}</div>
+        ) : null}
+        {place.address ? (
+          <div className="addr">
+            {place.address}
+            {place.city && !place.address.toLowerCase().includes(place.city.toLowerCase())
+              ? `, ${place.city}`
+              : null}
+          </div>
+        ) : null}
+        {photos.length ? (
+          <div className="review-gallery-wrap">
+            <ReviewGallery photos={photos} placeName={place.name} />
+          </div>
+        ) : null}
       </div>
       <div className="actions">
         <a
           target="_blank"
           rel="noopener noreferrer"
           href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`}
+          onClick={stopPopupEvent}
+          onMouseDown={stopPopupEvent}
+          onPointerDown={stopPopupEvent}
         >
           Directions
         </a>
@@ -127,6 +150,9 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
           target="_blank"
           rel="noopener noreferrer"
           className="popup-link--details"
+          onClick={stopPopupEvent}
+          onMouseDown={stopPopupEvent}
+          onPointerDown={stopPopupEvent}
         >
           View details
         </a>

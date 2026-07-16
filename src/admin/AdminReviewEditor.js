@@ -233,6 +233,12 @@ export default function AdminReviewEditor({
             </dd>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+            <dt style={{ fontWeight: 500, color: 'var(--app-text-muted, #94a3b8)' }}>Price</dt>
+            <dd style={{ margin: 0, fontWeight: 600, color: 'var(--app-text, #f1f5f9)' }}>
+              {formatLabel(review.price_range || review.price, '—')}
+            </dd>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
             <dt style={{ fontWeight: 500, color: 'var(--app-text-muted, #94a3b8)' }}>Photos</dt>
             <dd style={{ margin: 0, fontWeight: 600, color: 'var(--app-text, #f1f5f9)' }}>
               {localPhotos.length}/{maxPhotos}

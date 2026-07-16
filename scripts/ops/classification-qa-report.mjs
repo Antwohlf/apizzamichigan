@@ -30,6 +30,7 @@ const CONFIDENCES = ['confirmed', 'inferred']
 function parseArgs(argv) {
   const out = {
     hours: 24,
+    ids: [],
     limit: 500,
     sample: 25,
     json: false
@@ -38,6 +39,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--hours') out.hours = parseInt(argv[++i], 10)
+    else if (arg === '--ids') out.ids = parseIds(argv[++i])
     else if (arg === '--limit') out.limit = parseInt(argv[++i], 10)
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10)
     else if (arg === '--json') out.json = true
@@ -46,6 +48,7 @@ function parseArgs(argv) {
 
 Options:
   --hours <n>   Review rows enriched in the last n hours (default 24)
+  --ids <a,b,c> Review exact local pizza_places ids instead of recent OSM rows
   --limit <n>   Maximum recent rows to inspect (default 500)
   --sample <n>  Maximum rows per detail table (default 25)
   --json        Emit JSON instead of Markdown
@@ -61,6 +64,15 @@ Options:
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample')
 
   return out
+}
+
+function parseIds(value) {
+  const ids = String(value || '')
+    .split(',')
+    .map(item => Number(item.trim()))
+    .filter(id => Number.isInteger(id) && id > 0)
+  if (!ids.length) throw new Error('Invalid --ids')
+  return [...new Set(ids)]
 }
 
 function run(cmd, cmdArgs = [], options = {}) {
@@ -159,7 +171,27 @@ async function loadRows(options) {
       FROM pizza_places
     `, [String(options.hours)])
 
-    const recent = await client.query(`
+    const recent = options.ids.length
+      ? await client.query(`
+      SELECT
+        id,
+        name,
+        state,
+        google_place_id,
+        style,
+        price_range,
+        style_confidence,
+        website_url,
+        osm_tags,
+        scrape_notes,
+        scrape_method,
+        enrichment_status,
+        last_enriched_at
+      FROM pizza_places
+      WHERE id = ANY($1::bigint[])
+      ORDER BY id
+    `, [options.ids])
+      : await client.query(`
       SELECT
         id,
         name,
@@ -330,7 +362,10 @@ async function main() {
   console.log('')
   console.log(`Generated: ${generatedAt}`)
   console.log(`Repo: \`${root}\``)
-  console.log(`Window: last ${options.hours}h, inspected ${analysis.totals.inspected} most recent OSM rows (limit ${options.limit})`)
+  console.log(options.ids.length
+    ? `Scope: ids=${options.ids.join(',')}, inspected ${analysis.totals.inspected} exact rows`
+    : `Window: last ${options.hours}h, inspected ${analysis.totals.inspected} most recent OSM rows (limit ${options.limit})`
+  )
   console.log('')
 
   console.log('## Summary')

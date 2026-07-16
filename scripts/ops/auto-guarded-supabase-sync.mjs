@@ -6,10 +6,11 @@
  * prevents overlapping scheduled runs and supplies conservative defaults.
  */
 
-import { mkdirSync, rmSync } from 'fs';
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 
 const LOCK_DIR = process.env.APIZZA_SYNC_LOCK_DIR || '/tmp/apizzamichigan/supabase-sync.lock';
+const LOCK_MAX_AGE_MS = parseInt(process.env.APIZZA_SYNC_LOCK_MAX_AGE_MS || String(25 * 60 * 1000), 10);
 
 function parseArgs(argv) {
   const out = {
@@ -42,12 +43,33 @@ bounded write after the guarded preflight checks pass.
   return out;
 }
 
+function lockAgeMs() {
+  try {
+    return Date.now() - statSync(LOCK_DIR).mtimeMs;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 function acquireLock() {
   try {
     mkdirSync(LOCK_DIR, { recursive: false });
+    writeFileSync(`${LOCK_DIR}/owner.json`, JSON.stringify({
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+    }, null, 2));
     return true;
   } catch (error) {
-    if (error?.code === 'EEXIST') return false;
+    if (error?.code === 'EEXIST') {
+      const age = lockAgeMs();
+      if (age !== null && Number.isFinite(LOCK_MAX_AGE_MS) && age > LOCK_MAX_AGE_MS) {
+        console.log(`[recover] removing stale guarded Supabase sync lock; lock=${LOCK_DIR} age_ms=${Math.round(age)}`);
+        releaseLock();
+        return acquireLock();
+      }
+      return false;
+    }
     throw error;
   }
 }
@@ -59,10 +81,12 @@ function releaseLock() {
 const options = parseArgs(process.argv);
 
 if (!acquireLock()) {
-  console.log(`[skip] guarded Supabase sync already running; lock=${LOCK_DIR}`);
+  const age = lockAgeMs();
+  console.log(`[skip] guarded Supabase sync already running; lock=${LOCK_DIR} age_ms=${age === null ? 'unknown' : Math.round(age)}`);
   process.exit(0);
 }
 
+let exitCode = 1;
 try {
   const result = spawnSync(process.execPath, [
     'scripts/ops/guarded-supabase-sync.mjs',
@@ -79,7 +103,9 @@ try {
   });
 
   if (result.error) throw result.error;
-  process.exit(result.status ?? 1);
+  exitCode = result.status ?? 1;
 } finally {
   releaseLock();
 }
+
+process.exit(exitCode);

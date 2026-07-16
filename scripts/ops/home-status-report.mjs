@@ -9,7 +9,7 @@
 import Database from 'better-sqlite3'
 import pg from 'pg'
 import 'dotenv/config'
-import { existsSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { execFileSync, spawnSync } from 'child_process'
 
@@ -172,11 +172,86 @@ async function postgresReport() {
       LIMIT $1
     `, [Math.min(MAX_ROWS, 5)])
 
+    const placeSourcesExists = await client.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'place_sources'
+      ) AS exists
+    `)
+
+    const sourceCounts = placeSourcesExists.rows[0].exists
+      ? await client.query(`
+          SELECT entity_type, source, COUNT(*)::int AS count
+          FROM place_sources
+          GROUP BY entity_type, source
+          ORDER BY entity_type, source
+        `)
+      : { rows: [] }
+
+    const osmMissing = placeSourcesExists.rows[0].exists
+      ? await client.query(`
+          SELECT COUNT(*)::int AS count
+          FROM pizza_places p
+          WHERE p.google_place_id LIKE 'osm:%'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM place_sources ps
+              WHERE ps.entity_type = 'pizza'
+                AND ps.source = 'osm'
+                AND ps.source_id = regexp_replace(p.google_place_id, '^osm:', '')
+            )
+        `)
+      : { rows: [{ count: null }] }
+
+    const reviewQueueExists = await client.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'source_review_queue'
+      ) AS exists
+    `)
+
+    const reviewQueueStatusCounts = reviewQueueExists.rows[0].exists
+      ? await client.query(`
+          SELECT entity_type, review_kind, status, COUNT(*)::int AS count
+          FROM source_review_queue
+          GROUP BY entity_type, review_kind, status
+          ORDER BY entity_type, review_kind, status
+        `)
+      : { rows: [] }
+
+    const reviewQueueReportCounts = reviewQueueExists.rows[0].exists
+      ? await client.query(`
+          SELECT
+            entity_type,
+            source,
+            report_file,
+            review_kind,
+            status,
+            COUNT(*)::int AS count
+          FROM source_review_queue
+          GROUP BY entity_type, source, report_file, review_kind, status
+          ORDER BY count DESC, report_file, review_kind, status
+          LIMIT $1
+        `, [MAX_ROWS])
+      : { rows: [] }
+
     return {
       ok: true,
       health: health.rows[0],
       pizza: pizza.rows[0],
-      recent: recent.rows
+      recent: recent.rows,
+      provenance: {
+        placeSourcesExists: placeSourcesExists.rows[0].exists,
+        sourceCounts: sourceCounts.rows,
+        missingPizzaOsmSourceRows: osmMissing.rows[0].count,
+        sourceReviewQueueExists: reviewQueueExists.rows[0].exists,
+        sourceReviewQueueStatusCounts: reviewQueueStatusCounts.rows,
+        sourceReviewQueueReportCounts: reviewQueueReportCounts.rows
+      }
     }
   } catch (error) {
     return { ok: false, error: errorMessage(error) }
@@ -230,6 +305,60 @@ function processReport() {
   return { ok: true, rows }
 }
 
+function launchdServiceReport(label) {
+  const uid = run('id', ['-u']).stdout
+  if (!uid) return { label, ok: false, error: 'unable to determine uid' }
+
+  const result = run('launchctl', ['print', `gui/${uid}/${label}`])
+  if (!result.ok) return { label, ok: false, error: result.stderr || result.stdout || 'launchctl print failed' }
+
+  const field = name => {
+    const match = result.stdout.match(new RegExp(`\\b${name} = ([^\\n]+)`))
+    return match ? match[1].trim() : ''
+  }
+
+  return {
+    label,
+    ok: true,
+    state: field('state'),
+    pid: field('pid'),
+    runs: field('runs'),
+    lastExitCode: field('last exit code'),
+    runInterval: field('run interval')
+  }
+}
+
+function syncLockReport() {
+  const path = process.env.APIZZA_SYNC_LOCK_DIR || '/tmp/apizzamichigan/supabase-sync.lock'
+  if (!existsSync(path)) return { path, exists: false }
+
+  try {
+    const ageMinutes = (Date.now() - statSync(path).mtimeMs) / 60000
+    return { path, exists: true, ageMinutes }
+  } catch (error) {
+    return { path, exists: true, error: errorMessage(error) }
+  }
+}
+
+function fsqSampleReport(root) {
+  const result = run(process.execPath, ['scripts/ops/fsq-sample-preflight.mjs', '--json'], {
+    cwd: root,
+    timeout: 10000
+  })
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.stderr || result.stdout || 'fsq-sample-preflight failed'
+    }
+  }
+
+  try {
+    return { ok: true, ...JSON.parse(result.stdout) }
+  } catch (error) {
+    return { ok: false, error: `invalid fsq preflight JSON: ${errorMessage(error)}` }
+  }
+}
+
 function table(headers, rows) {
   if (!rows.length) return '_none_'
   const escape = value => String(value ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ')
@@ -259,10 +388,16 @@ async function main() {
   const queue = queueReport(root)
   const [postgres, ollama] = await Promise.all([postgresReport(), ollamaReport()])
   const processes = processReport()
+  const launchd = [
+    launchdServiceReport('com.apizzamichigan.classifier'),
+    launchdServiceReport('com.apizzamichigan.supabase-sync')
+  ]
+  const syncLock = syncLockReport()
+  const fsqSample = fsqSampleReport(root)
   const now = new Date().toISOString()
 
   if (args.has('--json')) {
-    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, processes }, null, 2))
+    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, syncLock, fsqSample, processes }, null, 2))
     return
   }
 
@@ -318,6 +453,60 @@ async function main() {
     console.log(``)
     console.log(`### Recent Enrichment Rows`)
     console.log(table(['id', 'name', 'state', 'google_place_id', 'style', 'price_range', 'style_confidence', 'last_enriched_at'], postgres.recent))
+    console.log(``)
+    console.log(`### Source Provenance`)
+    console.log(`- place_sources exists: ${postgres.provenance.placeSourcesExists ? 'yes' : 'no'}`)
+    console.log(`- missing pizza OSM source rows: ${postgres.provenance.missingPizzaOsmSourceRows ?? 'n/a'}`)
+    console.log(``)
+    console.log(table(['entity_type', 'source', 'count'], postgres.provenance.sourceCounts))
+    console.log(``)
+    console.log(`### Source Review Queue`)
+    console.log(`- source_review_queue exists: ${postgres.provenance.sourceReviewQueueExists ? 'yes' : 'no'}`)
+    console.log(``)
+    console.log(table(['entity_type', 'review_kind', 'status', 'count'], postgres.provenance.sourceReviewQueueStatusCounts || []))
+    console.log(``)
+    console.log(`### Source Review Queue by Report`)
+    console.log(table(['entity_type', 'source', 'report_file', 'review_kind', 'status', 'count'], postgres.provenance.sourceReviewQueueReportCounts || []))
+  }
+  console.log(``)
+
+  console.log(`## Launchd Services`)
+  console.log(table(['label', 'state', 'pid', 'runs', 'lastExitCode', 'runInterval', 'status'], launchd.map(service => ({
+    label: service.label,
+    state: service.state || '',
+    pid: service.pid || '',
+    runs: service.runs || '',
+    lastExitCode: service.lastExitCode || '',
+    runInterval: service.runInterval || '',
+    status: service.ok ? 'ok' : `failed: ${service.error}`
+  }))))
+  console.log(``)
+
+  console.log(`## Sync Lock`)
+  console.log(`- path: \`${syncLock.path}\``)
+  console.log(`- exists: ${syncLock.exists ? 'yes' : 'no'}`)
+  if (syncLock.exists && syncLock.ageMinutes !== undefined) {
+    console.log(`- age_minutes: ${syncLock.ageMinutes.toFixed(1)}`)
+  }
+  if (syncLock.error) {
+    console.log(`- error: ${syncLock.error}`)
+  }
+  console.log(``)
+
+  console.log(`## FSQ Sample Readiness`)
+  if (!fsqSample.ok) {
+    console.log(`- status: failed`)
+    console.log(`- error: ${fsqSample.error}`)
+  } else {
+    console.log(`- state: \`${fsqSample.state}\``)
+    console.log(`- input: ${fsqSample.input || '(missing)'}`)
+    console.log(`- input_exists: ${fsqSample.input_exists ? 'yes' : 'no'}`)
+    console.log(`- can_export_via_hf: ${fsqSample.can_export_via_hf ? 'yes' : 'no'}`)
+    console.log(`- duckdb_cli: ${fsqSample.duckdb_cli}`)
+    if (fsqSample.missing?.length) {
+      console.log(`- missing:`)
+      for (const item of fsqSample.missing) console.log(`  - ${item}`)
+    }
   }
   console.log(``)
 

@@ -7,6 +7,8 @@
  *
  * Usage:
  *   node web-scraper.mjs --worker-id scraper-1
+ *   node web-scraper.mjs --worker-id scraper-smoke --max-jobs 10
+ *   SCRAPE_REQUEUE_BATCH=0 node web-scraper.mjs --worker-id scraper-smoke --max-jobs 10
  */
 
 import { getQueue } from '../queue.mjs'
@@ -91,6 +93,8 @@ class WebScraper {
   }
 
   maybeRequeueFailedBatch() {
+    if (REQUEUE_BATCH <= 0) return { requeued: 0, cleaned: 0 }
+
     const now = Date.now()
     if (now - this.lastRequeueAt < REQUEUE_INTERVAL_MS) return { requeued: 0, cleaned: 0 }
 
@@ -170,11 +174,13 @@ class WebScraper {
     return { requeued: candidates.length, cleaned }
   }
 
-  constructor(workerId) {
+  constructor(workerId, { maxJobs = 0 } = {}) {
     this.workerId = workerId
+    this.maxJobs = maxJobs
     this.queue = getQueue()
     this.pgClient = null
     this.running = false
+    this.currentJob = null
     this.stats = { completed: 0, failed: 0 }
   }
 
@@ -580,44 +586,105 @@ class WebScraper {
       }
     })
 
-    // Main loop
-    while (this.running) {
-      try {
-        // Periodically requeue failed jobs before claiming (so it runs even when processing)
-        this.maybeRequeueFailedBatch()
+    const stop = signal => {
+      console.log(`[${this.workerId}] Received ${signal}; stopping after current job`)
+      this.running = false
+    }
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
 
-        const job = this.queue.claim('scrape', this.workerId)
+    try {
+      // Main loop
+      while (this.running) {
+        try {
+          // Periodically requeue failed jobs before claiming (so it runs even when processing)
+          this.maybeRequeueFailedBatch()
 
-        if (job) {
-          await this.processJob(job)
-          this.sendStats()
-          await new Promise(r => setTimeout(r, FETCH_DELAY))
-        } else {
-          // No pending jobs right now, wait a bit before checking again
-          await new Promise(r => setTimeout(r, 5000))
-        }
-      } catch (error) {
-        // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
-        if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
-          console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
-          await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
-        } else {
-          console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
-          await new Promise(r => setTimeout(r, 5000))
+          const job = this.queue.claim('scrape', this.workerId)
+
+          if (job) {
+            this.currentJob = job
+            try {
+              await this.processJob(job)
+            } catch (error) {
+              const msg = error?.message || String(error)
+              console.error(`[${this.workerId}] Failed scrape job ${job.id} (${job.osmId}):`, msg)
+              this.queue.fail(job.id, msg)
+              this.stats.failed++
+            } finally {
+              this.currentJob = null
+            }
+
+            this.sendStats()
+            if (this.maxJobs > 0 && this.stats.completed + this.stats.failed >= this.maxJobs) {
+              console.log(`[${this.workerId}] Reached max jobs (${this.maxJobs}); stopping`)
+              this.running = false
+              break
+            }
+            await new Promise(r => setTimeout(r, FETCH_DELAY))
+          } else {
+            // No pending jobs right now, wait a bit before checking again
+            await new Promise(r => setTimeout(r, 5000))
+          }
+        } catch (error) {
+          // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
+          if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+            console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+            await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
+          } else {
+            console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+            await new Promise(r => setTimeout(r, 5000))
+          }
         }
       }
-    }
+    } finally {
+      process.off('SIGINT', stop)
+      process.off('SIGTERM', stop)
 
-    clearInterval(heartbeatInterval)
-    await this.shutdown()
-    console.log(`[${this.workerId}] Web Scraper stopped`)
+      if (this.currentJob) {
+        try {
+          this.queue.retry(this.currentJob.id, 'Web scraper stopped before completing job', { refundAttempt: true })
+          console.log(`[${this.workerId}] Requeued in-flight job ${this.currentJob.id} during shutdown`)
+        } catch (error) {
+          console.error(`[${this.workerId}] Failed to requeue in-flight job ${this.currentJob.id}:`, error.message)
+        } finally {
+          this.currentJob = null
+        }
+      }
+
+      clearInterval(heartbeatInterval)
+      await this.shutdown()
+      console.log(`[${this.workerId}] Web Scraper stopped`)
+    }
   }
 }
 
 // Run
 const args = process.argv.slice(2)
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`
+Usage:
+  node scripts/enrichment/agents/web-scraper.mjs [options]
+
+Options:
+  --worker-id <id>   Worker id to register in the SQLite queue.
+  --max-jobs <n>     Stop after processing n scrape jobs. Defaults to SCRAPE_MAX_JOBS or unlimited.
+  -h, --help         Show this help text without starting a worker.
+
+Environment:
+  SCRAPE_MAX_JOBS
+  SCRAPE_FETCH_TIMEOUT_MS
+  SCRAPE_FETCH_DELAY_MS
+  SCRAPE_MAX_RETRIES
+`)
+  process.exit(0)
+}
 const workerIdIdx = args.indexOf('--worker-id')
 const workerId = workerIdIdx >= 0 ? args[workerIdIdx + 1] : `scraper-${Date.now()}`
+const maxJobsIdx = args.indexOf('--max-jobs')
+const maxJobs = maxJobsIdx >= 0 ? parseInt(args[maxJobsIdx + 1], 10) : parseInt(process.env.SCRAPE_MAX_JOBS || '0', 10)
 
-const scraper = new WebScraper(workerId)
+const scraper = new WebScraper(workerId, {
+  maxJobs: Number.isFinite(maxJobs) && maxJobs > 0 ? maxJobs : 0
+})
 scraper.run().catch(console.error)

@@ -531,6 +531,25 @@ class LlmClassifier {
 }
 
 const args = process.argv.slice(2)
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`
+Usage:
+  node scripts/enrichment/agents/llm-classifier.mjs [options]
+
+Options:
+  --worker-id <id>   Worker id to register in the SQLite queue.
+  --max-jobs <n>     Stop after processing n classify jobs. Defaults to CLASSIFY_MAX_JOBS or unlimited.
+  -h, --help         Show this help text without starting a worker.
+
+Environment:
+  CLASSIFY_MAX_JOBS
+  OLLAMA_MODEL
+  OLLAMA_TIMEOUT_MS
+  OLLAMA_NUM_PREDICT
+  OLLAMA_TEMPERATURE
+`)
+  process.exit(0)
+}
 const workerIdIdx = args.indexOf('--worker-id')
 const workerId = workerIdIdx >= 0 ? args[workerIdIdx + 1] : `classify-${Date.now()}`
 const maxJobsIdx = args.indexOf('--max-jobs')

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import AdminReviewEditor from './AdminReviewEditor'
+import AdminSourceProvenancePanel from './AdminSourceProvenancePanel'
 import AdminSuggestionsPanel from './AdminSuggestionsPanel'
 import { isSupportedReviewPhotoFile, prepareReviewPhotoUpload } from '../utils/uploadPhoto'
 
@@ -12,6 +13,7 @@ const ENTITY_OPTIONS = [
 const ADMIN_TABS = [
   { id: 'photos', label: 'Photo Manager' },
   { id: 'suggestions', label: 'Suggestions' },
+  { id: 'sources', label: 'Sources' },
 ]
 
 const authShellStyle = {
@@ -235,10 +237,14 @@ export default function AdminReviewsPage() {
 
   const entityLabel = useMemo(() => ENTITY_OPTIONS.find(option => option.value === entity)?.label || 'Pizza Reviews', [entity])
   const isPhotosTab = activeTab === 'photos'
-  const headerTitle = isPhotosTab ? 'Review Photos' : 'Suggestions Inbox'
+  const isSuggestionsTab = activeTab === 'suggestions'
+  const isSourcesTab = activeTab === 'sources'
+  const headerTitle = isPhotosTab ? 'Review Photos' : isSuggestionsTab ? 'Suggestions Inbox' : 'Source Provenance'
   const headerSubtitle = isPhotosTab
     ? 'Manage Supabase-hosted photos for each review. Drag to reorder, or remove any photo that needs to be replaced.'
-    : 'Review community suggestions and decide what should move onto the official map.'
+    : isSuggestionsTab
+      ? 'Review community suggestions and decide what should move onto the official map.'
+      : 'Inspect local source evidence, match methods, and review backlog before promoting data into the canonical map.'
   const filteredReviews = useMemo(() => {
     const terms = normalizeSearchText(reviewSearch).split(/\s+/).filter(Boolean)
     return reviews.filter(review => {
@@ -249,10 +255,16 @@ export default function AdminReviewsPage() {
 
       const haystack = normalizeSearchText([
         review.name,
+        review.address,
+        review.city,
+        review.state,
         review.notes,
         review.rating,
         review.status,
         review.style,
+        review.type,
+        review.price_range,
+        review.google_place_id,
       ].filter(Boolean).join(' '))
       return terms.every(term => haystack.includes(term))
     })
@@ -419,7 +431,7 @@ export default function AdminReviewsPage() {
                     type="search"
                     value={reviewSearch}
                     onChange={event => setReviewSearch(event.target.value)}
-                    placeholder="Search name, style, rating, or notes"
+                    placeholder="Search name, address, style, rating, or notes"
                     style={{
                       width: '100%',
                       minWidth: 0,
@@ -506,8 +518,12 @@ export default function AdminReviewsPage() {
               />
             ))}
           </>
-        ) : (
+        ) : isSuggestionsTab ? (
           <AdminSuggestionsPanel entity={entity} />
+        ) : isSourcesTab ? (
+          <AdminSourceProvenancePanel entity={entity} />
+        ) : (
+          <p style={{ color: '#94a3b8' }}>Unknown admin tab.</p>
         )}
       </section>
     </div>

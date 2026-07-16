@@ -15,9 +15,12 @@ import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
   FILL_IF_NULL_COLS,
+  LOCAL_ONLY_SUPABASE_TABLES,
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
+  SUPABASE_SYNC_TARGET_TABLE,
   SUPABASE_SYNC_SELECT_COLS,
+  assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
   localSyncSelectSql,
@@ -26,6 +29,7 @@ import {
 
 function parseArgs(argv) {
   const out = {
+    ids: [],
     batch: 100,
     startAfter: 0,
     sample: 10,
@@ -38,6 +42,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--batch') out.batch = parseInt(argv[++i], 10);
+    else if (arg === '--ids') out.ids = parseIds(argv[++i]);
     else if (arg === '--start-after') out.startAfter = parseInt(argv[++i], 10);
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
@@ -49,6 +54,7 @@ function parseArgs(argv) {
 
 Options:
   --batch <n>                 Number of local rows to inspect (default 100)
+  --ids <a,b,c>               Inspect only these local pizza_places ids
   --start-after <id>          Start after this numeric id (default 0)
   --changed-since-hours <n>   Only inspect rows enriched in the last n hours
   --only-classified           Only inspect rows with style/price classification output
@@ -63,12 +69,22 @@ Options:
   }
 
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
+  if (out.ids.length && out.checkpointPath) throw new Error('--ids cannot be combined with --checkpoint');
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
     throw new Error('Invalid --changed-since-hours');
   }
   return out;
+}
+
+function parseIds(value) {
+  const ids = String(value || '')
+    .split(',')
+    .map(item => Number(item.trim()))
+    .filter(id => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new Error('Invalid --ids');
+  return [...new Set(ids)];
 }
 
 function loadEnvLocal() {
@@ -151,6 +167,7 @@ async function main() {
   const options = parseArgs(process.argv);
   const root = repoRoot();
   const env = loadEnvLocal();
+  const syncBoundary = assertSupabaseSyncTableBoundary();
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
@@ -180,7 +197,7 @@ async function main() {
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
     const { data: sbRows, error } = await supabase
-      .from('pizza_places')
+      .from(SUPABASE_SYNC_TARGET_TABLE)
       .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
       .in('id', ids);
 
@@ -233,6 +250,11 @@ async function main() {
       generatedAt: new Date().toISOString(),
       state,
       repo: { root, ...gitReport(root) },
+      syncBoundary: {
+        ...syncBoundary,
+        status: 'OK',
+        note: 'Only canonical pizza_places rows are eligible for Supabase sync; provenance/review tables remain local-only.',
+      },
       options: {
         ...options,
         checkpointAfter,
@@ -270,7 +292,7 @@ async function main() {
     console.log('');
     console.log(`Generated: ${result.generatedAt}`);
     console.log(`Repo: \`${root}\``);
-    console.log(`Batch: start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, checkpoint=${options.checkpointPath || 'none'}`);
+    console.log(`Batch: ids=${options.ids.length ? options.ids.join(',') : 'none'}, start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, checkpoint=${options.checkpointPath || 'none'}`);
     if (checkpointAfter) {
       console.log(`Checkpoint after: ${checkpointAfter.lastEnrichedAt} / id=${checkpointAfter.id}`);
     }
@@ -286,6 +308,13 @@ async function main() {
     console.log(`- protected field conflicts: ${result.totals.protectedFieldConflicts}`);
     console.log(`- overwrite-field writes: ${result.totals.overwriteWrites}`);
     console.log(`- QA default writes: ${result.totals.qaDefaults}`);
+    console.log('');
+
+    console.log('## Sync Boundary');
+    console.log(`- target table: \`${result.syncBoundary.targetTable}\``);
+    console.log(`- local-only tables: ${LOCAL_ONLY_SUPABASE_TABLES.map(tableName => `\`${tableName}\``).join(', ')}`);
+    console.log(`- status: ${result.syncBoundary.status}`);
+    console.log(`- note: ${result.syncBoundary.note}`);
     console.log('');
 
     console.log('## Field Counts');
