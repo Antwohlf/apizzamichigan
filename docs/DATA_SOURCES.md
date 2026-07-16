@@ -169,6 +169,17 @@ psql pizza_enrichment < scripts/enrichment/source-review-queue-schema.sql
 node scripts/ops/import-source-review-queue.mjs --input-dir reports/source-review --apply
 ```
 
+Use this to export reviewed rows after admin decisions have been recorded:
+
+```bash
+node scripts/ops/export-reviewed-source-candidates.mjs \
+  --status accepted \
+  --output reports/source-reviewed-candidates.csv
+```
+
+The reviewed-candidate export is a handoff artifact only. It does not create
+canonical places, mutate `place_sources`, or sync anything to Supabase.
+
 Use this to preview safe contact-field promotion from accepted source evidence:
 
 ```bash

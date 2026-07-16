@@ -118,6 +118,18 @@ decisions:
 These decisions are review metadata only. They do not create places, link
 `place_sources`, or sync anything to Supabase.
 
+After review decisions exist, export accepted/linked candidates as a handoff
+CSV for later manual/import tooling:
+
+```bash
+node scripts/ops/export-reviewed-source-candidates.mjs \
+  --status accepted \
+  --output reports/source-reviewed-candidates.csv
+```
+
+This export reads `source_review_queue` only. It does not create canonical
+places, write `place_sources`, or sync anything to Supabase.
+
 The matcher prefetches canonical rows for the input bounding box and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row.
