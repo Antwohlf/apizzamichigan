@@ -89,6 +89,11 @@ Check local readiness with:
 node scripts/ops/fsq-sample-preflight.mjs
 ```
 
+The FSQ helper scripts read `HF_TOKEN` / `HUGGINGFACE_HUB_TOKEN` from the shell,
+`.env`, or `.env.local`. A token is only needed to export a sample. If an FSQ
+sample file already exists locally, preflight and `--run` can use that file
+without a token.
+
 If Hugging Face access has been granted, export a small text-search sample:
 
 ```bash

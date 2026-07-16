@@ -6,12 +6,37 @@
  * and writes JSON rows that source-input-sample-report.mjs can consume.
  */
 
-import { mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 
 const DEFAULT_DATASET = 'foursquare/fsq-os-places';
 
+function loadEnvFile(path) {
+  if (!existsSync(path)) return {};
+  const out = {};
+  const text = readFileSync(path, 'utf8');
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx === -1) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+    out[key] = value;
+  }
+  return out;
+}
+
+function mergedEnv() {
+  return {
+    ...loadEnvFile(resolve(process.cwd(), '.env')),
+    ...loadEnvFile(resolve(process.cwd(), '.env.local')),
+    ...process.env,
+  };
+}
+
 function parseArgs(argv) {
+  const env = mergedEnv();
   const args = {
     dataset: DEFAULT_DATASET,
     config: 'default',
@@ -20,7 +45,7 @@ function parseArgs(argv) {
     offset: 0,
     length: 100,
     output: 'data/source-samples/fsq-os-places-pizza-sample.json',
-    token: process.env.HF_TOKEN || process.env.HUGGINGFACE_HUB_TOKEN || '',
+    token: env.HF_TOKEN || env.HUGGINGFACE_HUB_TOKEN || '',
   };
 
   for (let i = 2; i < argv.length; i++) {

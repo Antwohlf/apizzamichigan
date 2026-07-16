@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
 function parseArgs(argv) {
@@ -58,9 +58,34 @@ function commandExists(command) {
   }
 }
 
+function loadEnvFile(path) {
+  if (!existsSync(path)) return {};
+  const out = {};
+  const text = readFileSync(path, 'utf8');
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx === -1) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+    out[key] = value;
+  }
+  return out;
+}
+
+function mergedEnv() {
+  return {
+    ...loadEnvFile(resolve(process.cwd(), '.env')),
+    ...loadEnvFile(resolve(process.cwd(), '.env.local')),
+    ...process.env,
+  };
+}
+
 function tokenStatus() {
+  const env = mergedEnv();
   const names = ['FSQ_PLACES_TOKEN', 'HF_TOKEN', 'HUGGINGFACE_HUB_TOKEN'];
-  return names.map(name => ({ name, present: Boolean(process.env[name]) }));
+  return names.map(name => ({ name, present: Boolean(env[name]) }));
 }
 
 function adapterCommand(args) {
@@ -82,11 +107,12 @@ function main() {
   const inputPath = args.input ? resolve(process.cwd(), args.input) : null;
   const tokens = tokenStatus();
   const missing = [];
+  const inputExists = Boolean(inputPath && existsSync(inputPath));
 
   if (!inputPath) missing.push('exported FSQ sample file (--input or FSQ_OS_PLACES_SAMPLE)');
-  else if (!existsSync(inputPath)) missing.push(`FSQ sample file not found: ${args.input}`);
+  else if (!inputExists) missing.push(`FSQ sample file not found: ${args.input}`);
 
-  if (!tokens.some(token => token.present)) {
+  if (!inputExists && !tokens.some(token => token.present)) {
     missing.push('FSQ/Hugging Face access token env var (FSQ_PLACES_TOKEN, HF_TOKEN, or HUGGINGFACE_HUB_TOKEN)');
   }
 
