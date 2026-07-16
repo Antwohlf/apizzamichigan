@@ -726,6 +726,7 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
   const status = (req.query?.status || 'pending').toString()
   const kind = (req.query?.kind || '').toString()
+  const search = (req.query?.search || '').toString().trim().slice(0, 120)
   const limit = safeInteger(req.query?.limit, 50, { min: 1, max: 100 })
   const offset = safeInteger(req.query?.offset, 0, { min: 0, max: 1000000 })
 
@@ -747,6 +748,19 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
       if (kind) {
         values.push(kind)
         filters.push(`review_kind = $${values.length}`)
+      }
+      if (search) {
+        values.push(`%${search.toLowerCase()}%`)
+        filters.push(`(
+          lower(COALESCE(source_name, '')) LIKE $${values.length}
+          OR lower(COALESCE(source_id, '')) LIKE $${values.length}
+          OR lower(COALESCE(source_url, '')) LIKE $${values.length}
+          OR lower(COALESCE(source_data->>'address', '')) LIKE $${values.length}
+          OR lower(COALESCE(source_data->>'addr:full', '')) LIKE $${values.length}
+          OR lower(COALESCE(source_data->>'locality', '')) LIKE $${values.length}
+          OR lower(COALESCE(nearest_place_name, '')) LIKE $${values.length}
+          OR lower(COALESCE(nearest_google_place_id, '')) LIKE $${values.length}
+        )`)
       }
       const where = filters.join(' AND ')
       const countResult = await client.query(`SELECT COUNT(*)::int AS total FROM source_review_queue WHERE ${where}`, values)

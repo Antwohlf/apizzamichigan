@@ -7,6 +7,7 @@ const REVIEW_KIND_OPTIONS = [
   { value: 'ambiguous', label: 'Ambiguous' },
   { value: 'likely_new', label: 'Likely new' },
 ]
+const QUEUE_PAGE_SIZE = 25
 
 const formatCount = value => numberFormat.format(Number(value) || 0)
 
@@ -94,6 +95,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const [queueTotal, setQueueTotal] = useState(0)
   const [queueStatus, setQueueStatus] = useState('pending')
   const [queueKind, setQueueKind] = useState('')
+  const [queueSearch, setQueueSearch] = useState('')
+  const [queuePage, setQueuePage] = useState(0)
   const [queueLoading, setQueueLoading] = useState(false)
   const [queueError, setQueueError] = useState('')
   const [queueMessage, setQueueMessage] = useState('')
@@ -129,7 +132,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
   useEffect(() => {
     let cancelled = false
 
-    async function loadQueue() {
+    const timeoutId = setTimeout(async () => {
       setQueueLoading(true)
       setQueueError('')
       setQueueMessage('')
@@ -137,9 +140,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
         const params = new URLSearchParams({
           entity,
           status: queueStatus,
-          limit: '25',
+          limit: String(QUEUE_PAGE_SIZE),
+          offset: String(queuePage * QUEUE_PAGE_SIZE),
         })
         if (queueKind) params.set('kind', queueKind)
+        if (queueSearch.trim()) params.set('search', queueSearch.trim())
         const res = await fetch(`/api/admin/source-review-queue?${params.toString()}`, { credentials: 'include' })
         if (!res.ok) {
           const text = await res.text()
@@ -159,13 +164,17 @@ export default function AdminSourceProvenancePanel({ entity }) {
       } finally {
         if (!cancelled) setQueueLoading(false)
       }
-    }
+    }, 200)
 
-    loadQueue()
     return () => {
       cancelled = true
+      clearTimeout(timeoutId)
     }
-  }, [entity, queueKind, queueStatus])
+  }, [entity, queueKind, queuePage, queueSearch, queueStatus])
+
+  useEffect(() => {
+    setQueuePage(0)
+  }, [entity, queueKind, queueSearch, queueStatus])
 
   const recordDecision = async (row, status) => {
     let reviewerNotes = ''
@@ -244,6 +253,9 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const database = payload.database || {}
   const reviewArtifacts = payload.reviewArtifacts || {}
   const reviewQueueCsv = payload.reviewQueueCsv || {}
+  const pageCount = Math.max(1, Math.ceil(queueTotal / QUEUE_PAGE_SIZE))
+  const pageStart = queueTotal === 0 ? 0 : queuePage * QUEUE_PAGE_SIZE + 1
+  const pageEnd = Math.min(queueTotal, (queuePage + 1) * QUEUE_PAGE_SIZE)
 
   return (
     <div style={panelStyle}>
@@ -346,6 +358,16 @@ export default function AdminSourceProvenancePanel({ entity }) {
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'end' }}>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700, flex: '1 1 260px' }}>
+                    Search
+                    <input
+                      type="search"
+                      value={queueSearch}
+                      onChange={event => setQueueSearch(event.target.value)}
+                      placeholder="Name, address, source id, nearest place"
+                      style={{ minWidth: 0, padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    />
+                  </label>
                   <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
                     Status
                     <select
@@ -371,7 +393,34 @@ export default function AdminSourceProvenancePanel({ entity }) {
                     </select>
                   </label>
                   <div style={{ color: '#94a3b8', fontWeight: 700 }}>
-                    Showing {formatCount(queueRows.length)} of {formatCount(queueTotal)}
+                    Showing {formatCount(pageStart)}-{formatCount(pageEnd)} of {formatCount(queueTotal)}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      disabled={queuePage === 0 || queueLoading}
+                      onClick={() => setQueuePage(prev => Math.max(0, prev - 1))}
+                      style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: queuePage === 0 || queueLoading ? 'not-allowed' : 'pointer', opacity: queuePage === 0 || queueLoading ? 0.5 : 1 }}
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={queuePage >= pageCount - 1 || queueLoading}
+                      onClick={() => setQueuePage(prev => Math.min(pageCount - 1, prev + 1))}
+                      style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: queuePage >= pageCount - 1 || queueLoading ? 'not-allowed' : 'pointer', opacity: queuePage >= pageCount - 1 || queueLoading ? 0.5 : 1 }}
+                    >
+                      Next
+                    </button>
+                    {queueSearch ? (
+                      <button
+                        type="button"
+                        onClick={() => setQueueSearch('')}
+                        style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: 'pointer' }}
+                      >
+                        Clear
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
