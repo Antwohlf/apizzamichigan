@@ -13,6 +13,7 @@ import { join, resolve } from 'path';
 function parseArgs(argv) {
   const args = {
     inputDir: 'reports/source-review',
+    inputFiles: [],
     applySchema: false,
     apply: false,
     entity: null,
@@ -21,6 +22,8 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--input-dir') args.inputDir = argv[++i];
+    else if (arg === '--input-file') args.inputFiles.push(argv[++i]);
+    else if (arg === '--input-files') args.inputFiles.push(...argv[++i].split(',').map(item => item.trim()).filter(Boolean));
     else if (arg === '--entity') args.entity = argv[++i];
     else if (arg === '--apply-schema') args.applySchema = true;
     else if (arg === '--apply') args.apply = true;
@@ -45,6 +48,9 @@ function printHelp() {
 Options:
   --input-dir <dir>  Directory containing *-review.json files
                      (default reports/source-review)
+  --input-file <f>   Import one review JSON file
+  --input-files <a,b>
+                     Import comma-separated review JSON files
   --entity <pizza|taco>
                      Optional entity filter
   --apply-schema     Create source_review_queue table/indexes if missing
@@ -96,15 +102,22 @@ function table(headers, rows) {
   return [head, sep, ...body].join('\n');
 }
 
-function readReports(inputDir, entityFilter) {
+function readReports(inputDir, entityFilter, inputFiles = []) {
   const absDir = resolve(process.cwd(), inputDir);
-  if (!existsSync(absDir)) return [];
+  const fileNames = inputFiles.length
+    ? inputFiles
+    : (existsSync(absDir) ? readdirSync(absDir).filter(name => name.endsWith('-review.json')).sort() : []);
 
   const reports = [];
-  for (const file of readdirSync(absDir).filter(name => name.endsWith('-review.json')).sort()) {
-    const report = JSON.parse(readFileSync(join(absDir, file), 'utf8'));
+  for (const file of fileNames) {
+    const absFile = resolve(process.cwd(), file);
+    const filePath = existsSync(absFile) ? absFile : join(absDir, file);
+    if (!existsSync(filePath)) {
+      throw new Error(`Review file not found: ${file}`);
+    }
+    const report = JSON.parse(readFileSync(filePath, 'utf8'));
     if (entityFilter && report.entity !== entityFilter) continue;
-    reports.push({ file, report });
+    reports.push({ file: filePath.startsWith(absDir) ? filePath.slice(absDir.length + 1) : file, report });
   }
   return reports;
 }
@@ -238,7 +251,7 @@ async function upsertRows(client, rows) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  const reports = readReports(args.inputDir, args.entity);
+  const reports = readReports(args.inputDir, args.entity, args.inputFiles);
   const rows = reviewRows(reports);
   const byKind = rows.reduce((acc, row) => {
     acc[row.review_kind] = (acc[row.review_kind] || 0) + 1;
@@ -270,6 +283,7 @@ async function main() {
     console.log(`# Source Review Queue ${args.apply ? 'Import' : 'Dry Run'}`);
     console.log('');
     console.log(`Input directory: \`${args.inputDir}\``);
+    if (args.inputFiles.length) console.log(`Input files: ${args.inputFiles.join(', ')}`);
     console.log(`Reports read: ${reports.length}`);
     console.log(`Review rows found: ${rows.length}`);
     console.log(`source_review_queue exists: ${exists ? 'yes' : args.applySchema ? 'yes' : 'no'}`);

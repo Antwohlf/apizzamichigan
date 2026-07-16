@@ -285,6 +285,16 @@ node scripts/ops/import-atp-spiders.mjs \
 
 Add `--apply` only after the dry-run review summary looks safe.
 
+After a grouped ATP run, import just that group's review candidates into the
+durable review queue with explicit files:
+
+```bash
+node scripts/ops/import-source-review-queue.mjs \
+  --input-files reports/source-review/round_table_pizza-review.json,reports/source-review/simple_simons_pizza_us-review.json,reports/source-review/pizza_ranch_us-review.json,reports/source-review/vocelli_pizza_us-review.json,reports/source-review/sals_pizza_us-review.json,reports/source-review/flippin_pizza_us-review.json \
+  --entity pizza \
+  --apply
+```
+
 Discover current spider names from the latest ATP run before adding new chains:
 
 ```bash
