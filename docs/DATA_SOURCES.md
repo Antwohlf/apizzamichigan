@@ -149,6 +149,18 @@ psql pizza_enrichment < scripts/enrichment/source-review-queue-schema.sql
 node scripts/ops/import-source-review-queue.mjs --input-dir reports/source-review --apply
 ```
 
+Use this to preview safe contact-field promotion from accepted source evidence:
+
+```bash
+node scripts/ops/promote-source-contact-fields.mjs --entity pizza
+```
+
+Apply only after reviewing the dry-run summary:
+
+```bash
+node scripts/ops/promote-source-contact-fields.mjs --entity pizza --apply
+```
+
 ## Primary References
 
 - Foursquare OS Places: https://opensource.foursquare.com/os-places/

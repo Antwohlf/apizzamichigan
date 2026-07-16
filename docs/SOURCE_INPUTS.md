@@ -173,6 +173,33 @@ Supabase sync should continue to move product-facing canonical fields, not raw
 source evidence. Keep `place_sources` local-only until the public app or admin
 UI has a concrete provenance feature that needs it.
 
+### Contact Field Promotion
+
+The only automated canonical promotion path currently allowed is fill-if-null
+contact data from accepted local source evidence:
+
+```bash
+node scripts/ops/promote-source-contact-fields.mjs \
+  --entity pizza \
+  --sources all_the_places,osm \
+  --fields website_url,phone
+```
+
+Default mode is dry-run. To apply:
+
+```bash
+node scripts/ops/promote-source-contact-fields.mjs \
+  --entity pizza \
+  --sources all_the_places,osm \
+  --fields website_url,phone \
+  --apply
+```
+
+The script only fills blank `website_url` and/or `phone` values. It does not
+change identity fields, style, price, rating, notes, status, photos,
+`place_sources`, `source_review_queue`, or Supabase. Normal local-to-Supabase
+sync is responsible for moving canonical field changes after review.
+
 ## Source Notes
 
 ### All the Places
