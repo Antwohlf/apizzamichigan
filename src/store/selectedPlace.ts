@@ -8,6 +8,13 @@ export type SelectedPlace = {
   address?: string | null
   city?: string | null
   state?: string | null
+  type?: string | null
+  style?: string | null
+  price_range?: string | null
+  status?: string | null
+  rating?: number | null
+  lat?: number | null
+  lng?: number | null
 }
 
 type ContextValue = {

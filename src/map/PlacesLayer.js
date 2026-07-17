@@ -6,6 +6,7 @@ import { getMarkerIcon } from './getMarkerIcon'
 import { useMapPopup } from './useMapPopup'
 import { usePopup } from '../context/PopupProvider'
 import { renderExpanded, renderPreview } from '../components/map/renderPopup'
+import { REVIEW_LIGHTBOX_CLOSE_EVENT, REVIEW_LIGHTBOX_OPEN_EVENT } from '../components/ReviewGallery'
 import '../styles/marker-popup.css'
 import { useSelectedPlace } from '../store/selectedPlace'
 import { StateAggregateLayer } from './StateMarker'
@@ -20,6 +21,7 @@ import {
   FOCUSED_PLACE_ZOOM,
   MIN_INDIVIDUAL_MARKERS_ZOOM,
   focusedPlaceZoom,
+  lightboxRestoreViewport,
 } from './viewport'
 
 const CLUSTER_ICONS = {
@@ -89,6 +91,8 @@ function MapClickCloser({ close }) {
       if (target && typeof target.closest === 'function') {
         const lightbox = target.closest('.review-lightbox')
         if (lightbox) return
+        const gallery = target.closest('.review-gallery')
+        if (gallery) return
         const shell = target.closest('.marker-popup')
         if (shell) return
         const marker = target.closest('.leaflet-marker-icon')
@@ -112,6 +116,21 @@ const FOCUSED_ZOOM = FOCUSED_PLACE_ZOOM
 
 const NEAR_ME_ZOOM = 10 // City-level view for Near Me
 
+const captureMapViewport = map => {
+  if (!map || typeof map.getCenter !== 'function' || typeof map.getZoom !== 'function') return null
+  const center = map.getCenter()
+  const zoom = map.getZoom()
+  if (!center || typeof center.lat !== 'number' || typeof center.lng !== 'number' || typeof zoom !== 'number') {
+    return null
+  }
+  return { lat: center.lat, lng: center.lng, zoom }
+}
+
+const restoreMapViewport = (map, viewport) => {
+  if (!map || !viewport || typeof map.setView !== 'function') return
+  map.setView([viewport.lat, viewport.lng], viewport.zoom, { animate: false })
+}
+
 export function PlacesLayer({
   site,
   places,
@@ -132,6 +151,8 @@ export function PlacesLayer({
   const [isMapStable, setIsMapStable] = useState(false)
   const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM)
   const isMountedRef = useRef(true)
+  const lightboxViewportRef = useRef(null)
+  const activePlaceRef = useRef(null)
 
   // Track mount state and map stability for safe cleanup
   useEffect(() => {
@@ -263,6 +284,43 @@ export function PlacesLayer({
     }
   }, [map])
 
+  useEffect(() => {
+    if (!map || typeof window === 'undefined') return undefined
+
+    let restoreTimer = null
+
+    const handleLightboxOpen = () => {
+      lightboxViewportRef.current = captureMapViewport(map)
+    }
+
+    const handleLightboxClose = () => {
+      const viewport = lightboxViewportRef.current
+      if (!viewport) return
+      if (restoreTimer) {
+        clearTimeout(restoreTimer)
+      }
+      restoreTimer = setTimeout(() => {
+        restoreMapViewport(map, lightboxRestoreViewport({
+          capturedViewport: viewport,
+          activePlace: activePlaceRef.current,
+        }))
+        lightboxViewportRef.current = null
+        restoreTimer = null
+      }, 0)
+    }
+
+    window.addEventListener(REVIEW_LIGHTBOX_OPEN_EVENT, handleLightboxOpen)
+    window.addEventListener(REVIEW_LIGHTBOX_CLOSE_EVENT, handleLightboxClose)
+
+    return () => {
+      if (restoreTimer) {
+        clearTimeout(restoreTimer)
+      }
+      window.removeEventListener(REVIEW_LIGHTBOX_OPEN_EVENT, handleLightboxOpen)
+      window.removeEventListener(REVIEW_LIGHTBOX_CLOSE_EVENT, handleLightboxClose)
+    }
+  }, [map])
+
   const flyToPlace = useCallback(
     (lat, lng, options = {}) => {
       if (!map || typeof map.getMaxZoom !== 'function') return
@@ -376,16 +434,19 @@ export function PlacesLayer({
   useEffect(() => {
     if (!popup) return
     if (!openEntry?.id || openEntry.type !== site) {
+      activePlaceRef.current = null
       popup.hide()
       setSelectedPlace(null)
       return
     }
     const activePlace = places.find(place => String(place.id) === String(openEntry.id))
     if (!activePlace || typeof activePlace.lat !== 'number' || typeof activePlace.lng !== 'number') {
+      activePlaceRef.current = null
       popup.hide()
       setSelectedPlace(null)
       return
     }
+    activePlaceRef.current = activePlace
     const placeId = String(activePlace.id)
     const target = { id: placeId, lat: activePlace.lat, lng: activePlace.lng, type: site }
     const hrefParam = `${site}:${placeId}`
@@ -398,6 +459,13 @@ export function PlacesLayer({
       address: activePlace.address ?? null,
       city: activePlace.city ?? null,
       state: activePlace.state ?? null,
+      type: site,
+      style: activePlace.style ?? null,
+      price_range: activePlace.price_range ?? activePlace.priceRange ?? activePlace.price ?? null,
+      status: activePlace.statusRaw ?? activePlace.status ?? null,
+      rating: typeof activePlace.rating === 'number' && Number.isFinite(activePlace.rating) ? activePlace.rating : null,
+      lat: activePlace.lat,
+      lng: activePlace.lng,
     })
     popup.expand(target, node =>
       renderExpanded(node, { ...activePlace, id: placeId, type: site, href }, () => {

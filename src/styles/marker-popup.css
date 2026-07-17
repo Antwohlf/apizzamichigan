@@ -60,7 +60,8 @@
 }
 
 .marker-popup .meta,
-.marker-popup .actions {
+.marker-popup .actions,
+.marker-popup .popup-card__chips {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -84,6 +85,11 @@
 .marker-popup .badge--style {
   background: rgba(100, 116, 139, 0.35);
   color: rgba(226, 232, 240, 0.92);
+}
+
+.marker-popup .badge--status {
+  background: rgba(37, 99, 235, 0.3);
+  color: rgba(219, 234, 254, 0.96);
 }
 
 .marker-popup .style-label {

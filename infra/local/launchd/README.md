@@ -60,3 +60,29 @@ launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"
 launchctl bootout "gui/$(id -u)/com.apizzamichigan.supabase-sync"
 tail -f /tmp/apizzamichigan/supabase-sync.log
 ```
+
+## Source Pipeline Service
+
+The source pipeline runs one bounded, round-robin source work unit each hour.
+It keeps source fetches, review queue updates, strict reviewed-new imports, and
+website enrichment under one lock. It is dry-run by default when invoked
+manually; the launchd template is the explicit apply path.
+
+Install:
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.source-pipeline.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.source-pipeline"
+launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.source-pipeline"
+```
+
+Operate:
+
+```bash
+launchctl print "gui/$(id -u)/com.apizzamichigan.source-pipeline"
+tail -f /tmp/apizzamichigan/source-pipeline.log
+```

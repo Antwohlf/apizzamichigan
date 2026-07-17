@@ -20,6 +20,10 @@ const cases = [
   { name: "Fox's Pizza", style: 'Traditional', price: '$$' },
   { name: 'Pizza Ranch', style: 'Traditional', price: '$$' },
   { name: 'Round Table Pizza', style: 'Traditional', price: '$$' },
+  { name: "Simple Simon's Pizza", style: 'Traditional', price: '$$' },
+  { name: '&pizza', style: 'Traditional', price: '$$' },
+  { name: "LaRosa's Pizzeria", style: 'Traditional', price: '$$' },
+  { name: "Sal's Pizza", style: 'Traditional', price: '$$' },
   { name: "Jet's Pizza", style: 'Detroit', price: '$$' },
 ];
 

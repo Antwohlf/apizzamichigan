@@ -982,6 +982,13 @@ body {
   word-break: break-word;
 }
 
+.bug-report-meta-link {
+  display: inline-block;
+  margin-top: 0.35rem;
+  color: var(--app-accent);
+  font-weight: 700;
+}
+
 .bug-report-actions {
   display: flex;
   justify-content: flex-end;

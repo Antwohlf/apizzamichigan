@@ -13,6 +13,18 @@ shows useful coverage and acceptable ambiguity.
 
 ## Current Input Adapter
 
+Source cadence, priority, freshness windows, and minimum match confidence are
+defined in `config/source-policy.json`. The read-only
+`scripts/ops/source-freshness-report.mjs` reports evidence age and confidence
+by source before promotion or sync. Adapters collect discovery/evidence; the
+canonical promotion boundary remains explicit and auditable.
+
+Use `scripts/ops/source-quality-report.mjs` for the complementary quality
+check. It reports source confidence gaps, review candidates already linked near
+canonical places, and likely duplicate canonical rows with the same normalized
+name within 250 meters. These are risk signals for review, not automatic
+deletions or merges.
+
 Use the generic source input report:
 
 ```bash
@@ -275,6 +287,24 @@ only for an intentionally broad sweep across every canonical ID namespace.
 For classification queue population, pass `--state '*'` when reviewed-new rows
 may be outside Michigan.
 
+Reviewed-new rows without per-location websites will not enter the normal
+scrape-to-classify handoff. For those exact local IDs, use deterministic chain
+inference instead. The command is dry-run by default and only fills null local
+`style`, `price_range`, and `style_confidence` fields:
+
+```bash
+node scripts/ops/apply-deterministic-classification.mjs \
+  --min-place-id 183441 \
+  --max-place-id 183464 \
+  --id-prefix all_the_places:
+
+node scripts/ops/apply-deterministic-classification.mjs \
+  --min-place-id 183441 \
+  --max-place-id 183464 \
+  --id-prefix all_the_places: \
+  --apply
+```
+
 Reviewed-new canonical rows are not picked up by the normal local-to-Supabase
 update sync because they do not exist in Supabase yet. Publish them only with an
 explicit id list and the reviewed-new guard:
@@ -291,11 +321,13 @@ Remove `--dry-run` only after the preview shows the expected inserts. This mode
 still syncs only `pizza_places`; `place_sources` and `source_review_queue` stay
 local-only.
 
-The matcher prefetches canonical rows for the input bounding box and uses an
+The matcher prefetches canonical rows by source-coordinate tiles and uses an
 in-memory coordinate grid. Large source files should still be run one source
-family at a time, but they no longer need one Postgres query per source row.
-Each report prints `canonical rows prefetched` and `coordinate grid cells built`
-so a batch run shows that the optimized matching path was used.
+family at a time, but they no longer need one Postgres query per source row or
+one giant nationwide bounding-box pull.
+Each report prints `canonical rows prefetched`, `canonical prefetch tiles`,
+`canonical prefetch queries`, and `coordinate grid cells built` so a batch run
+shows that the optimized matching path was used.
 
 Verify that path before large ATP/FSQ runs:
 
@@ -307,8 +339,12 @@ node scripts/ops/verify-fsq-sample-workflow.mjs
 `verify-fsq-sample-workflow.mjs` uses a tiny local fixture and does not require
 FSQ credentials. It proves the preflight can consume an exported FSQ-like sample
 and produce the `fsq_os_places` adapter command. A real FSQ run still requires
-either `FSQ_OS_PLACES_SAMPLE` / `--input` pointing at an exported slice or an
-FSQ/Hugging Face token for `export-fsq-hf-sample.mjs`.
+either `FSQ_OS_PLACES_SAMPLE` / `--input` pointing at an exported slice, a
+Hugging Face token for `export-fsq-hf-parquet-sample.py` or
+`export-fsq-hf-sample.mjs`, or a Places Portal/Iceberg sample exported with the
+Portal connection snippet. Prefer the Parquet exporter on the iMac when
+`scripts/.fsq-venv/bin/python` is present; it does not depend on the Hugging
+Face Dataset Viewer search index being current.
 
 ## Source Input Matrix
 
@@ -429,15 +465,20 @@ node scripts/ops/accept-likely-new-source-candidates.mjs \
   --entity pizza \
   --state MI \
   --min-signals 3 \
-  --limit 100
+  --limit 100 \
+  --nearby-radius-m 150
 ```
 
 Apply mode only changes `source_review_queue.status` from `pending` to
-`accepted` for `candidate_ready` likely-new rows. It does not import canonical
-places, write `place_sources`, promote fields, or sync Supabase. Accepted rows
-must still pass `preflight-reviewed-new-place-import.mjs` before local
-canonical import. Use `--report-file` and `--state` for bounded source/region
-batches; without them, the tool intentionally works the global queue order.
+`accepted` for `candidate_ready` likely-new rows that also pass a fresh
+nearby-canonical duplicate check. It scans ahead with `--scan-limit`, skips rows
+with existing canonical places inside `--nearby-radius-m`, and reports the
+skipped count plus canonical prefetch tile/query counts before accepting
+anything. It does not import canonical places, write `place_sources`, promote
+fields, or sync Supabase. Accepted rows must still pass
+`preflight-reviewed-new-place-import.mjs` before local canonical import. Use
+`--report-file` and `--state` for bounded source/region batches; without them,
+the tool intentionally works the global queue order.
 
 For the full reviewed-new handoff path, use the batch runner. Default mode is
 read-only and previews the accept/import set:
@@ -499,7 +540,7 @@ contact data from accepted local source evidence:
 ```bash
 node scripts/ops/promote-source-contact-fields.mjs \
   --entity pizza \
-  --sources all_the_places,osm \
+  --sources official_website,osm,fsq_os_places,all_the_places,overture_places,wikidata \
   --fields website_url,phone \
   --min-confidence 0.9 \
   --match-methods exact_name_nearby,strong_spatial_name,imported_primary
@@ -510,7 +551,7 @@ Default mode is dry-run. To apply:
 ```bash
 node scripts/ops/promote-source-contact-fields.mjs \
   --entity pizza \
-  --sources all_the_places,osm \
+  --sources official_website,osm,fsq_os_places,all_the_places,overture_places,wikidata \
   --fields website_url,phone \
   --min-confidence 0.9 \
   --max-updates 50 \
@@ -539,6 +580,18 @@ node scripts/ops/verify-source-promotion-policy.mjs
 ```
 
 ## Source Notes
+
+Run the read-only source-pipeline readiness report before choosing the next
+source task:
+
+```bash
+node scripts/ops/source-pipeline-readiness-report.mjs
+```
+
+The report maps the current repo/operator state back to the eight active
+source-pipeline backlog areas: batched matching, ATP spider readiness,
+likely-new handling, durable review workflow, FSQ sample readiness, Supabase
+provenance boundary, UI/search polish, and canonical field promotion policy.
 
 ### All the Places
 
@@ -595,6 +648,13 @@ are understood as either `review_only`, `ran_no_accepts`, `disabled`, or
 start with ambiguous duplicate/link review before moving to large likely-new
 candidate imports.
 
+The `Next Review Work` section includes two read-only commands per review
+bucket:
+
+- `review_export_command` writes a CSV handoff from `source_review_queue`.
+- `review_dry_run_command` previews a bounded link or accept action without
+  `--apply`.
+
 The report also prints a suggested next ATP batch. It chooses import-enabled
 `not_run` spiders, caps the command with `--max-spiders`, and warns when pending
 ambiguous or likely-new review rows should be worked before adding more source
@@ -607,6 +667,19 @@ node scripts/ops/atp-batch-coverage-report.mjs --max-spiders 3
 The generated command intentionally uses `--import-review-queue` and omits
 `--apply`, so the first pass downloads source inputs, writes review artifacts,
 and previews/upserts review queue rows without changing canonical places.
+
+When the ATP report shows no not-run spiders left, use the reviewed-new backlog
+report to choose the next import bucket from existing `source_review_queue`
+debt:
+
+```bash
+node scripts/ops/reviewed-new-source-backlog-report.mjs --min-signals 3
+```
+
+This read-only report ranks `likely_new` buckets by pending `candidate_ready`
+rows with enough evidence signals. It also separates rows blocked by nearby
+canonical places or missing required data, so operators do not have to hand-query
+each spider before deciding whether to accept a bounded import slice.
 
 Use a group run when continuing ATP imports:
 
@@ -673,13 +746,15 @@ node scripts/ops/discover-atp-spiders.mjs \
 ```
 
 The manifest verifier is offline and guards the committed contract: known-good
-spiders stay enabled, known Hungry Howie's and Jet's gaps stay disabled, and the
-importer reads the manifest instead of a fallback hardcoded list. The live
-manifest audit is also read-only. `enabled_ok` rows are safe to pass through
-normal import preflight. `enabled_with_errors` rows need operator review before
-apply. `disabled_present` rows are intentionally excluded even though ATP has a
-matching spider name, usually because the name is a documented false positive or
-not the intended brand.
+spiders stay enabled, known Hungry Howie's and Jet's gaps stay disabled,
+zero-feature checked spiders stay disabled, and the importer reads the manifest
+instead of a fallback hardcoded list. The live manifest audit is also read-only.
+`enabled_ok` rows are safe to pass through normal import preflight.
+`enabled_with_errors` rows need operator review before apply. `disabled_present`
+rows are intentionally excluded even though ATP has a matching spider name,
+usually because the name is a documented false positive or not the intended
+brand. `disabled_unavailable` rows document spider names we checked and should
+not run until a future ATP inventory proves they have usable features.
 
 After reviewing the displayed names, generate an import command for the visible
 zero-error matches with:

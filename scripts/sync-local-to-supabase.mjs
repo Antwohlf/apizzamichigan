@@ -80,7 +80,6 @@ Options:
   }
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (out.ids.length && out.checkpointPath) throw new Error('--ids cannot be combined with --checkpoint');
-  if (out.insertMissingReviewedNew && !out.ids.length) throw new Error('--insert-missing-reviewed-new requires --ids');
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches < 0) throw new Error('Invalid --max-batches');
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
@@ -183,6 +182,13 @@ async function main() {
           WHERE entity_type = 'pizza'
             AND match_method = 'reviewed_new_import'
             AND place_id = ANY($1::int[])
+          UNION
+          SELECT DISTINCT canonical_place_id::int AS place_id
+          FROM source_review_queue
+          WHERE entity_type = 'pizza'
+            AND status IN ('accepted', 'linked')
+            AND decision = 'imported_new'
+            AND canonical_place_id = ANY($1::int[])
         `, [ids]);
         reviewedNewImportedIds = new Set(reviewedRows.map(row => Number(row.place_id)));
       }

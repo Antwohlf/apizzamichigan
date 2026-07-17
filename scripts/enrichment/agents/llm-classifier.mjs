@@ -207,6 +207,9 @@ function parseScrapeNotes(scrapeNotes) {
 
 function buildPrompt(row) {
   const osmTags = row.osm_tags ? JSON.stringify(pruneOsmTags(row.osm_tags)) : ''
+  const sourceEvidence = row.source_evidence?.length
+    ? truncateText(JSON.stringify(row.source_evidence), 1800)
+    : ''
 
   // Build a pruned scrape_notes: prioritize JSON-LD, include text_excerpt only if needed
   let scrapeData = {}
@@ -232,7 +235,7 @@ function buildPrompt(row) {
 
   const scrapeNotes = Object.keys(scrapeData).length ? truncateText(JSON.stringify(scrapeData), 2500) : ''
 
-  return `You are classifying a pizza restaurant into a fixed taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${PIZZA_STYLES.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the style (e.g. \"Detroit-style\"). Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, then style_hints, then text excerpts.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nScrape hints (prioritized):\n${scrapeNotes}\n`
+  return `You are classifying a pizza restaurant into a fixed taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${PIZZA_STYLES.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the style (e.g. \"Detroit-style\"). Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, accepted source evidence, then style_hints and text excerpts.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nAccepted source evidence:\n${sourceEvidence}\n\nScrape hints (prioritized):\n${scrapeNotes}\n`
 }
 
 class LlmClassifier {
@@ -303,6 +306,12 @@ class LlmClassifier {
   }
 
   async updatePizzaRow(id, patch) {
+    // Keep the canonical classification contract intact even when an upstream
+    // result omits confidence: a written style must always carry provenance.
+    if (patch.style && !patch.style_confidence) {
+      patch = { ...patch, style_confidence: 'inferred' }
+    }
+
     const cols = []
     const vals = [id]
     let i = 2
@@ -323,7 +332,16 @@ class LlmClassifier {
   async processJob(job) {
     // pizza-only for now
     const { rows } = await this.pgClient.query(
-      `SELECT id, name, state, website_url, osm_tags, scrape_notes, scrape_method
+      `SELECT id, name, state, website_url, osm_tags, scrape_notes, scrape_method,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'source', ps.source,
+                  'confidence', ps.match_confidence,
+                  'data', ps.data
+                ) ORDER BY ps.match_confidence DESC NULLS LAST, ps.retrieved_at DESC)
+                FROM place_sources ps
+                WHERE ps.entity_type = 'pizza' AND ps.place_id = pizza_places.id
+              ), '[]'::jsonb) AS source_evidence
        FROM pizza_places
        WHERE google_place_id = $1
        LIMIT 1`,
@@ -359,7 +377,7 @@ class LlmClassifier {
     }
 
     // Require scraped signal for LLM (avoid guessing from name only)
-    if (row.scrape_method !== 'fetch' && !row.osm_tags) {
+    if (row.scrape_method !== 'fetch' && !row.osm_tags && !row.source_evidence?.length) {
       this.queue.complete(job.id, { skipped: 'no_signal' })
       this.stats.completed++
       return
@@ -441,6 +459,7 @@ class LlmClassifier {
         // Don't exit on heartbeat errors; they're non-critical
       }
     }, 30000)
+    let lastOrphanRecoveryAt = 0
 
     process.on('message', (msg) => {
       if (msg.type === 'shutdown') this.requestShutdown('shutdown message')
@@ -453,6 +472,12 @@ class LlmClassifier {
     try {
       while (this.running) {
         try {
+          if (Date.now() - lastOrphanRecoveryAt >= 60000) {
+            const recovered = this.queue.recoverOrphaned(10, { requireDetachedWorker: true, jobTypes: ['classify'] })
+            if (recovered > 0) console.log(`[${this.workerId}] Recovered ${recovered} detached stale classify job(s)`)
+            lastOrphanRecoveryAt = Date.now()
+          }
+
           // Preflight Ollama so we don't claim jobs (and increment attempts) when it's down.
           const now = Date.now()
           if (now - this.ollamaHealth.lastCheckedAt > OLLAMA_HEALTHCHECK_INTERVAL_MS || !this.ollamaHealth.ok) {

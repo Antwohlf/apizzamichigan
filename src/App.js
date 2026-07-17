@@ -63,8 +63,37 @@ const GENERIC_SEARCH_TERMS = new Set([
 const SEARCH_TERM_ALIASES = {
   aa: ['ann arbor'],
   annarbor: ['ann arbor'],
+  affordable: ['$'],
+  blaze: ['blaze pizza'],
+  budget: ['$'],
+  cheap: ['$'],
+  favorite: ['golden'],
+  favorites: ['golden'],
+  dominos: ['domino', 'domino s'],
+  expensive: ['$$$'],
+  godfathers: ['godfather', 'godfather s'],
+  hungryhowies: ['hungry howies', 'hungry howie', 'howies', 'howie'],
+  inexpensive: ['$'],
+  jetpizza: ['jet pizza', 'jets pizza', 'jet s pizza'],
+  jetspizza: ['jets pizza', 'jet pizza', 'jet s pizza'],
+  jets: ['jet', 'jet s'],
+  littlecaesars: ['little caesars', 'little caesar', 'caesars', 'caesar'],
+  loumalnatis: ['lou malnatis', 'lou malnati', 'malnatis', 'malnati'],
+  marcos: ['marco', 'marco s'],
+  midrange: ['$$'],
+  moderate: ['$$'],
   nyc: ['new york'],
+  papajohn: ['papa john', 'papa johns', 'john'],
+  papajohns: ['papa johns', 'papa john', 'johns', 'john'],
+  papamurphy: ['papa murphy', 'papa murphys', 'murphy'],
+  papamurphys: ['papa murphys', 'papa murphy', 'murphys', 'murphy'],
   philly: ['philadelphia'],
+  pizzahut: ['pizza hut', 'hut'],
+  premium: ['$$$$'],
+  reviewed: ['visited', 'golden'],
+  splurge: ['$$$$'],
+  tried: ['visited'],
+  upscale: ['$$$'],
 }
 const STATE_SEARCH_ALIASES = {
   alabama: 'AL',
@@ -140,6 +169,8 @@ async function fetchPlacesForSearch(table, searchTerms, originalQuery = '') {
       'city',
       'state',
       'style',
+      'status',
+      table === 'pizza_places' ? 'price_range' : 'price',
       ...(table === 'pizza_places' ? ['brand', 'operator'] : []),
     ]
     const { data, error } = await supabase
@@ -262,6 +293,8 @@ const normalizeSearchText = value =>
 
 const searchablePlaceText = place => normalizeSearchText([
   place?.name,
+  place?.brand,
+  place?.operator,
   place?.address,
   place?.city,
   place?.state,
@@ -325,11 +358,16 @@ export const stateScopedNameTerms = value => {
   const terms = searchWords(value)
     .filter(term => term.length >= 2)
     .filter(term => !stateTerms.has(term))
+  const adjacentNamePhrases = adjacentSearchPhrases(terms)
+    .filter(phrase => phrase.split(/\s+/).some(term => !GENERIC_SEARCH_TERMS.has(term)))
   const usableTerms = meaningfulSearchTerms(terms)
     .filter(term => !stateTerms.has(term))
     .filter(term => !GENERIC_SEARCH_TERMS.has(term))
 
-  return [...new Set(usableTerms.flatMap(searchTermVariants))]
+  return [...new Set([
+    ...adjacentNamePhrases,
+    ...usableTerms.flatMap(searchTermVariants),
+  ])]
     .filter(term => term.length >= 2)
     .sort((a, b) => b.length - a.length)
     .slice(0, 5)
@@ -340,7 +378,7 @@ const searchTermVariants = term => {
   if (/^[a-z0-9]{4,}s$/.test(term)) {
     variants.push(term.slice(0, -1))
   }
-  if (/^l[a-z0-9]{4,}$/.test(term)) {
+  if (/^lindustrie[a-z0-9]*$/.test(term)) {
     variants.push(term.slice(1))
   }
   if (SEARCH_TERM_ALIASES[term]) {
@@ -351,6 +389,9 @@ const searchTermVariants = term => {
 
 const termMatchesText = (text, term) =>
   searchTermVariants(term).some(variant => text.includes(variant))
+
+const termHasStrongPhraseMatch = (text, term) =>
+  searchTermVariants(term).some(variant => variant.includes(' ') && text.includes(variant))
 
 const meaningfulSearchTerms = terms => {
   const specificTerms = terms.filter(term => !GENERIC_SEARCH_TERMS.has(term))
@@ -370,6 +411,60 @@ const adjacentSearchPhrases = terms => {
   }
   return phrases
 }
+
+const priceQueryTermsByValue = {
+  '$': ['$', 'cheap', 'budget', 'inexpensive', 'affordable'],
+  '$$': ['$$', 'moderate', 'midrange', 'mid range'],
+  '$$$': ['$$$', 'expensive', 'upscale'],
+  '$$$$': ['$$$$', 'premium', 'splurge'],
+}
+
+const normalizedPlacePrice = place =>
+  String(place?.price_range || place?.priceRange || place?.price || '').trim()
+
+const termMatchesPrice = (term, price) => {
+  if (!price) return false
+  const variants = priceQueryTermsByValue[price] || []
+  return variants.some(variant => normalizeSearchText(variant) === term || variant === term)
+}
+
+const isPriceSearchTerm = term =>
+  Object.values(priceQueryTermsByValue)
+    .flat()
+    .some(variant => normalizeSearchText(variant) === term || variant === term)
+
+const queryMatchesPrice = (query, price) => {
+  if (!price) return false
+  const rawQuery = String(query || '').toLowerCase()
+  const symbolicPrices = rawQuery.match(/\${1,4}/g) || []
+  if (symbolicPrices.includes(price.toLowerCase())) return true
+  const terms = searchWords(query)
+  return terms.some(term => termMatchesPrice(term, price))
+}
+
+const statusQueryTerms = {
+  reviewed: ['reviewed', 'visited', 'tried', 'anthony'],
+  favorite: ['favorite', 'favorites', 'golden', 'best'],
+  suggestion: ['suggestion', 'suggestions', 'unvisited'],
+}
+
+const normalizedPlaceStatus = place =>
+  String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
+
+const isStatusSearchTerm = term =>
+  Object.values(statusQueryTerms).some(terms => terms.includes(term))
+
+const termMatchesPlaceStatus = (term, place) => {
+  const status = normalizedPlaceStatus(place)
+  if (!status) return false
+  if (statusQueryTerms.favorite.includes(term)) return status.startsWith('golden')
+  if (statusQueryTerms.reviewed.includes(term)) return status.startsWith('visited') || status.startsWith('golden')
+  if (statusQueryTerms.suggestion.includes(term)) return status.startsWith('unvisited')
+  return false
+}
+
+const queryMatchesPlaceStatus = (terms, place) =>
+  terms.some(term => isStatusSearchTerm(term) && termMatchesPlaceStatus(term, place))
 
 export const remoteSearchTerms = query => {
   const terms = searchWords(query).filter(term => term.length >= 2)
@@ -398,11 +493,24 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
   const cityState = normalizeSearchText([place?.city, place?.state].filter(Boolean).join(' '))
   const stateCode = normalizeSearchText(place?.state).toUpperCase()
   const locationText = normalizeSearchText([place?.address, place?.city, place?.state].filter(Boolean).join(' '))
+  const identityText = normalizeSearchText([place?.name, place?.brand, place?.operator].filter(Boolean).join(' '))
+  const compactIdentity = compactSearchText([place?.name, place?.brand, place?.operator].filter(Boolean).join(' '))
   const fullText = searchablePlaceText(place)
   const nameWords = searchWords(place?.name)
+  const identityWords = searchWords([place?.name, place?.brand, place?.operator].filter(Boolean).join(' '))
   const meaningfulTerms = meaningfulSearchTerms(terms)
   const assumedLocationTerm = meaningfulTerms.length >= 2 ? meaningfulTerms[meaningfulTerms.length - 1] : ''
   const assumedNameTerms = assumedLocationTerm ? meaningfulTerms.slice(0, -1) : []
+  const price = normalizedPlacePrice(place)
+  const hasPriceMatch = queryMatchesPrice(query, price)
+  const hasStatusMatch = queryMatchesPlaceStatus(meaningfulTerms, place)
+  const hasPriceIntent = meaningfulTerms.some(isPriceSearchTerm) || (String(query || '').match(/\${1,4}/g) || []).length > 0
+  const hasStatusIntent = meaningfulTerms.some(isStatusSearchTerm)
+  const termExplainsMetadataResult = term =>
+    termMatchesText(identityText, term) ||
+    termMatchesText(locationText, term) ||
+    termMatchesPrice(term, price) ||
+    termMatchesPlaceStatus(term, place)
 
   if (name === query) return 0
   if (compactName === compactQuery) return 0.5
@@ -410,35 +518,65 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
   if (compactName.startsWith(compactQuery)) return 1.5
   if (name.includes(query)) return 2
   if (compactQuery.length >= 4 && compactName.includes(compactQuery)) return 2.5
+  if (identityText && identityText !== name && identityText.includes(query)) return 3
+  if (compactQuery.length >= 4 && compactIdentity !== compactName && compactIdentity.includes(compactQuery)) return 3.5
   if (terms.every(term => nameWords.includes(term))) return 3
   if (terms.every(term => nameWords.some(word => word.startsWith(term)))) return 4
   if (
     assumedNameTerms.length > 0 &&
-    assumedNameTerms.every(term => termMatchesText(name, term)) &&
+    assumedNameTerms.every(term => termMatchesText(identityText, term)) &&
     (termMatchesText(cityState, assumedLocationTerm) || stateCodesForSearch(assumedLocationTerm).includes(stateCode))
-  ) return 5
+  ) {
+    if (assumedNameTerms.some(term => termHasStrongPhraseMatch(identityText, term))) return 4.5
+    return 5
+  }
   if (meaningfulTerms.length >= 3) {
     for (let splitIndex = 1; splitIndex < meaningfulTerms.length; splitIndex += 1) {
       const nameTerms = meaningfulTerms.slice(0, splitIndex)
       const locationTerms = meaningfulTerms.slice(splitIndex)
       if (
-        nameTerms.every(term => termMatchesText(name, term)) &&
+        nameTerms.every(term => termMatchesText(identityText, term)) &&
         locationTerms.every(term => termMatchesText(cityState, term) || stateCodesForSearch(term).includes(stateCode))
       ) return 5
     }
   }
   if (meaningfulTerms.length >= 2) {
+    const hasStrongNameLocationSplit = meaningfulTerms.some((locationTerm, index) => {
+      if (!termMatchesText(cityState, locationTerm) && !stateCodesForSearch(locationTerm).includes(stateCode)) return false
+      const nameTerms = meaningfulTerms.filter((_, termIndex) => termIndex !== index)
+      return (
+        nameTerms.length > 0 &&
+        nameTerms.some(term => termHasStrongPhraseMatch(identityText, term)) &&
+        nameTerms.every(term => termHasStrongPhraseMatch(identityText, term) || identityWords.includes(term))
+      )
+    })
+    if (hasStrongNameLocationSplit) return 5
+
     const hasNameLocationSplit = meaningfulTerms.some((locationTerm, index) => {
       if (!termMatchesText(cityState, locationTerm) && !stateCodesForSearch(locationTerm).includes(stateCode)) return false
       const nameTerms = meaningfulTerms.filter((_, termIndex) => termIndex !== index)
-      return nameTerms.length > 0 && nameTerms.every(term => termMatchesText(name, term))
+      return nameTerms.length > 0 && nameTerms.every(term => (
+        identityWords.includes(term) || termHasStrongPhraseMatch(identityText, term)
+      ))
     })
     if (hasNameLocationSplit) return 5
   }
   if (
-    meaningfulTerms.some(term => nameWords.includes(term) || termMatchesText(name, term)) &&
-    meaningfulTerms.every(term => termMatchesText(name, term) || termMatchesText(locationText, term))
+    meaningfulTerms.some(term => identityWords.includes(term) || termMatchesText(identityText, term)) &&
+    meaningfulTerms.every(term => termMatchesText(identityText, term) || termMatchesText(locationText, term))
   ) return 6
+  if (
+    (hasPriceMatch || hasStatusMatch) &&
+    meaningfulTerms.every(termExplainsMetadataResult)
+  ) {
+    const hasIdentityTerm = meaningfulTerms.some(term => termMatchesText(identityText, term))
+    const hasLocationTerm = meaningfulTerms.some(term => termMatchesText(locationText, term))
+    if (hasIdentityTerm && hasLocationTerm) return 6.5
+    if (hasIdentityTerm || hasLocationTerm) return 7.5
+    return 8.5
+  }
+  if (hasPriceIntent && !hasPriceMatch) return 99
+  if (hasStatusIntent && !hasStatusMatch) return 99
   if (terms.every(term => name.includes(term))) return 6
   if (address.includes(query)) return 6
   if (cityState.includes(query)) return 7

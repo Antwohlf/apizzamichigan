@@ -22,6 +22,13 @@ import {
 const CONTRACT_DOC = 'docs/SOURCE_PROVENANCE_SCHEMA.md';
 const SOURCE_INPUTS_DOC = 'docs/SOURCE_INPUTS.md';
 const DATA_SOURCES_DOC = 'docs/DATA_SOURCES.md';
+const DATA_DICTIONARY_DOC = 'docs/DATA_DICTIONARY.md';
+
+const CANONICAL_PIZZA_STYLES = [
+  'Traditional', 'New York', 'Chicago', 'Tavern', 'Detroit',
+  'Neapolitan', 'Sicilian', 'Roman', 'California',
+];
+const CANONICAL_PRICE_RANGES = ['$', '$$', '$$$', '$$$$'];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -79,6 +86,7 @@ function main() {
   const contract = read(CONTRACT_DOC);
   const sourceInputs = read(SOURCE_INPUTS_DOC);
   const dataSources = read(DATA_SOURCES_DOC);
+  const dictionary = read(DATA_DICTIONARY_DOC);
 
   assertIncludes(contract, '# Source Provenance Contract', CONTRACT_DOC);
   assertIncludes(contract, '## Current Table Count', CONTRACT_DOC);
@@ -96,11 +104,21 @@ function main() {
   assertIncludes(dataSources, 'Google Maps is an outbound navigation destination, not an ingestion source.', DATA_SOURCES_DOC);
   assertIncludes(dataSources, 'Do not backfill TacoBout yet.', DATA_SOURCES_DOC);
 
+  for (const style of CANONICAL_PIZZA_STYLES) {
+    assertIncludes(dictionary, `| ${style} |`, DATA_DICTIONARY_DOC);
+  }
+  for (const price of CANONICAL_PRICE_RANGES) {
+    assertIncludes(dictionary, `| ${price} |`, DATA_DICTIONARY_DOC);
+  }
+  assertIncludes(dictionary, 'currently accept only the nine styles listed', DATA_DICTIONARY_DOC);
+
   console.log('# Source Contract Docs Verification');
   console.log('');
   console.log(`sync_target=${SUPABASE_SYNC_TARGET_TABLE}`);
   console.log(`local_only_tables=${LOCAL_ONLY_SUPABASE_TABLES.join(',')}`);
   console.log(`auto_promotable_fields=${autoPromotableSourceFields().join(',')}`);
+  console.log(`pizza_styles=${CANONICAL_PIZZA_STYLES.join(',')}`);
+  console.log(`price_ranges=${CANONICAL_PRICE_RANGES.join(',')}`);
   console.log('status=ok');
 }
 

@@ -160,7 +160,10 @@ export class JobQueue {
         WHERE job_type = ?
           AND status = 'pending'
           AND attempts < max_attempts
-        ORDER BY priority DESC, created_at
+        ORDER BY
+          CASE WHEN job_type = 'scrape' AND last_error IS NULL THEN 0 ELSE 1 END,
+          priority DESC,
+          created_at
         LIMIT 1
       `).get(jobType)
 
@@ -308,20 +311,29 @@ export class JobQueue {
   /**
    * Recover orphaned jobs (from crashed workers)
    */
-  recoverOrphaned(timeoutMinutes = 10, { failJobTypes = ['menu_parse'] } = {}) {
+  recoverOrphaned(timeoutMinutes = 10, { failJobTypes = ['menu_parse'], requireDetachedWorker = false, jobTypes = null } = {}) {
     const recover = this.db.transaction(() => {
       const orphaned = this.db.prepare(`
-        SELECT id, job_type, worker_id
+        SELECT jobs.id, jobs.job_type, jobs.worker_id,
+               workers.status AS worker_status, workers.current_job_id AS worker_current_job_id
         FROM jobs
-        WHERE status = 'processing'
-          AND started_at < datetime('now', '-' || ? || ' minutes')
+        LEFT JOIN workers ON workers.worker_id = jobs.worker_id
+        WHERE jobs.status = 'processing'
+          AND jobs.started_at < datetime('now', '-' || ? || ' minutes')
       `).all(timeoutMinutes)
 
-      if (!orphaned.length) return 0
+      const scoped = Array.isArray(jobTypes) && jobTypes.length
+        ? orphaned.filter(job => jobTypes.includes(job.job_type))
+        : orphaned
+      const candidates = requireDetachedWorker
+        ? scoped.filter(job => job.worker_status !== 'working' || Number(job.worker_current_job_id) !== Number(job.id))
+        : scoped
+
+      if (!candidates.length) return 0
 
       const nowIso = new Date().toISOString()
 
-      for (const job of orphaned) {
+      for (const job of candidates) {
         const shouldFail = failJobTypes.includes(job.job_type)
 
         this.db.prepare(`
@@ -350,10 +362,25 @@ export class JobQueue {
         }
       }
 
-      return orphaned.length
+      return candidates.length
     })
 
     return recover()
+  }
+
+  getStaleProcessingJobs(timeoutMinutes = 10, jobType = null) {
+    const filters = ["status = 'processing'", "started_at < datetime('now', '-' || ? || ' minutes')"]
+    const params = [timeoutMinutes]
+    if (jobType) {
+      filters.push('job_type = ?')
+      params.push(jobType)
+    }
+    return this.db.prepare(`
+      SELECT id, job_type, worker_id, started_at, attempts, max_attempts
+      FROM jobs
+      WHERE ${filters.join(' AND ')}
+      ORDER BY started_at
+    `).all(...params)
   }
 
   // =========================================================

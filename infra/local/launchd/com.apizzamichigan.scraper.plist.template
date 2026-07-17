@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.apizzamichigan.scraper</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/ant/clawd/projects/apizzamichigan &amp;&amp; SCRAPE_REQUEUE_BATCH=25 SCRAPE_REQUEUE_PENDING_MAX=200 /usr/local/bin/node scripts/enrichment/agents/web-scraper.mjs --worker-id launchd-scraper</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/ant/clawd/projects/apizzamichigan</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/apizzamichigan/scraper.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/apizzamichigan/scraper.log</string>
+</dict>
+</plist>

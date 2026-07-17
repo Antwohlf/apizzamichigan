@@ -21,8 +21,105 @@ const placeMeta = place => {
   return parts.join(' · ')
 }
 
+export const searchResultBadge = place => {
+  if (!place) return ''
+  if (isReviewedPlace(place)) return 'Reviewed'
+  const status = String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
+  if (status === 'golden') return 'Favorite'
+  return 'Suggestion'
+}
+
+const resultDomId = place => `map-search-result-${String(place?.id ?? '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`
+
+export const searchResultSummary = places => {
+  const list = Array.isArray(places) ? places : []
+  const reviewed = list.filter(isReviewedPlace).length
+  const suggestions = Math.max(0, list.length - reviewed)
+  const distances = list
+    .map(place => place?._distance)
+    .filter(distance => typeof distance === 'number' && Number.isFinite(distance))
+  const averageDistance = distances.length
+    ? distances.reduce((sum, distance) => sum + distance, 0) / distances.length
+    : null
+
+  return {
+    total: list.length,
+    reviewed,
+    suggestions,
+    averageDistance,
+  }
+}
+
+const reviewedSortScore = place => {
+  if (!isReviewedPlace(place)) return -1
+  const rating = typeof place?.rating === 'number' && Number.isFinite(place.rating) ? place.rating : 0
+  return 100 + rating
+}
+
+const normalizeSearchText = value =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+const termMatches = (text, terms) => {
+  const normalized = normalizeSearchText(text)
+  return Boolean(normalized && terms.some(term => normalized.includes(term)))
+}
+
+const queryMatchesPrice = (price, query) => {
+  const normalizedPrice = String(price || '').trim()
+  if (!normalizedPrice) return false
+  const rawQuery = String(query || '').toLowerCase()
+  const priceTokens = rawQuery.match(/\${1,4}/g) || []
+  if (normalizedPrice.includes('$') && priceTokens.includes(normalizedPrice.toLowerCase())) return true
+  const normalizedQuery = normalizeSearchText(query)
+  const priceWords = {
+    '$': ['cheap', 'budget', 'inexpensive'],
+    '$$': ['moderate', 'mid range', 'midrange'],
+    '$$$': ['expensive', 'upscale'],
+    '$$$$': ['premium', 'splurge'],
+  }[normalizedPrice] || []
+  return priceWords.some(word => normalizedQuery.includes(word))
+}
+
+export const searchResultReason = (place, query = '') => {
+  const terms = normalizeSearchText(query).split(/\s+/).filter(term => term.length >= 2)
+  if (!place) return ''
+
+  const name = normalizeSearchText(place.name)
+  const brand = place.brand && normalizeSearchText(place.brand) !== name ? place.brand : ''
+  const operator = place.operator && normalizeSearchText(place.operator) !== name && normalizeSearchText(place.operator) !== normalizeSearchText(brand) ? place.operator : ''
+  const address = place.address || ''
+  const location = [place.city, place.state].filter(Boolean).join(', ')
+  const style = place.style || place.type || ''
+  const price = placePrice(place)
+  const reviewed = isReviewedPlace(place)
+  if (!terms.length && !queryMatchesPrice(price, query)) return ''
+  const addressOnlyTerms = address
+    ? terms.filter(term =>
+      termMatches(address, [term]) &&
+      !termMatches(place.name, [term]) &&
+      (!brand || !termMatches(brand, [term])) &&
+      (!operator || !termMatches(operator, [term]))
+    )
+    : []
+
+  if (brand && termMatches(brand, terms)) return `Brand match: ${brand}`
+  if (operator && termMatches(operator, terms)) return `Operator match: ${operator}`
+  if (style && termMatches(style, terms) && !termMatches(place.name, terms)) return `Style match: ${style}`
+  if (queryMatchesPrice(price, query) && !termMatches(place.name, terms)) return `Price match: ${price}`
+  if (reviewed && termMatches('reviewed visited anthony tried favorite favorites', terms) && !termMatches(place.name, terms)) return 'Status match: Anthony reviewed'
+  if (addressOnlyTerms.length) return `Address match: ${address}`
+  if (location && termMatches(location, terms) && !termMatches(place.name, terms)) return `Location match: ${location}`
+  return ''
+}
+
 // Debounced search bar component
-function SearchBar({ value, onChange, onKeyDown, onFocus }) {
+function SearchBar({ value, onChange, onKeyDown, onFocus, resultsId, activeDescendantId, expanded }) {
   const [localValue, setLocalValue] = useState(value || '')
 
   useEffect(() => {
@@ -43,6 +140,7 @@ function SearchBar({ value, onChange, onKeyDown, onFocus }) {
       <span className="map-search-icon">🔍</span>
       <input
         type="text"
+        role="combobox"
         placeholder="Search places..."
         value={localValue}
         onChange={e => setLocalValue(e.target.value)}
@@ -54,6 +152,10 @@ function SearchBar({ value, onChange, onKeyDown, onFocus }) {
           if (onKeyDown) onKeyDown(event)
         }}
         aria-label="Search places"
+        aria-autocomplete="list"
+        aria-controls={resultsId}
+        aria-expanded={expanded}
+        aria-activedescendant={activeDescendantId || undefined}
       />
       {localValue && (
         <button
@@ -87,20 +189,41 @@ export function MapControls({
 }) {
   const [isResultsOpen, setIsResultsOpen] = useState(true)
   const [activeResultIndex, setActiveResultIndex] = useState(0)
+  const [visibleResultLimit, setVisibleResultLimit] = useState(null)
+  const [reviewedFirst, setReviewedFirst] = useState(false)
   const hasSearch = Boolean(searchQuery.trim())
   const shouldShowResultPanel = hasSearch || nearMeActive
-  const resultLimit = hasSearch ? 12 : 20
+  const defaultResultLimit = hasSearch ? 12 : 20
+  const resultLimit = visibleResultLimit || defaultResultLimit
+  const displayPlaces = useMemo(() => {
+    if (!reviewedFirst) return filteredPlaces
+    return filteredPlaces
+      .map((place, index) => ({ place, index }))
+      .sort((left, right) => {
+        const reviewedDelta = reviewedSortScore(right.place) - reviewedSortScore(left.place)
+        if (reviewedDelta !== 0) return reviewedDelta
+        const distanceDelta = (left.place?._distance ?? Number.POSITIVE_INFINITY) - (right.place?._distance ?? Number.POSITIVE_INFINITY)
+        if (Number.isFinite(distanceDelta) && distanceDelta !== 0) return distanceDelta
+        return left.index - right.index
+      })
+      .map(row => row.place)
+  }, [filteredPlaces, reviewedFirst])
   const visibleResults = useMemo(
-    () => filteredPlaces.slice(0, resultLimit),
-    [filteredPlaces, resultLimit]
+    () => displayPlaces.slice(0, resultLimit),
+    [displayPlaces, resultLimit]
   )
+  const resultSummary = useMemo(() => searchResultSummary(filteredPlaces), [filteredPlaces])
+  const resultListId = 'map-search-results-list'
+  const activeResultId = visibleResults[activeResultIndex] ? resultDomId(visibleResults[activeResultIndex]) : ''
 
   useEffect(() => {
     if (shouldShowResultPanel) {
       setIsResultsOpen(true)
     }
     setActiveResultIndex(0)
-  }, [shouldShowResultPanel, filteredPlaces.length])
+    setVisibleResultLimit(null)
+    setReviewedFirst(false)
+  }, [shouldShowResultPanel, filteredPlaces.length, searchQuery])
 
   const openResult = (place) => {
     if (!place || !onPlaceClick) return
@@ -160,6 +283,9 @@ export function MapControls({
               if (shouldShowResultPanel) setIsResultsOpen(true)
             }}
             onKeyDown={handleSearchKeyDown}
+            resultsId={resultListId}
+            activeDescendantId={showResults ? activeResultId : ''}
+            expanded={Boolean(showResults)}
           />
         )}
 
@@ -211,7 +337,31 @@ export function MapControls({
               Hide
             </button>
           </div>
-          <div className="map-results-list">
+          {!searchError && !searchLoading && filteredPlaces.length > 0 ? (
+            <div className="map-results-summary-row">
+              <div className="map-results-summary" aria-label="Search result summary">
+                <span>{resultSummary.reviewed} Anthony reviewed</span>
+                <span>{resultSummary.suggestions} suggestions</span>
+                {resultSummary.averageDistance !== null ? (
+                  <span>{resultSummary.averageDistance.toFixed(1)} mi avg</span>
+                ) : null}
+              </div>
+              {resultSummary.reviewed > 0 && resultSummary.suggestions > 0 ? (
+                <label className="map-results-reviewed-toggle">
+                  <input
+                    type="checkbox"
+                    checked={reviewedFirst}
+                    onChange={event => {
+                      setReviewedFirst(event.target.checked)
+                      setActiveResultIndex(0)
+                    }}
+                  />
+                  <span>Reviewed first</span>
+                </label>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="map-results-list" id={resultListId} role="listbox" aria-label="Search results">
             {searchError ? (
               <div className="map-results-empty">Search is unavailable right now</div>
             ) : null}
@@ -221,32 +371,54 @@ export function MapControls({
             {!searchError && !searchLoading && visibleResults.length === 0 ? (
               <div className="map-results-empty">No matching places found</div>
             ) : null}
-            {visibleResults.map((place, index) => (
-              <button
-                key={place.id}
-                type="button"
-                className={`map-result-item${index === activeResultIndex ? ' active' : ''}`}
-                onClick={() => {
-                  openResult(place)
-                }}
-                onMouseEnter={() => setActiveResultIndex(index)}
-              >
-                <span className="map-result-main">
-                  <span className="map-result-name">{place.name}</span>
-                  {placeLocation(place) ? (
-                    <span className="map-result-location">{placeLocation(place)}</span>
-                  ) : null}
-                  {placeMeta(place) ? (
-                    <span className="map-result-meta">{placeMeta(place)}</span>
-                  ) : null}
-                </span>
-                <span className="map-result-side">
-                  {typeof place._distance === 'number' ? `${place._distance.toFixed(1)} mi` : ''}
-                </span>
-              </button>
-            ))}
+            {visibleResults.map((place, index) => {
+              const resultReason = searchResultReason(place, searchQuery)
+              return (
+                <button
+                  id={resultDomId(place)}
+                  key={place.id}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeResultIndex}
+                  className={`map-result-item${index === activeResultIndex ? ' active' : ''}`}
+                  onClick={() => {
+                    openResult(place)
+                  }}
+                  onMouseEnter={() => setActiveResultIndex(index)}
+                >
+                  <span className="map-result-main">
+                    <span className="map-result-name">{place.name}</span>
+                    {placeLocation(place) ? (
+                      <span className="map-result-location">{placeLocation(place)}</span>
+                    ) : null}
+                    {placeMeta(place) ? (
+                      <span className="map-result-meta">{placeMeta(place)}</span>
+                    ) : null}
+                    {resultReason ? (
+                      <span className="map-result-reason">{resultReason}</span>
+                    ) : null}
+                  </span>
+                  <span className="map-result-side">
+                    <span className={`map-result-badge map-result-badge--${searchResultBadge(place).toLowerCase()}`}>
+                      {searchResultBadge(place)}
+                    </span>
+                    {typeof place._distance === 'number' ? (
+                      <span className="map-result-distance">{place._distance.toFixed(1)} mi</span>
+                    ) : null}
+                  </span>
+                </button>
+              )
+            })}
             {filteredPlaces.length > visibleResults.length && (
-              <div className="map-results-more">+ {filteredPlaces.length - visibleResults.length} more matches</div>
+              <button
+                type="button"
+                className="map-results-more"
+                onClick={() => {
+                  setVisibleResultLimit(prev => Math.min((prev || defaultResultLimit) + defaultResultLimit, filteredPlaces.length))
+                }}
+              >
+                Show {Math.min(defaultResultLimit, filteredPlaces.length - visibleResults.length)} more
+              </button>
             )}
           </div>
         </div>

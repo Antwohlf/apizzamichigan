@@ -6,7 +6,7 @@
 
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { basename, join, resolve } from 'path';
 import pg from 'pg';
 import Database from 'better-sqlite3';
 
@@ -140,6 +140,7 @@ function baseAcceptArgs(args) {
     '--report-file', args.reportFile,
     '--min-signals', String(args.minSignals),
     '--limit', String(args.acceptLimit),
+    '--nearby-radius-m', String(args.nearbyRadiusM),
     '--json',
   ];
   if (args.state) out.push('--state', args.state);
@@ -199,6 +200,10 @@ function classifyStatuses(osmIds) {
   }
 }
 
+function hasClassificationFields(place) {
+  return Boolean(place.style || place.price_range || place.style_confidence);
+}
+
 async function waitForClassify(placeIds, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -206,7 +211,11 @@ async function waitForClassify(placeIds, timeoutMs) {
     const osmIds = places.map(row => row.google_place_id).filter(Boolean);
     const statuses = classifyStatuses(osmIds);
     const completed = new Set(statuses.filter(row => row.status === 'completed').map(row => row.osm_id));
-    if (osmIds.length && osmIds.every(id => completed.has(id))) return { places, statuses };
+    const placesReady = places.every(place => (
+      place.google_place_id
+      && (completed.has(place.google_place_id) || hasClassificationFields(place))
+    ));
+    if (places.length && placesReady) return { places, statuses };
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
   const places = await fetchPlaces(placeIds);
@@ -219,17 +228,33 @@ function printStep(title) {
   console.log(`## ${title}`);
 }
 
+function assertReviewScope(rows, args) {
+  const expectedReport = basename(args.reportFile);
+  const mismatches = rows.filter(row => row.source !== args.source || row.report_file !== expectedReport);
+  if (mismatches.length) {
+    throw new Error(`Review scope mismatch: expected source=${args.source}, report_file=${expectedReport}; got ${JSON.stringify(mismatches.slice(0, 3).map(row => ({ id: row.id, source: row.source, report_file: row.report_file })))}`);
+  }
+}
+
+function scrapeJobsAdded(output) {
+  const match = output.match(/^Added (\d+) scrape jobs to SQLite queue$/m);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   console.log('# Process Reviewed-New Batch');
   console.log(`Mode: ${args.apply ? 'apply' : 'dry-run'}`);
+  console.log(`Source: ${args.source}`);
   console.log(`Report: ${args.reportFile}`);
   console.log(`Accept limit: ${args.acceptLimit}; import limit: ${args.importLimit}; min signals: ${args.minSignals}`);
 
   printStep('Accept Preview');
   const acceptPreview = runNode(baseAcceptArgs(args), { json: true });
+  assertReviewScope(acceptPreview.rows, args);
   const reviewIds = acceptPreview.rows.map(row => row.id);
   console.log(`candidate_review_ids=${reviewIds.join(',') || 'none'}`);
+  console.log(`accept_scan=${acceptPreview.scanned}, skipped_nearby=${acceptPreview.skipped_nearby_canonical}, canonical_prefetch_tiles=${acceptPreview.canonical_prefetch_tiles}, canonical_prefetch_queries=${acceptPreview.canonical_prefetch_queries}`);
   console.log(`candidates=${acceptPreview.candidates}, would_accept=${reviewIds.length}`);
   if (!reviewIds.length) return;
 
@@ -241,6 +266,7 @@ async function main() {
 
   printStep('Accept Apply');
   const acceptApply = runNode([...baseAcceptArgs(args), '--apply'], { json: true });
+  assertReviewScope(acceptApply.rows, args);
   console.log(`accepted=${acceptApply.accepted}`);
 
   printStep('Import Preflight');
@@ -263,20 +289,20 @@ async function main() {
     '--ids', placeIds.join(','),
   ]));
 
-  const minPlaceId = Math.min(...placeIds);
-  const maxPlaceId = Math.max(...placeIds);
   printStep('Enqueue Scrape');
-  console.log(runNode([
+  const enqueueOutput = runNode([
     'scripts/enrichment/populate-scrape-from-db.mjs',
     '--type', args.entity,
-    '--id-prefix', `${args.source}:`,
-    '--min-place-id', String(minPlaceId),
-    '--max-place-id', String(maxPlaceId),
+    '--ids', placeIds.join(','),
     '--priority-boost', String(args.priorityBoost),
     '--limit', String(placeIds.length),
-  ]));
+  ]);
+  console.log(enqueueOutput);
+  const addedScrapeJobs = scrapeJobsAdded(enqueueOutput);
 
-  if (args.runScrape) {
+  if (args.runScrape && addedScrapeJobs === 0) {
+    console.log('No scrape jobs were added; skipping foreground scraper and classify wait.');
+  } else if (args.runScrape) {
     printStep('Run Scrape');
     console.log(runNode([
       'scripts/enrichment/agents/web-scraper.mjs',
@@ -285,7 +311,9 @@ async function main() {
     ], { timeout: Math.max(120000, placeIds.length * 60000) }));
   }
 
-  if (args.waitClassify) {
+  if (args.waitClassify && addedScrapeJobs === 0) {
+    console.log('No scrape jobs were handed off; skipping classify wait.');
+  } else if (args.waitClassify) {
     printStep('Wait Classify');
     const { places } = await waitForClassify(placeIds, args.classifierTimeoutMs);
     for (const place of places) {

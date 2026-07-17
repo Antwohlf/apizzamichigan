@@ -519,6 +519,36 @@ async function applyCandidates(client, candidates, args) {
           AND status = 'pending'
           AND review_kind = 'ambiguous'
       `, [row.id, row.nearest_place_id, reviewerNotes]);
+      if (result.rowCount) {
+        await client.query(`
+          INSERT INTO source_review_decision_history (
+            review_queue_id,
+            entity_type,
+            source,
+            source_id,
+            previous_review_kind,
+            previous_status,
+            previous_decision,
+            previous_canonical_place_id,
+            review_kind,
+            status,
+            decision,
+            canonical_place_id,
+            action,
+            reviewer_notes,
+            reviewed_by
+          )
+          VALUES ($1, $2, $3, $4, $5, 'pending', NULL, NULL, $5, 'linked', 'auto_linked', $6, 'auto_link', $7, 'ops:auto-link-source-review-queue')
+        `, [
+          row.id,
+          row.entity_type,
+          row.source,
+          row.source_id,
+          row.review_kind,
+          row.nearest_place_id,
+          reviewerNotes,
+        ]);
+      }
       linked += result.rowCount;
     }
     await client.query('COMMIT');

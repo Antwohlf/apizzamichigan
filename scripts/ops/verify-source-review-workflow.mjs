@@ -18,8 +18,11 @@ const ADMIN = [
 const AUTO_LINK = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
 const RECLASSIFY_AMBIGUOUS = readFileSync('scripts/ops/reclassify-ambiguous-source-candidates.mjs', 'utf8');
 const ACCEPT_LIKELY_NEW = readFileSync('scripts/ops/accept-likely-new-source-candidates.mjs', 'utf8');
+const REVIEWED_NEW_BACKLOG = readFileSync('scripts/ops/reviewed-new-source-backlog-report.mjs', 'utf8');
+const EXPORT_REVIEWED = readFileSync('scripts/ops/export-reviewed-source-candidates.mjs', 'utf8');
 const PREFLIGHT_REVIEWED_NEW = readFileSync('scripts/ops/preflight-reviewed-new-place-import.mjs', 'utf8');
 const VERIFY_REVIEWED_NEW_IMPORTS = readFileSync('scripts/ops/verify-reviewed-new-imports.mjs', 'utf8');
+const POPULATE_SCRAPE = readFileSync('scripts/enrichment/populate-scrape-from-db.mjs', 'utf8');
 const POPULATE_CLASSIFY = readFileSync('scripts/enrichment/populate-classify-from-db.mjs', 'utf8');
 const PROMOTION_POLICY = readFileSync('scripts/lib/source-promotion-policy.mjs', 'utf8');
 const DOCS = [
@@ -97,6 +100,9 @@ function main() {
     "'auto_brand_reviewed_link'",
     "status = 'linked'",
     "decision = 'auto_linked'",
+    'INSERT INTO source_review_decision_history',
+    "action,\n            reviewer_notes,\n            reviewed_by",
+    "'auto_link'",
   ], 'auto-link source review guard');
 
   const promotionMatchMethods = SOURCE_PROMOTION_DEFAULTS_MATCH_METHODS(PROMOTION_POLICY);
@@ -130,8 +136,26 @@ function main() {
     `${READINESS_SQL_SENTINEL()} = 'candidate_ready'`,
     `${SIGNAL_COUNT_SQL_SENTINEL()} >= $2`,
     "source_data->>'region'",
+    '--scan-limit',
+    '--nearby-radius-m',
+    '--prefetch-tile-degrees',
+    'buildPrefetchTiles',
+    'filterImportReadyCandidates',
+    'nearbyPlacesFromGrid',
+    'skippedNearby',
+    'canonicalPrefetchTiles',
+    'canonicalPrefetchQueries',
     'It never imports places or writes',
   ], 'likely-new acceptance guard');
+
+  includesAll(REVIEWED_NEW_BACKLOG, [
+    'Read-only. Does not accept candidates',
+    'strong_ready_pending',
+    'nearby_canonical_review',
+    'missing_required_data',
+    'accept-likely-new-source-candidates.mjs',
+    '--min-signals',
+  ], 'reviewed-new backlog report guard');
 
   includesAll(VERIFY_REVIEWED_NEW_IMPORTS, [
     "match_method = 'reviewed_new_import'",
@@ -151,9 +175,16 @@ function main() {
     'candidate_ready rows selected',
   ], 'bounded source review filters');
 
-  includesAll(POPULATE_CLASSIFY + DOCS, [
+  includesAll(ACCEPT_LIKELY_NEW, [
+    "import { basename, resolve } from 'path'",
+    'if (args.reportFile) args.reportFile = basename(args.reportFile)',
+  ], 'report path normalization');
+
+  includesAll(POPULATE_SCRAPE + POPULATE_CLASSIFY + ADMIN + DOCS, [
     "state && state !== '*'",
     "--state '*'",
+    '--ids <ids>',
+    '--ids ${idList}',
   ], 'reviewed-new classify queue handoff');
 
   includesAll(ADMIN, [
@@ -178,8 +209,16 @@ function main() {
     'Preflight report',
     'reportFile: importPreflightReportFile',
     'Local enrichment handoff',
-    'reviewedNewEnrichmentCommands(imported)',
+    'reviewedNewEnrichmentCommands(imported, { entity })',
+    'Selected queue export command',
+    'selectedQueueExportCommand',
   ], 'admin review workflow');
+
+  includesAll(EXPORT_REVIEWED, [
+    '--ids <id,id>',
+    'srq.id = ANY',
+    'IDs:',
+  ], 'exact selected review queue export');
 
   includesAll(NORMALIZED_DOCS, [
     '`accepted`: pending likely-new source row looks like a future new canonical place candidate',
@@ -189,12 +228,14 @@ function main() {
     'leaves the row pending',
     'scripts/ops/reclassify-ambiguous-source-candidates.mjs',
     'auto-link-source-review-queue.mjs',
+    'reviewed-new-source-backlog-report.mjs',
     '--ids 123,456',
     'does not write `place_sources`, create',
     'No decision creates canonical places or syncs anything to Supabase.',
     '`candidate_ready` rows are imported into the local canonical table',
     'verify-reviewed-new-imports.mjs',
     'does not sync Supabase.',
+    'ranks `likely_new` buckets by pending `candidate_ready`',
     '--insert-missing-reviewed-new',
     '`place_sources` and `source_review_queue` stay',
   ], 'source review docs');

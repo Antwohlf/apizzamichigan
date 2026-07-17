@@ -3,6 +3,7 @@ import {
   buildReviewWorklist,
   canonicalContextLines,
   decisionCanonicalContextLines,
+  reviewDecisionChecklist,
   reviewActionCopy,
   reviewBucketPlan,
   reviewBucketPriority,
@@ -60,6 +61,48 @@ describe('source review triage helpers', () => {
       status: 'pending',
       readiness: 'nearby_canonical_review',
     })
+  })
+
+  test('gives ambiguous rows a same-place checklist before linking', () => {
+    expect(reviewDecisionChecklist({
+      review_kind: 'ambiguous',
+      status: 'pending',
+      source_name: 'Pizza Hut',
+      source_id: 'source-1',
+      nearest_place_id: 123,
+      source_data: { lat: 42.1, lng: -83.1 },
+    })).toEqual([
+      'Confirm the source identity matches the canonical row.',
+      'Compare source coordinates and nearest canonical coordinates.',
+      'Link only when this is the same place; otherwise reject, ignore, or review as likely-new.',
+    ])
+  })
+
+  test('makes likely-new candidate-ready rows preflight-first', () => {
+    expect(reviewDecisionChecklist({
+      review_kind: 'likely_new',
+      status: 'pending',
+      review_readiness: 'candidate_ready',
+      source_name: 'New Pizza Hut',
+      source_id: 'source-2',
+      source_data: { latitude: 42.1, longitude: -83.1 },
+    })).toEqual([
+      'Confirm source coordinates look plausible.',
+      'Accept only stages the row for import preflight; it does not create a place.',
+      'Run import preflight before local canonical insertion.',
+    ])
+  })
+
+  test('warns likely-new nearby canonical rows to resolve duplicates first', () => {
+    expect(reviewDecisionChecklist({
+      review_kind: 'likely_new',
+      status: 'pending',
+      review_readiness: 'nearby_canonical_review',
+    })).toEqual([
+      'Compare the nearby canonical row before accepting this as new.',
+      'Link if it is the same place; reject or ignore if the source is stale or unusable.',
+      'Use Accept only after duplicate risk is resolved.',
+    ])
   })
 
   test('prioritizes ambiguous source buckets before likely-new review', () => {

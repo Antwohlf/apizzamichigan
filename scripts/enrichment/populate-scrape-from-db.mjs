@@ -11,6 +11,7 @@
  *   node scripts/enrichment/populate-scrape-from-db.mjs
  *   node scripts/enrichment/populate-scrape-from-db.mjs --type pizza|taco
  *   node scripts/enrichment/populate-scrape-from-db.mjs --state MI
+ *   node scripts/enrichment/populate-scrape-from-db.mjs --ids 181254,181255
  *   node scripts/enrichment/populate-scrape-from-db.mjs --id-prefix all_the_places:
  *   node scripts/enrichment/populate-scrape-from-db.mjs --min-place-id 181254 --max-place-id 181347
  *   node scripts/enrichment/populate-scrape-from-db.mjs --priority-boost 100000
@@ -28,13 +29,16 @@ function parseArgs() {
   const help = args.includes('--help') || args.includes('-h')
   const dryRun = args.includes('--dry-run')
   const type = args.includes('--type') ? args[args.indexOf('--type') + 1] : 'pizza'
+  const ids = args.includes('--ids')
+    ? args[args.indexOf('--ids') + 1].split(',').map((value) => parseInt(value.trim(), 10)).filter(Number.isFinite)
+    : []
   const state = args.includes('--state') ? args[args.indexOf('--state') + 1] : null
   const idPrefix = args.includes('--id-prefix') ? args[args.indexOf('--id-prefix') + 1] : 'osm:'
   const minPlaceId = args.includes('--min-place-id') ? parseInt(args[args.indexOf('--min-place-id') + 1], 10) : null
   const maxPlaceId = args.includes('--max-place-id') ? parseInt(args[args.indexOf('--max-place-id') + 1], 10) : null
   const priorityBoost = args.includes('--priority-boost') ? parseInt(args[args.indexOf('--priority-boost') + 1], 10) : 0
   const limit = args.includes('--limit') ? parseInt(args[args.indexOf('--limit') + 1], 10) : null
-  return { help, dryRun, type, state, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit }
+  return { help, dryRun, type, ids, state, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit }
 }
 
 function printHelp() {
@@ -43,6 +47,7 @@ function printHelp() {
 Options:
   --type <pizza|taco>       Place table family (default pizza)
   --state <code>            Optional state filter
+  --ids <ids>               Exact comma-separated local place ids
   --id-prefix <prefix|*>    Canonical id prefix filter (default osm:)
   --min-place-id <id>       Minimum local place id
   --max-place-id <id>       Maximum local place id
@@ -57,7 +62,7 @@ broad queue population.
 }
 
 async function main() {
-  const { help, dryRun, type, state, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit } = parseArgs()
+  const { help, dryRun, type, ids, state, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit } = parseArgs()
   if (help) {
     printHelp()
     return
@@ -81,7 +86,10 @@ async function main() {
   ]
   const params = []
 
-  if (idPrefix && idPrefix !== '*') {
+  if (ids.length) {
+    params.push(ids)
+    clauses.push(`id = ANY($${params.length}::int[])`)
+  } else if (idPrefix && idPrefix !== '*') {
     params.push(`${idPrefix}%`)
     clauses.push(`google_place_id LIKE $${params.length}`)
   }

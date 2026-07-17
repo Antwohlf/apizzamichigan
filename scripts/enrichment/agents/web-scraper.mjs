@@ -528,6 +528,7 @@ class WebScraper {
       UPDATE ${table}
       SET
         phone = COALESCE($2, phone),
+        menu_url = COALESCE($4, menu_url),
         scrape_method = 'fetch',
         scrape_notes = $3,
         last_enriched_at = NOW()
@@ -535,7 +536,8 @@ class WebScraper {
     `, [
       osmId,
       data.phone,
-      JSON.stringify(data)
+      JSON.stringify(data),
+      data.menu_url || null
     ])
   }
 
@@ -578,6 +580,7 @@ class WebScraper {
         // Don't exit on heartbeat errors; they're non-critical
       }
     }, 30000)
+    let lastOrphanRecoveryAt = 0
 
     // Handle shutdown message
     process.on('message', async (msg) => {
@@ -597,6 +600,12 @@ class WebScraper {
       // Main loop
       while (this.running) {
         try {
+          if (Date.now() - lastOrphanRecoveryAt >= 60000) {
+            const recovered = this.queue.recoverOrphaned(10, { requireDetachedWorker: true, jobTypes: ['scrape'] })
+            if (recovered > 0) console.log(`[${this.workerId}] Recovered ${recovered} detached stale scrape job(s)`)
+            lastOrphanRecoveryAt = Date.now()
+          }
+
           // Periodically requeue failed jobs before claiming (so it runs even when processing)
           this.maybeRequeueFailedBatch()
 

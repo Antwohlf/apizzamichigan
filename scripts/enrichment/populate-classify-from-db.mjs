@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Populate classify jobs from local Postgres (pizza-only for now).
+ * Populate classify jobs from local Postgres.
  *
  * Adds `classify` jobs to the SQLite queue for rows that have been scraped,
  * and do not yet have classification.
  *
  * Usage:
  *   node scripts/enrichment/populate-classify-from-db.mjs --state MI --limit 100
+ *   node scripts/enrichment/populate-classify-from-db.mjs --type pizza --state MI --limit 100
+ *   node scripts/enrichment/populate-classify-from-db.mjs --ids 181254,181255
  *   node scripts/enrichment/populate-classify-from-db.mjs --state '*' --id-prefix all_the_places:
  *   node scripts/enrichment/populate-classify-from-db.mjs --id-prefix all_the_places:
  *   node scripts/enrichment/populate-classify-from-db.mjs --min-place-id 181254 --max-place-id 181347
@@ -23,20 +25,26 @@ function parseArgs() {
   const args = process.argv.slice(2)
   const help = args.includes('--help') || args.includes('-h')
   const dryRun = args.includes('--dry-run')
+  const type = args.includes('--type') ? args[args.indexOf('--type') + 1] : 'pizza'
   const state = args.includes('--state') ? args[args.indexOf('--state') + 1] : 'MI'
+  const ids = args.includes('--ids')
+    ? args[args.indexOf('--ids') + 1].split(',').map((value) => parseInt(value.trim(), 10)).filter(Number.isFinite)
+    : []
   const idPrefix = args.includes('--id-prefix') ? args[args.indexOf('--id-prefix') + 1] : null
   const minPlaceId = args.includes('--min-place-id') ? parseInt(args[args.indexOf('--min-place-id') + 1], 10) : null
   const maxPlaceId = args.includes('--max-place-id') ? parseInt(args[args.indexOf('--max-place-id') + 1], 10) : null
   const priorityBoost = args.includes('--priority-boost') ? parseInt(args[args.indexOf('--priority-boost') + 1], 10) : 0
   const limit = args.includes('--limit') ? parseInt(args[args.indexOf('--limit') + 1], 10) : 200
-  return { help, dryRun, state, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit }
+  return { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit }
 }
 
 function printHelp() {
   console.log(`Usage: node scripts/enrichment/populate-classify-from-db.mjs [options]
 
 Options:
+  --type <pizza>            Place table family. Only pizza is supported for now.
   --state <code|*>          State filter (default MI)
+  --ids <ids>               Exact comma-separated local place ids
   --id-prefix <prefix|*>    Optional canonical id prefix filter
   --min-place-id <id>       Minimum local place id
   --max-place-id <id>       Maximum local place id
@@ -46,15 +54,19 @@ Options:
   --help                    Print this help and exit
 
 Default mode writes classify jobs to the local SQLite queue. Use --dry-run
-before broad queue population.
+before broad queue population. Taco classification is not wired to this
+classifier yet; use --type pizza explicitly in generated handoff commands.
 `)
 }
 
 async function main() {
-  const { help, dryRun, state, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit } = parseArgs()
+  const { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit } = parseArgs()
   if (help) {
     printHelp()
     return
+  }
+  if (type !== 'pizza') {
+    throw new Error(`Unsupported --type ${type}. populate-classify-from-db.mjs is currently pizza_places only.`)
   }
 
   const client = new pg.Client({
@@ -74,12 +86,15 @@ async function main() {
   ]
   const params = []
 
-  if (state && state !== '*') {
+  if (ids.length) {
+    params.push(ids)
+    clauses.push(`id = ANY($${params.length}::int[])`)
+  } else if (state && state !== '*') {
     params.push(state)
     clauses.push(`state = $${params.length}`)
   }
 
-  if (idPrefix && idPrefix !== '*') {
+  if (!ids.length && idPrefix && idPrefix !== '*') {
     params.push(`${idPrefix}%`)
     clauses.push(`google_place_id LIKE $${params.length}`)
   }
@@ -112,7 +127,7 @@ async function main() {
   const jobs = rows.map((r) => ({
     jobType: 'classify',
     osmId: r.google_place_id,
-    placeType: 'pizza',
+    placeType: type,
     priority: calculatePriority(r.state),
     data: { state: r.state }
   }))

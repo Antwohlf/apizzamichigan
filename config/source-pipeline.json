@@ -1,0 +1,25 @@
+{
+  "entity": "pizza",
+  "region_scope": "US",
+  "regions": [
+    { "key": "MI", "bbox": [41.6, -90.5, 48.4, -82.1] },
+    { "key": "NY", "bbox": [40.4, -79.8, 45.1, -71.7] },
+    { "key": "CA", "bbox": [32.4, -124.5, 42.1, -114.1] },
+    { "key": "TX", "bbox": [25.8, -106.7, 36.6, -93.5] }
+  ],
+  "limits": {
+    "heavy_work_units_per_run": 4,
+    "new_places_per_run": 50,
+    "new_places_per_day": 250,
+    "website_jobs_per_run": 75,
+    "candidate_rows_per_source": 5000
+  },
+  "sources": {
+    "osm": { "enabled": true, "cadence_hours": 24, "auto_create": true, "capabilities": ["discover", "match_existing", "enrich_evidence"], "failure_rotation_threshold": 1, "tile_step": 0.25, "tiles_per_run": 1 },
+    "fsq_os_places": { "enabled": true, "cadence_hours": 168, "auto_create": true, "capabilities": ["discover", "match_existing", "enrich_evidence"], "max_files": 5 },
+    "all_the_places": { "enabled": true, "cadence_hours": 168, "auto_create": true, "capabilities": ["discover", "match_existing", "enrich_evidence"], "spiders_per_run": 3 },
+    "overture_places": { "enabled": true, "cadence_hours": 720, "auto_create": true, "capabilities": ["discover", "match_existing", "enrich_evidence"] },
+    "wikidata": { "enabled": true, "cadence_hours": 720, "auto_create": false, "capabilities": ["discover", "match_existing", "enrich_evidence"], "rows_per_run": 50 },
+    "official_website": { "enabled": true, "cadence_hours": 1, "auto_create": false, "capabilities": ["match_existing", "enrich_evidence", "promote_contact"] }
+  }
+}

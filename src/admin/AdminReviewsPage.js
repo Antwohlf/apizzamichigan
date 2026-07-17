@@ -34,6 +34,11 @@ const cardStyle = {
 
 const normalizeSearchText = value => String(value ?? '').trim().toLowerCase()
 
+const formatReviewLocation = review => {
+  const parts = [review?.address, review?.city, review?.state].filter(Boolean)
+  return parts.length ? parts.join(', ') : 'No address on this review'
+}
+
 const readErrorMessage = async (res, fallback) => {
   const text = await res.text()
   if (res.status === 413) {
@@ -60,6 +65,7 @@ export default function AdminReviewsPage() {
   const [activeTab, setActiveTab] = useState('photos')
   const [reviewSearch, setReviewSearch] = useState('')
   const [photoFilter, setPhotoFilter] = useState('all')
+  const [selectedReviewId, setSelectedReviewId] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -119,6 +125,7 @@ export default function AdminReviewsPage() {
   useEffect(() => {
     setReviewSearch('')
     setPhotoFilter('all')
+    setSelectedReviewId(null)
   }, [entity])
 
   const handleLogin = async event => {
@@ -269,6 +276,38 @@ export default function AdminReviewsPage() {
       return terms.every(term => haystack.includes(term))
     })
   }, [photoFilter, reviewSearch, reviews])
+
+  const filteredReviewIds = useMemo(() => filteredReviews.map(review => review.id), [filteredReviews])
+
+  useEffect(() => {
+    if (!filteredReviewIds.length) {
+      setSelectedReviewId(null)
+      return
+    }
+    if (!filteredReviewIds.includes(selectedReviewId)) {
+      setSelectedReviewId(filteredReviewIds[0])
+    }
+  }, [filteredReviewIds, selectedReviewId])
+
+  const selectedReview = useMemo(
+    () => filteredReviews.find(review => review.id === selectedReviewId) || filteredReviews[0] || null,
+    [filteredReviews, selectedReviewId]
+  )
+  const selectedReviewIndex = useMemo(
+    () => (selectedReview ? filteredReviews.findIndex(review => review.id === selectedReview.id) : -1),
+    [filteredReviews, selectedReview]
+  )
+  const selectedPhotoCount = Array.isArray(selectedReview?.photos) ? selectedReview.photos.length : 0
+  const canSelectPreviousReview = selectedReviewIndex > 0
+  const canSelectNextReview = selectedReviewIndex >= 0 && selectedReviewIndex < filteredReviews.length - 1
+  const selectAdjacentReview = useCallback(
+    offset => {
+      if (selectedReviewIndex < 0) return
+      const next = filteredReviews[selectedReviewIndex + offset]
+      if (next) setSelectedReviewId(next.id)
+    },
+    [filteredReviews, selectedReviewIndex]
+  )
 
   const photoStats = useMemo(() => {
     return reviews.reduce(
@@ -477,6 +516,7 @@ export default function AdminReviewsPage() {
                       onClick={() => {
                         setReviewSearch('')
                         setPhotoFilter('all')
+                        setSelectedReviewId(null)
                       }}
                       style={{
                         alignSelf: 'center',
@@ -498,6 +538,54 @@ export default function AdminReviewsPage() {
                   <span>{photoStats.needsPhotos} need photos</span>
                   <span>{photoStats.withPhotos} have photos</span>
                 </div>
+                {filteredReviews.length > 1 && (
+                  <div
+                    style={{
+                      flex: '1 0 100%',
+                      display: 'flex',
+                      gap: '0.5rem',
+                      overflowX: 'auto',
+                      padding: '0.15rem 0 0.1rem',
+                    }}
+                    aria-label="Matching reviews"
+                  >
+                    {filteredReviews.slice(0, 40).map(review => {
+                      const isSelected = selectedReview?.id === review.id
+                      const photoCount = Array.isArray(review.photos) ? review.photos.length : 0
+                      return (
+                        <button
+                          key={review.id}
+                          type="button"
+                          aria-pressed={isSelected}
+                          onClick={() => setSelectedReviewId(review.id)}
+                          style={{
+                            flex: '0 0 auto',
+                            border: isSelected ? '1px solid #f97316' : '1px solid #334155',
+                            borderRadius: 8,
+                            background: isSelected ? 'rgba(249, 115, 22, 0.18)' : '#0f172a',
+                            color: isSelected ? '#fed7aa' : '#cbd5e1',
+                            padding: '0.45rem 0.65rem',
+                            maxWidth: 220,
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                          }}
+                        >
+                          <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>
+                            {review.name || 'Untitled Location'}
+                          </span>
+                          <span style={{ display: 'block', color: '#94a3b8', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {review.state || '—'} · {photoCount}/{MAX_PHOTOS} photos
+                          </span>
+                        </button>
+                      )
+                    })}
+                    {filteredReviews.length > 40 && (
+                      <span style={{ alignSelf: 'center', flex: '0 0 auto', color: '#94a3b8', fontSize: '0.8rem' }}>
+                        + {filteredReviews.length - 40} more; narrow search to jump directly
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             {!loading && !error && reviews.length === 0 && (
@@ -506,17 +594,84 @@ export default function AdminReviewsPage() {
             {!loading && !error && reviews.length > 0 && filteredReviews.length === 0 && (
               <p style={{ color: '#94a3b8' }}>No reviews match the current search.</p>
             )}
-            {filteredReviews.map(review => (
+            {selectedReview && (
+              <aside
+                aria-label="Selected review"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  gap: '1rem',
+                  alignItems: 'center',
+                  marginBottom: '1rem',
+                  padding: '1rem',
+                  border: '1px solid rgba(249, 115, 22, 0.28)',
+                  borderRadius: 12,
+                  background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(15, 23, 42, 0.82))',
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: '0 0 0.25rem', color: '#fed7aa', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase' }}>
+                    Editing {selectedReviewIndex + 1} of {filteredReviews.length} matching reviews
+                  </p>
+                  <h2 style={{ margin: 0, color: '#f8fafc', fontSize: '1.2rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedReview.name || 'Untitled Location'}
+                  </h2>
+                  <p style={{ margin: '0.35rem 0 0', color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {formatReviewLocation(selectedReview)}
+                  </p>
+                  <p style={{ margin: '0.45rem 0 0', color: '#94a3b8', fontSize: '0.88rem' }}>
+                    {[selectedReview.style || selectedReview.type, selectedReview.price_range || selectedReview.price, `${selectedPhotoCount}/${MAX_PHOTOS} photos`]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    disabled={!canSelectPreviousReview}
+                    onClick={() => selectAdjacentReview(-1)}
+                    style={{
+                      border: '1px solid #475569',
+                      borderRadius: 8,
+                      background: canSelectPreviousReview ? '#0f172a' : 'rgba(15, 23, 42, 0.45)',
+                      color: canSelectPreviousReview ? '#e2e8f0' : '#64748b',
+                      padding: '0.6rem 0.75rem',
+                      fontWeight: 800,
+                      cursor: canSelectPreviousReview ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canSelectNextReview}
+                    onClick={() => selectAdjacentReview(1)}
+                    style={{
+                      border: '1px solid #f97316',
+                      borderRadius: 8,
+                      background: canSelectNextReview ? '#f97316' : 'rgba(249, 115, 22, 0.32)',
+                      color: canSelectNextReview ? '#fff' : '#fed7aa',
+                      padding: '0.6rem 0.75rem',
+                      fontWeight: 800,
+                      cursor: canSelectNextReview ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Next
+                  </button>
+                </div>
+              </aside>
+            )}
+            {selectedReview && (
               <AdminReviewEditor
-                key={review.id}
-                review={review}
+                key={selectedReview.id}
+                review={selectedReview}
                 isAdmin={isAuthed}
                 maxPhotos={MAX_PHOTOS}
-                onUpload={files => handleUpload(review.id, files)}
-                onReorder={next => handleReorder(review.id, next)}
-                onDelete={photoId => handleDelete(review.id, photoId)}
+                onUpload={files => handleUpload(selectedReview.id, files)}
+                onReorder={next => handleReorder(selectedReview.id, next)}
+                onDelete={photoId => handleDelete(selectedReview.id, photoId)}
               />
-            ))}
+            )}
           </>
         ) : isSuggestionsTab ? (
           <AdminSuggestionsPanel entity={entity} />

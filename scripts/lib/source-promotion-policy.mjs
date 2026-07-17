@@ -1,8 +1,19 @@
 export const SOURCE_PROMOTION_POLICY_VERSION = 1;
 
+// Keep the default source order aligned with config/source-policy.json. All
+// configured sources may supply safe contact evidence; field policy still
+// limits automatic promotion to blank website_url and phone values.
 export const SOURCE_PROMOTION_DEFAULTS = {
   entity: 'pizza',
-  sources: ['all_the_places', 'osm'],
+  // Highest configured priority wins for a blank field/place.
+  sources: [
+    'official_website',
+    'osm',
+    'fsq_os_places',
+    'all_the_places',
+    'overture_places',
+    'wikidata',
+  ],
   fields: ['website_url', 'phone'],
   matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import'],
   minConfidence: 0.9,

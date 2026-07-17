@@ -213,6 +213,91 @@ function reviewPriority({ manifestRow, status, review }) {
   return 0;
 }
 
+function shellQuote(value) {
+  const text = String(value ?? '');
+  if (/^[A-Za-z0-9_./:@=-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function reviewReportFile(row) {
+  return `${row.spider}-review.json`;
+}
+
+function reviewExportPath(row) {
+  const kind = row.next_action === 'review_ambiguous_links' ? 'ambiguous' : 'likely_new';
+  const readiness = row.next_action === 'review_ambiguous_links' ? 'link_review' : 'candidate_ready';
+  return `reports/source-review-${row.spider}-${kind}-${readiness}-pending.csv`;
+}
+
+function reviewExportCommand(row, { entity, source }) {
+  const kind = row.next_action === 'review_ambiguous_links' ? 'ambiguous' : 'likely_new';
+  const readiness = row.next_action === 'review_ambiguous_links' ? 'link_review' : 'candidate_ready';
+  return [
+    'node',
+    'scripts/ops/export-reviewed-source-candidates.mjs',
+    '--entity',
+    entity,
+    '--status',
+    'pending',
+    '--kind',
+    kind,
+    '--readiness',
+    readiness,
+    '--source',
+    source,
+    '--report-file',
+    reviewReportFile(row),
+    '--output',
+    reviewExportPath(row),
+  ].map(shellQuote).join(' ');
+}
+
+function reviewDryRunCommand(row, { entity, source }) {
+  const reportFile = reviewReportFile(row);
+  if (row.next_action === 'review_ambiguous_links') {
+    return [
+      'node',
+      'scripts/ops/auto-link-source-review-queue.mjs',
+      '--entity',
+      entity,
+      '--source',
+      source,
+      '--report-file',
+      reportFile,
+      '--limit',
+      '25',
+    ].map(shellQuote).join(' ');
+  }
+
+  if (row.next_action === 'review_likely_new_candidates') {
+    return [
+      'node',
+      'scripts/ops/accept-likely-new-source-candidates.mjs',
+      '--entity',
+      entity,
+      '--source',
+      source,
+      '--report-file',
+      reportFile,
+      '--min-signals',
+      '3',
+      '--limit',
+      '25',
+    ].map(shellQuote).join(' ');
+  }
+
+  return '';
+}
+
+function withReviewCommands(row, args) {
+  return {
+    ...row,
+    report_file: reviewReportFile(row),
+    review_export_command: reviewExportCommand(row, args),
+    review_dry_run_command: reviewDryRunCommand(row, args),
+  };
+}
+
 function buildRows({ manifest, reviewDir, dbState }) {
   const { sourceBySpider, reviewBySpider } = indexDbState(dbState);
   return (manifest.spiders || []).map((manifestRow, manifestIndex) => {
@@ -245,7 +330,7 @@ function buildRows({ manifest, reviewDir, dbState }) {
   });
 }
 
-function buildNextBatchPlan(rows, maxSpiders) {
+function buildNextBatchPlan(rows, maxSpiders, args) {
   const reviewWork = rows
     .filter(row => ['review_ambiguous_links', 'review_likely_new_candidates'].includes(row.next_action))
     .slice()
@@ -268,13 +353,13 @@ function buildNextBatchPlan(rows, maxSpiders) {
     max_spiders: maxSpiders,
     blocked_by_review: reviewWork.length > 0,
     review_work_rows: reviewWork.length,
-    review_work_preview: reviewWork.slice(0, 8).map(row => ({
+    review_work_preview: reviewWork.slice(0, 8).map(row => withReviewCommands({
       spider: row.spider,
       next_action: row.next_action,
       review_priority: row.review_priority,
       queue_ambiguous_pending: row.queue_ambiguous_pending,
       queue_likely_new_pending: row.queue_likely_new_pending,
-    })),
+    }, args)),
     candidate_spiders: candidates.length,
     selected_spiders: spiders,
     preflight_command: spiders.length
@@ -340,6 +425,8 @@ function printMarkdown(payload) {
     'review_priority',
     'queue_ambiguous_pending',
     'queue_likely_new_pending',
+    'review_export_command',
+    'review_dry_run_command',
   ], payload.next_review_work));
   console.log('');
   console.log('## Suggested Next ATP Batch');
@@ -385,10 +472,11 @@ async function main() {
     return acc;
   }, {});
   const nextReviewWork = rows
-    .filter(row => row.review_priority > 0)
+    .filter(row => ['review_ambiguous_links', 'review_likely_new_candidates'].includes(row.next_action))
     .slice()
     .sort((a, b) => b.review_priority - a.review_priority || a.spider.localeCompare(b.spider))
-    .slice(0, 12);
+    .slice(0, 12)
+    .map(row => withReviewCommands(row, { entity: args.entity, source: args.source }));
   const payload = {
     generated_at: new Date().toISOString(),
     entity: args.entity,
@@ -397,7 +485,7 @@ async function main() {
     review_dir: args.reviewDir,
     summary,
     next_review_work: nextReviewWork,
-    next_batch: buildNextBatchPlan(rows, args.maxSpiders),
+    next_batch: buildNextBatchPlan(rows, args.maxSpiders, { entity: args.entity, source: args.source }),
     rows,
   };
 

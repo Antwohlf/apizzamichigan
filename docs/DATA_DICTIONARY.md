@@ -2,6 +2,18 @@
 
 Reference for all enumerated values and field definitions used in the APizzaMichigan database.
 
+The machine-readable canonical contract is
+[`config/canonical-contract.json`](../config/canonical-contract.json). Verify
+that contract, the sync boundary, and source-promotion policy agree with:
+
+```bash
+node scripts/ops/verify-canonical-contract.mjs
+```
+
+The contract deliberately classifies fields as identity, source factual,
+inferred, editorial, or operational. Source adapters may add evidence without
+silently changing identity or editorial fields.
+
 ---
 
 ## Pizza Styles
@@ -20,8 +32,10 @@ Values stored in `pizza_places.style`:
 | Roman | Thin and crispy throughout, often sold by weight |
 | California | Innovative toppings, often gourmet/artisanal |
 
-**Additional styles recognized by inference scripts but not yet in UI:**
-- Greek, St. Louis, New Haven, Coal-Fired, Wood-Fired, Grandma, Bar
+The production classifier and UI currently accept only the nine styles listed
+above. Greek, St. Louis, New Haven, Coal-Fired, Wood-Fired, Grandma, and Bar
+are not valid stored values; treat them as future taxonomy proposals rather
+than writing them into `pizza_places.style`.
 
 ---
 
@@ -59,6 +73,7 @@ have values in `price`; new enrichment should prefer `price_range`.
 | $ | Budget-friendly, typically fast food or quick service |
 | $$ | Mid-range, casual dining |
 | $$$ | Higher-end, sit-down restaurants |
+| $$$$ | Premium or luxury dining |
 
 ---
 
@@ -74,9 +89,21 @@ Values stored in `status` column for both tables:
 
 ---
 
-## State Codes
+## Region Codes
 
-The `state` column uses standard 2-letter US state codes:
+The `state` column is a legacy region field. For US rows it normally uses
+standard 2-letter state codes, but the table also contains international rows
+where the value is a source-provided region, province, department, or other
+administrative abbreviation. It must not be interpreted as a US state unless
+`country = 'US'`.
+
+Examples of valid non-US values currently present include `TIR` (Italy), `ALY`
+(Turkey), and `KAH` (Finland). New source adapters should preserve the source
+region in `state`, populate `country` when available, and avoid inventing a
+US-style abbreviation. Geographic filters should use `(country, state)` as
+their compound key.
+
+Common US state codes:
 
 | Code | State | Code | State |
 |------|-------|------|-------|
@@ -123,12 +150,14 @@ Plus: DC (District of Columbia), PR (Puerto Rico)
 | B.C. Pizza | Traditional | $$ |
 | Fox's Pizza | Traditional | $$ |
 | Pizza Ranch | Traditional | $$ |
+| Simple Simon's Pizza | Traditional | $$ |
+| Sal's Pizza | Traditional | $$ |
 | Jet's Pizza | Detroit | $$ |
 | Buddy's Pizza | Detroit | $$ |
 | Lou Malnati's | Chicago | $$ |
 | Giordano's | Chicago | $$ |
 | Joe's Pizza | New York | $$ |
-| &pizza | Neapolitan | $$ |
+| &pizza | Traditional | $$ |
 
 ### Taco Chains (sample)
 

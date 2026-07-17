@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 import { SOURCE_CONFIGS } from './source-input-sample-report.mjs';
 
 const EXPECTED_SOURCE_KEYS = [
+  'osm',
   'fsq_os_places',
   'all_the_places',
   'overture_places',

@@ -1,0 +1,37 @@
+-- Example FSQ Places Portal DuckDB setup file.
+--
+-- Copy the DuckDB/Iceberg setup SQL from the Foursquare Places Portal into:
+--
+--   scripts/.fsq-portal-init.sql
+--
+-- Do not commit the real file. It is intentionally ignored by git because the
+-- Portal snippet may include account-specific catalog URLs, credentials, or
+-- token placeholders.
+--
+-- Token handling:
+-- - Prefer keeping FSQ_PLACES_TOKEN in .env or the shell environment.
+-- - If the Portal snippet contains a token placeholder, leave one of these
+--   placeholders in the ignored SQL and the exporter will substitute it at
+--   runtime:
+--
+--     ${FSQ_PLACES_TOKEN}
+--     {{FSQ_PLACES_TOKEN}}
+--     $FSQ_PLACES_TOKEN
+--
+-- Table aliases expected by export-fsq-portal-duckdb-sample.py:
+-- - places
+-- - categories
+--
+-- If the Portal snippet exposes different table names, either create views in
+-- the ignored SQL:
+--
+--   CREATE OR REPLACE VIEW places AS SELECT * FROM your_portal_places_table;
+--   CREATE OR REPLACE VIEW categories AS SELECT * FROM your_portal_categories_table;
+--
+-- or pass explicit names to the exporter:
+--
+--   --places-table your_portal_places_table
+--   --categories-table your_portal_categories_table
+--
+-- Paste the actual Portal setup SQL below in scripts/.fsq-portal-init.sql, not
+-- in this example file.

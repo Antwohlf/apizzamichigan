@@ -12,14 +12,53 @@ import { resolve } from 'path';
 
 const STATUS_OPTIONS = new Set(['pending', 'accepted', 'linked', 'rejected', 'ignored', 'all']);
 const KIND_OPTIONS = new Set(['ambiguous', 'likely_new', 'all']);
+const READINESS_OPTIONS = new Set(['', 'all', 'link_review', 'candidate_ready', 'nearby_canonical_review', 'duplicate_accepted_source_coordinate', 'missing_required_data']);
+const SCOPE_OPTIONS = new Set(['', 'chain', 'independent']);
+const SOURCE_REVIEW_READINESS_SQL = `(
+  CASE
+    WHEN srq.review_kind <> 'likely_new' THEN 'link_review'
+    WHEN COALESCE(NULLIF(srq.source_name, ''), NULLIF(srq.source_data->>'name', '')) IS NULL
+      OR NULLIF(srq.source_id, '') IS NULL
+      OR NOT (
+        (NULLIF(srq.source_data->>'lat', '') IS NOT NULL OR NULLIF(srq.source_data->>'latitude', '') IS NOT NULL) AND
+        (NULLIF(srq.source_data->>'lng', '') IS NOT NULL OR NULLIF(srq.source_data->>'lon', '') IS NOT NULL OR NULLIF(srq.source_data->>'longitude', '') IS NOT NULL)
+      )
+      THEN 'missing_required_data'
+    WHEN srq.nearest_place_id IS NOT NULL AND srq.nearest_distance_m IS NOT NULL AND srq.nearest_distance_m <= 150 THEN 'nearby_canonical_review'
+    WHEN srq.status = 'accepted' AND EXISTS (
+      SELECT 1
+      FROM source_review_queue peer
+      WHERE peer.entity_type = srq.entity_type
+        AND peer.source = srq.source
+        AND peer.review_kind = 'likely_new'
+        AND peer.status = 'accepted'
+        AND peer.id <> srq.id
+        AND NULLIF(peer.source_data->>'lat', '') IS NOT NULL
+        AND NULLIF(peer.source_data->>'lng', '') IS NOT NULL
+        AND NULLIF(srq.source_data->>'lat', '') IS NOT NULL
+        AND NULLIF(srq.source_data->>'lng', '') IS NOT NULL
+        AND (111320 * sqrt(
+          power(NULLIF(peer.source_data->>'lat', '')::double precision - NULLIF(srq.source_data->>'lat', '')::double precision, 2)
+          + power((NULLIF(peer.source_data->>'lng', '')::double precision - NULLIF(srq.source_data->>'lng', '')::double precision)
+            * cos(radians(NULLIF(srq.source_data->>'lat', '')::double precision)), 2)
+        )) <= 150
+    ) THEN 'duplicate_accepted_source_coordinate'
+    ELSE 'candidate_ready'
+  END
+)`;
 
 function parseArgs(argv) {
   const args = {
     entity: 'pizza',
     status: 'accepted',
     kind: 'all',
+    readiness: '',
     source: null,
     reportFile: null,
+    search: '',
+    scope: '',
+    state: '',
+    ids: [],
     output: 'reports/source-reviewed-candidates.csv',
   };
 
@@ -28,8 +67,13 @@ function parseArgs(argv) {
     if (arg === '--entity') args.entity = argv[++i];
     else if (arg === '--status') args.status = argv[++i];
     else if (arg === '--kind') args.kind = argv[++i];
+    else if (arg === '--readiness') args.readiness = argv[++i];
     else if (arg === '--source') args.source = argv[++i];
     else if (arg === '--report-file') args.reportFile = argv[++i];
+    else if (arg === '--search') args.search = String(argv[++i] || '').trim().slice(0, 120);
+    else if (arg === '--scope') args.scope = argv[++i];
+    else if (arg === '--state') args.state = String(argv[++i] || '').trim().slice(0, 40);
+    else if (arg === '--ids') args.ids = parseIds(argv[++i]);
     else if (arg === '--output') args.output = argv[++i];
     else if (arg === '--help') {
       printHelp();
@@ -42,7 +86,17 @@ function parseArgs(argv) {
   if (!['pizza', 'taco'].includes(args.entity)) throw new Error('Invalid --entity');
   if (!STATUS_OPTIONS.has(args.status)) throw new Error('Invalid --status');
   if (!KIND_OPTIONS.has(args.kind)) throw new Error('Invalid --kind');
+  if (!READINESS_OPTIONS.has(args.readiness)) throw new Error('Invalid --readiness');
+  if (!SCOPE_OPTIONS.has(args.scope)) throw new Error('Invalid --scope');
   return args;
+}
+
+function parseIds(value) {
+  const ids = String(value || '')
+    .split(',')
+    .map(item => Number.parseInt(item.trim(), 10))
+    .filter(id => Number.isInteger(id) && id > 0);
+  return [...new Set(ids)];
 }
 
 function printHelp() {
@@ -54,8 +108,17 @@ Options:
                                 (default accepted)
   --kind <ambiguous|likely_new|all>
                                 Review kind filter (default all)
+  --readiness <state>            Optional pending-review readiness filter:
+                                link_review, candidate_ready,
+                                nearby_canonical_review, duplicate_accepted_source_coordinate,
+                                missing_required_data
   --source <key>                Optional source filter
   --report-file <file>          Optional report file filter
+  --search <text>               Optional text filter matching the admin queue
+                                search fields
+  --scope <chain|independent>  Optional feed scope filter
+  --state <code>               Optional source/canonical state or region filter
+  --ids <id,id>                 Optional exact source_review_queue id list
   --output <file>               CSV output path
                                 (default reports/source-reviewed-candidates.csv)
 
@@ -103,6 +166,21 @@ function csvCell(value) {
   return text;
 }
 
+function redactSensitiveUrl(value) {
+  if (!value || typeof value !== 'string') return value || '';
+  try {
+    const url = new URL(value);
+    for (const key of [...url.searchParams.keys()]) {
+      if (/(api[_-]?key|access[_-]?token|token|secret|password|signature|auth)/i.test(key)) {
+        url.searchParams.set(key, 'REDACTED');
+      }
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 async function sourceReviewQueueExists(client) {
   const result = await client.query(`
     SELECT EXISTS (
@@ -127,7 +205,7 @@ function rowToExport(row) {
     status: row.status,
     decision: row.decision,
     import_readiness: row.status === 'pending'
-      ? 'pending_review'
+      ? row.review_readiness || 'pending_review'
       : row.status === 'accepted' && row.review_kind === 'likely_new' && missingSourceCoordinates
         ? 'missing_source_coordinates'
         : 'ready_for_handoff',
@@ -135,7 +213,7 @@ function rowToExport(row) {
     source: row.source,
     source_id: row.source_id,
     source_name: row.source_name,
-    source_url: row.source_url,
+    source_url: redactSensitiveUrl(row.source_url),
     source_lat: sourceLat,
     source_lng: sourceLng,
     source_category: sourceData.category,
@@ -144,7 +222,7 @@ function rowToExport(row) {
     source_region: sourceData.region,
     source_postcode: sourceData.postcode,
     source_country: sourceData.country,
-    source_website: sourceData.website || sourceData['contact:website'],
+    source_website: redactSensitiveUrl(sourceData.website || sourceData['contact:website']),
     source_phone: sourceData.phone || sourceData['contact:phone'],
     nearest_place_id: row.nearest_place_id,
     nearest_google_place_id: row.nearest_google_place_id,
@@ -160,54 +238,102 @@ function rowToExport(row) {
 }
 
 async function fetchRows(client, args) {
-  const filters = ['entity_type = $1'];
+  const tableName = args.entity === 'taco' ? 'taco_places' : 'pizza_places';
+  const filters = ['srq.entity_type = $1'];
   const values = [args.entity];
 
   if (args.status === 'all') {
-    filters.push(`status <> 'pending'`);
+    filters.push(`srq.status <> 'pending'`);
   } else {
     values.push(args.status);
-    filters.push(`status = $${values.length}`);
+    filters.push(`srq.status = $${values.length}`);
   }
   if (args.kind !== 'all') {
     values.push(args.kind);
-    filters.push(`review_kind = $${values.length}`);
+    filters.push(`srq.review_kind = $${values.length}`);
   }
   if (args.source) {
     values.push(args.source);
-    filters.push(`source = $${values.length}`);
+    filters.push(`srq.source = $${values.length}`);
+  }
+  if (args.readiness && args.readiness !== 'all') {
+    values.push(args.readiness);
+    filters.push(`${SOURCE_REVIEW_READINESS_SQL} = $${values.length}`);
+  }
+  if (args.scope === 'chain') filters.push("srq.source = 'all_the_places'");
+  if (args.scope === 'independent') filters.push("srq.source IN ('osm', 'fsq_os_places', 'overture_places')");
+  if (args.state) {
+    values.push(args.state.toLowerCase());
+    filters.push(`(
+      lower(COALESCE(srq.source_data->>'region', '')) = $${values.length}
+      OR lower(COALESCE(srq.source_data->>'state', '')) = $${values.length}
+      OR lower(COALESCE(srq.source_data->>'country', '')) = $${values.length}
+      OR lower(COALESCE(nearest.state, '')) = $${values.length}
+      OR lower(COALESCE(decision_place.state, '')) = $${values.length}
+    )`);
   }
   if (args.reportFile) {
     values.push(args.reportFile);
-    filters.push(`report_file = $${values.length}`);
+    filters.push(`srq.report_file = $${values.length}`);
+  }
+  if (args.ids.length) {
+    values.push(args.ids);
+    filters.push(`srq.id = ANY($${values.length}::bigint[])`);
+  }
+  if (args.search) {
+    values.push(`%${args.search.toLowerCase()}%`);
+    filters.push(`(
+      lower(COALESCE(srq.source_name, '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_id, '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_url, '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_data->>'address', '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_data->>'addr:full', '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_data->>'website', '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_data->>'phone', '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_data->>'locality', '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.source_data->>'region', '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.nearest_place_name, '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.nearest_google_place_id, '')) LIKE $${values.length}
+      OR lower(COALESCE(nearest.address, '')) LIKE $${values.length}
+      OR lower(COALESCE(nearest.website_url, '')) LIKE $${values.length}
+      OR lower(COALESCE(nearest.phone, '')) LIKE $${values.length}
+      OR lower(COALESCE(decision_place.name, '')) LIKE $${values.length}
+      OR lower(COALESCE(decision_place.address, '')) LIKE $${values.length}
+      OR lower(COALESCE(decision_place.google_place_id, '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.review_reason, '')) LIKE $${values.length}
+      OR lower(COALESCE(srq.report_file, '')) LIKE $${values.length}
+    )`);
   }
 
   const result = await client.query(`
     SELECT
-      id,
-      entity_type,
-      review_kind,
-      source,
-      source_id,
-      source_name,
-      source_url,
-      source_data,
-      nearest_place_id,
-      nearest_google_place_id,
-      nearest_place_name,
-      nearest_distance_m,
-      nearest_name_score,
-      review_reason,
-      status,
-      decision,
-      canonical_place_id,
-      reviewer_notes,
-      reviewed_at,
-      reviewed_by,
-      report_file
-    FROM source_review_queue
+      srq.id,
+      srq.entity_type,
+      srq.review_kind,
+      srq.source,
+      srq.source_id,
+      srq.source_name,
+      srq.source_url,
+      srq.source_data,
+      srq.nearest_place_id,
+      srq.nearest_google_place_id,
+      srq.nearest_place_name,
+      srq.nearest_distance_m,
+      srq.nearest_name_score,
+      srq.review_reason,
+      srq.status,
+      srq.decision,
+      ${SOURCE_REVIEW_READINESS_SQL} AS review_readiness,
+      srq.canonical_place_id,
+      srq.reviewer_notes,
+      srq.reviewed_at,
+      srq.reviewed_by,
+      srq.report_file
+    FROM source_review_queue srq
+    LEFT JOIN ${tableName} nearest ON nearest.id = srq.nearest_place_id
+    LEFT JOIN ${tableName} decision_place ON decision_place.id = srq.canonical_place_id
     WHERE ${filters.join(' AND ')}
-    ORDER BY reviewed_at NULLS LAST, report_file, review_kind, source_name, id
+    ORDER BY srq.reviewed_at NULLS LAST, srq.report_file, srq.review_kind, srq.source_name, srq.id
   `, values);
 
   return result.rows.map(rowToExport);
@@ -278,6 +404,9 @@ async function main() {
     console.log(`Entity: ${args.entity}`);
     console.log(`Status: ${args.status}`);
     console.log(`Kind: ${args.kind}`);
+    console.log(`Readiness filter: ${args.readiness || 'all'}`);
+    console.log(`Search filter: ${args.search || 'none'}`);
+    console.log(`IDs: ${args.ids.length ? args.ids.join(',') : 'all'}`);
     console.log(`Rows exported: ${rows.length}`);
     console.log(`Output: ${args.output}`);
     console.log(`Readiness: ${Object.entries(readinessCounts).map(([key, count]) => `${key}=${count}`).join(', ') || 'none'}`);

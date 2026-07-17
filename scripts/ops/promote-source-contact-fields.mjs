@@ -15,6 +15,8 @@ import {
   autoPromotableSourceFields,
 } from '../lib/source-promotion-policy.mjs';
 
+const SOURCE_POLICY = JSON.parse(readFileSync(resolve(process.cwd(), 'config/source-policy.json'), 'utf8'));
+
 const ENTITY_TABLES = {
   pizza: 'pizza_places',
   taco: 'taco_places',
@@ -70,7 +72,7 @@ function printHelp() {
 Options:
   --entity <pizza|taco>          Canonical table to update (default pizza)
   --sources <a,b>                Source priority order
-                                 (default all_the_places,osm)
+                                 (default osm,all_the_places)
   --fields <a,b>                 Fields to promote: website_url,phone
                                  (default website_url,phone)
   --match-methods <a,b>          Eligible match methods
@@ -131,6 +133,16 @@ function table(headers, rows) {
   return [head, sep, ...body].join('\n');
 }
 
+function sqlString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function sourcePolicyCase(field) {
+  return Object.entries(SOURCE_POLICY.sources)
+    .map(([source, config]) => `WHEN ${sqlString(source)} THEN ${Number(config[field])}`)
+    .join(' ');
+}
+
 function sourceValue(data, config) {
   for (const key of config.sourceKeys) {
     const value = data?.[key];
@@ -160,6 +172,19 @@ async function ensurePlaceSources(client) {
 
 async function loadEvidenceRows(client, args) {
   const tableName = ENTITY_TABLES[args.entity];
+  const blankFieldClauses = [];
+  const sourceKeyClauses = [];
+  if (args.fields.includes('website_url')) {
+    blankFieldClauses.push("NULLIF(p.website_url, '') IS NULL");
+    sourceKeyClauses.push(`ps.data ?| ARRAY[${args.fieldPolicies.website_url.sourceKeys.map(sqlString).join(', ')}]`);
+  }
+  if (args.fields.includes('phone')) {
+    blankFieldClauses.push("NULLIF(p.phone, '') IS NULL");
+    sourceKeyClauses.push(`ps.data ?| ARRAY[${args.fieldPolicies.phone.sourceKeys.map(sqlString).join(', ')}]`);
+  }
+  const freshnessCase = sourcePolicyCase('freshness_days');
+  const confidenceCase = sourcePolicyCase('minimum_match_confidence');
+
   const result = await client.query(`
     SELECT
       p.id AS place_id,
@@ -178,8 +203,13 @@ async function loadEvidenceRows(client, args) {
       ON p.id = ps.place_id
     WHERE ps.entity_type = $1
       AND ps.source = ANY($2::text[])
+      AND ps.match_method = ANY($3::text[])
+      AND ps.match_confidence >= GREATEST($4, CASE ps.source ${confidenceCase} ELSE $4 END)
+      AND ps.retrieved_at >= NOW() - make_interval(days => CASE ps.source ${freshnessCase} ELSE 365 END)
+      AND (${blankFieldClauses.join(' OR ')})
+      AND (${sourceKeyClauses.join(' OR ')})
     ORDER BY p.id, array_position($2::text[], ps.source), ps.match_confidence DESC NULLS LAST
-  `, [args.entity, args.sources]);
+  `, [args.entity, args.sources, args.matchMethods, args.minConfidence]);
 
   return result.rows;
 }
@@ -289,6 +319,8 @@ async function main() {
     console.log(`Fields: ${args.fields.join(', ')}`);
     console.log(`Match methods: ${args.matchMethods.join(', ')}`);
     console.log(`Minimum confidence: ${args.minConfidence}`);
+    console.log('Source policy: config/source-policy.json');
+    console.log('Freshness and source-specific confidence thresholds are enforced at query time.');
     console.log(`Evidence rows read: ${rows.length}`);
     console.log(`Eligible evidence rows: ${rows.filter(row => eligibleEvidenceRow(row, args)).length}`);
     console.log(`Promotion candidates: ${candidates.length}`);

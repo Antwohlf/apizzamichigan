@@ -204,12 +204,15 @@ function candidatePayload(row) {
   const lng = sourceCoordinate(row, ['lng', 'lon', 'longitude']);
   const sourceKey = String(row.source || '').trim();
   const sourceId = String(row.source_id || '').trim();
+  // OSM exports already namespace their IDs (for example osm:way/123).
+  // Avoid producing the invalid osm:osm:way/123 canonical identity.
+  const normalizedSourceId = sourceKey === 'osm' ? sourceId.replace(/^osm:/, '') : sourceId;
   return {
     name: canonicalSourceName(row),
     lat,
     lng,
     address: sourceAddress(row),
-    google_place_id: sourceKey && sourceId ? `${sourceKey}:${sourceId}` : null,
+    google_place_id: sourceKey && normalizedSourceId ? `${sourceKey}:${normalizedSourceId}` : null,
     state: row.source_data?.region || row.source_data?.state || row.source_data?.country || null,
     status: 'unvisited',
     address_source: row.source === 'osm' ? 'osm' : null,
@@ -498,6 +501,33 @@ async function existingGooglePlaceIds(client, tableName, payloads) {
   return new Set(result.rows.map(row => row.google_place_id));
 }
 
+async function existingExternalIdentities(client, entity, rows, payloads) {
+  const legacyIds = await existingGooglePlaceIds(client, ENTITY_TABLES[entity], payloads);
+  const result = new Set([...legacyIds].map(id => `legacy:${id}`));
+  const tableExists = (await client.query(`SELECT to_regclass('public.place_external_ids') IS NOT NULL AS exists`)).rows[0].exists;
+  if (!tableExists) return result;
+
+  const pairs = rows.map((row, index) => {
+    const source = String(row.source || '').trim();
+    const sourceId = source === 'osm'
+      ? String(row.source_id || '').trim().replace(/^osm:/, '')
+      : String(row.source_id || '').trim();
+    return source && sourceId && payloads[index]?.google_place_id ? { source, sourceId } : null;
+  }).filter(Boolean);
+  if (!pairs.length) return result;
+  const values = [entity];
+  const clauses = pairs.map(pair => {
+    values.push(pair.source, pair.sourceId);
+    return `(source = $${values.length - 1} AND external_id = $${values.length})`;
+  });
+  const external = await client.query(
+    `SELECT source, external_id FROM place_external_ids WHERE entity_type = $1 AND (${clauses.join(' OR ')})`,
+    values,
+  );
+  for (const row of external.rows) result.add(`${row.source}:${row.external_id}`);
+  return result;
+}
+
 async function allocateNextCanonicalPlaceId(client, tableName) {
   await client.query(`LOCK TABLE ${tableName} IN EXCLUSIVE MODE`);
   const result = await client.query(`SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM ${tableName}`);
@@ -569,14 +599,16 @@ async function buildReport(client, args) {
   const rows = await fetchReviewRows(client, args);
   const candidates = [];
   const payloads = rows.map(row => candidatePayload(row));
-  const duplicateGooglePlaceIds = await existingGooglePlaceIds(client, tableName, payloads);
+  const duplicateExternalIdentities = await existingExternalIdentities(client, args.entity, rows, payloads);
   const canonicalPlaces = await loadCanonicalPlaces(client, tableName, payloads, args.nearbyRadiusM);
   const gridCellDegrees = 0.02;
   const placeGrid = buildPlaceGrid(canonicalPlaces, gridCellDegrees);
 
   rows.forEach((row, index) => {
     const payload = payloads[index];
-    const duplicateBySourceId = duplicateGooglePlaceIds.has(payload.google_place_id);
+    const sourceId = String(row.source_id || '').trim().replace(/^osm:/, '');
+    const duplicateBySourceId = duplicateExternalIdentities.has(`${row.source}:${sourceId}`)
+      || duplicateExternalIdentities.has(`legacy:${payload.google_place_id}`);
     const nearbyRows = nearbyPlacesFromGrid(placeGrid, payload, {
       radiusM: args.nearbyRadiusM,
       cellDegrees: gridCellDegrees,
@@ -637,9 +669,12 @@ async function buildReport(client, args) {
 }
 
 function sourceRecordData(candidate, placeId) {
+  const sourceId = candidate.source === 'osm'
+    ? String(candidate.source_id || '').replace(/^osm:/, '')
+    : candidate.source_id;
   return {
     ...(candidate.row.source_data || {}),
-    source_id: candidate.source_id,
+    source_id: sourceId,
     name: candidate.source_name,
     source_url: candidate.row.source_url || null,
     imported_place: {
@@ -661,6 +696,9 @@ function sourceRecordData(candidate, placeId) {
 async function importCandidate(client, tableName, candidate) {
   const metadata = sourceMetadata(candidate.source);
   const payload = candidatePayload(candidate.row);
+  const sourceId = candidate.source === 'osm'
+    ? String(candidate.source_id || '').replace(/^osm:/, '')
+    : candidate.source_id;
   const placeId = await allocateNextCanonicalPlaceId(client, tableName);
 
   const insert = await client.query(`
@@ -726,7 +764,7 @@ async function importCandidate(client, tableName, candidate) {
     candidate.entity_type,
     insertedPlaceId,
     candidate.source,
-    candidate.source_id,
+    sourceId,
     candidate.row.source_url || null,
     metadata.license,
     metadata.attribution,

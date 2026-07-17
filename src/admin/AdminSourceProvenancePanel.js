@@ -3,6 +3,7 @@ import {
   buildReviewWorklist,
   canonicalContextLines,
   decisionCanonicalContextLines,
+  reviewDecisionChecklist,
   reviewActionCopy,
   reviewLifecycleCopy,
   reviewQueuePressureSummary,
@@ -21,14 +22,27 @@ const REVIEW_READINESS_OPTIONS = [
   { value: '', label: 'All readiness' },
   { value: 'candidate_ready', label: 'Candidate ready' },
   { value: 'nearby_canonical_review', label: 'Nearby canonical' },
+  { value: 'duplicate_accepted_source_coordinate', label: 'Accepted duplicate coordinates' },
   { value: 'missing_required_data', label: 'Missing data' },
   { value: 'link_review', label: 'Link review' },
+]
+const REVIEW_SCOPE_OPTIONS = [
+  { value: '', label: 'All feed types' },
+  { value: 'chain', label: 'Chain feeds' },
+  { value: 'independent', label: 'Independent sources' },
 ]
 const QUEUE_PAGE_SIZE = 25
 
 const formatCount = value => numberFormat.format(Number(value) || 0)
 
-export const reviewedNewSyncCommands = importedRows => {
+export const reviewedNewSyncCommands = (importedRows, { entity = 'pizza' } = {}) => {
+  if (entity !== 'pizza') {
+    return {
+      unsupported: true,
+      reason: 'Reviewed-new Supabase publish handoff is currently implemented for pizza_places only.',
+    }
+  }
+
   const ids = [...new Set((importedRows || [])
     .map(row => Number(row?.place_id))
     .filter(id => Number.isInteger(id) && id > 0))]
@@ -44,36 +58,46 @@ export const reviewedNewSyncCommands = importedRows => {
   }
 }
 
-export const reviewedNewEnrichmentCommands = importedRows => {
-  const rows = (importedRows || [])
-    .map(row => ({
-      id: Number(row?.place_id),
-      prefix: typeof row?.google_place_id === 'string' && row.google_place_id.includes(':')
-        ? row.google_place_id.split(':')[0] + ':'
-        : '*',
-    }))
-    .filter(row => Number.isInteger(row.id) && row.id > 0)
-    .filter((row, index, arr) => arr.findIndex(item => item.id === row.id) === index)
+export const reviewedNewEnrichmentCommands = (importedRows, { entity = 'pizza' } = {}) => {
+  const ids = [...new Set((importedRows || [])
+    .map(row => Number(row?.place_id))
+    .filter(id => Number.isInteger(id) && id > 0))]
 
-  if (!rows.length) return null
+  if (!ids.length) return null
 
-  const scrape = rows.map(row =>
-    `node scripts/enrichment/populate-scrape-from-db.mjs --type pizza --id-prefix ${row.prefix} --min-place-id ${row.id} --max-place-id ${row.id} --priority-boost 100000 --limit 1`
-  )
-  const classify = rows.map(row =>
-    `node scripts/enrichment/populate-classify-from-db.mjs --state '*' --id-prefix ${row.prefix} --min-place-id ${row.id} --max-place-id ${row.id} --priority-boost 100000 --limit 1`
-  )
+  const idList = ids.join(',')
+  const limit = Math.min(ids.length, 100)
+  const scrape = [
+    `node scripts/enrichment/populate-scrape-from-db.mjs --type ${shellQuote(entity)} --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`,
+  ]
+
+  if (entity !== 'pizza') {
+    return {
+      ids,
+      scrape,
+      unsupported: {
+        classify: 'populate-classify-from-db.mjs currently rejects non-pizza datasets.',
+        deterministic: 'apply-deterministic-classification.mjs is currently pizza_places only.',
+      },
+    }
+  }
 
   return {
-    ids: rows.map(row => row.id),
+    ids,
     scrape,
-    classify,
+    classify: [
+      `node scripts/enrichment/populate-classify-from-db.mjs --type pizza --state '*' --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`,
+    ],
+    deterministic: {
+      dryRun: `node scripts/ops/apply-deterministic-classification.mjs --ids ${idList} --id-prefix all_the_places:`,
+      apply: `node scripts/ops/apply-deterministic-classification.mjs --ids ${idList} --id-prefix all_the_places: --apply`,
+    },
   }
 }
 
 const shellQuote = value => {
   const text = String(value || '')
-  if (/^[A-Za-z0-9_./:=+-]+$/.test(text)) return text
+  if (/^[A-Za-z0-9_./:=+,-]+$/.test(text)) return text
   return `'${text.replace(/'/g, `'\\''`)}'`
 }
 
@@ -86,10 +110,14 @@ const slugPart = value => String(value || '')
 export const reviewQueueExportCommand = (filter = {}, { entity = 'pizza' } = {}) => {
   const status = filter.status || 'pending'
   const kind = filter.kind || 'all'
+  const ids = Array.isArray(filter.ids)
+    ? [...new Set(filter.ids.map(id => Number.parseInt(id, 10)).filter(id => Number.isInteger(id) && id > 0))]
+    : []
   const parts = [
     'source-review',
-    slugPart(filter.reportFile) || slugPart(filter.source) || 'queue',
+    ids.length ? `selected-${ids.length}` : slugPart(filter.reportFile) || slugPart(filter.source) || 'queue',
     kind !== 'all' ? slugPart(kind) : '',
+    filter.readiness ? slugPart(filter.readiness) : '',
     slugPart(status),
   ].filter(Boolean)
   const output = `reports/${parts.join('-')}.csv`
@@ -103,8 +131,48 @@ export const reviewQueueExportCommand = (filter = {}, { entity = 'pizza' } = {})
   ]
   if (filter.source) args.push('--source', filter.source)
   if (filter.reportFile) args.push('--report-file', filter.reportFile)
+  if (filter.readiness) args.push('--readiness', filter.readiness)
+  if (filter.scope) args.push('--scope', filter.scope)
+  if (filter.state) args.push('--state', filter.state)
+  if (filter.search) args.push('--search', filter.search)
+  if (ids.length) args.push('--ids', ids.join(','))
 
   return args.map(shellQuote).join(' ')
+}
+
+export const selectedReviewEligibilitySummary = (rows = [], selectedIds = []) => {
+  const selectedSet = new Set((selectedIds || []).map(id => String(id)))
+  const selectedRows = (rows || []).filter(row => selectedSet.has(String(row?.id)))
+  const pendingRows = selectedRows.filter(row => row?.status === 'pending')
+  const pendingLikelyNew = pendingRows.filter(row => row?.review_kind === 'likely_new')
+  const pendingAmbiguous = pendingRows.filter(row => row?.review_kind === 'ambiguous')
+  const linkableAmbiguous = pendingAmbiguous.filter(row => Number(row?.nearest_place_id) > 0)
+  const acceptedLikelyNew = selectedRows.filter(row => row?.status === 'accepted' && row?.review_kind === 'likely_new')
+  const importedLinked = selectedRows.filter(row => row?.status === 'linked')
+  const ineligible = Math.max(
+    0,
+    selectedRows.length - pendingLikelyNew.length - linkableAmbiguous.length - acceptedLikelyNew.length
+  )
+
+  const parts = []
+  if (pendingLikelyNew.length) parts.push(`${formatCount(pendingLikelyNew.length)} can be accepted as likely-new`)
+  if (linkableAmbiguous.length) parts.push(`${formatCount(linkableAmbiguous.length)} can be linked to nearest canonical`)
+  if (acceptedLikelyNew.length) parts.push(`${formatCount(acceptedLikelyNew.length)} can be imported locally`)
+  if (pendingRows.length) parts.push(`${formatCount(pendingRows.length)} can be rejected or ignored`)
+  if (importedLinked.length) parts.push(`${formatCount(importedLinked.length)} already linked`)
+  if (ineligible) parts.push(`${formatCount(ineligible)} not eligible for the primary action`)
+
+  return {
+    selected: selectedRows.length,
+    pendingLikelyNew: pendingLikelyNew.length,
+    pendingAmbiguous: pendingAmbiguous.length,
+    linkableAmbiguous: linkableAmbiguous.length,
+    acceptedLikelyNew: acceptedLikelyNew.length,
+    rejectablePending: pendingRows.length,
+    alreadyLinked: importedLinked.length,
+    ineligible,
+    text: parts.length ? parts.join(' · ') : 'No eligible selected rows in the current page',
+  }
 }
 
 const formatDateTime = value => {
@@ -291,6 +359,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const [queueSource, setQueueSource] = useState('')
   const [queueReportFile, setQueueReportFile] = useState('')
   const [queueReadiness, setQueueReadiness] = useState('')
+  const [queueScope, setQueueScope] = useState('')
+  const [queueState, setQueueState] = useState('')
   const [queueSearch, setQueueSearch] = useState('')
   const [queuePage, setQueuePage] = useState(0)
   const [queueLoading, setQueueLoading] = useState(false)
@@ -392,6 +462,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
         if (queueSource) params.set('source', queueSource)
         if (queueReportFile) params.set('reportFile', queueReportFile)
         if (queueReadiness) params.set('readiness', queueReadiness)
+        if (queueScope) params.set('scope', queueScope)
+        if (queueState.trim()) params.set('state', queueState.trim())
         if (queueSearch.trim()) params.set('search', queueSearch.trim())
         const res = await fetch(`/api/admin/source-review-queue?${params.toString()}`, { credentials: 'include' })
         if (!res.ok) {
@@ -427,12 +499,12 @@ export default function AdminSourceProvenancePanel({ entity }) {
       cancelled = true
       clearTimeout(timeoutId)
     }
-  }, [entity, queueKind, queuePage, queueReadiness, queueRefreshKey, queueReportFile, queueSearch, queueSource, queueStatus])
+  }, [entity, queueKind, queuePage, queueReadiness, queueRefreshKey, queueReportFile, queueScope, queueSearch, queueSource, queueState, queueStatus])
 
   useEffect(() => {
     setQueuePage(0)
     setSelectedReviewIds({})
-  }, [entity, queueKind, queueReadiness, queueReportFile, queueSearch, queueSource, queueStatus])
+  }, [entity, queueKind, queueReadiness, queueReportFile, queueScope, queueSearch, queueSource, queueState, queueStatus])
 
   const selectableVisibleIds = useMemo(
     () => queueRows
@@ -737,8 +809,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
       const imported = Array.isArray(result.imported) ? result.imported : []
       const skipped = Number(result.skipped) || 0
       setQueueMessage(`Imported ${formatCount(imported.length)} reviewed-new candidate${imported.length === 1 ? '' : 's'} locally${skipped ? `; ${formatCount(skipped)} inspected rows were skipped` : ''}.`)
-      setReviewedNewSyncHandoff(reviewedNewSyncCommands(imported))
-      setReviewedNewEnrichmentHandoff(reviewedNewEnrichmentCommands(imported))
+      setReviewedNewSyncHandoff(reviewedNewSyncCommands(imported, { entity }))
+      setReviewedNewEnrichmentHandoff(reviewedNewEnrichmentCommands(imported, { entity }))
       setImportPreflightRefreshKey(value => value + 1)
       setSourceRefreshKey(value => value + 1)
       setQueueRefreshKey(value => value + 1)
@@ -808,8 +880,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
       }
       setSelectedReviewIds({})
       setQueueMessage(`Imported ${formatCount(imported.length)} selected reviewed-new candidate${imported.length === 1 ? '' : 's'} locally${Number(result.skipped) ? `; ${formatCount(result.skipped)} inspected rows were skipped` : ''}.`)
-      setReviewedNewSyncHandoff(reviewedNewSyncCommands(imported))
-      setReviewedNewEnrichmentHandoff(reviewedNewEnrichmentCommands(imported))
+      setReviewedNewSyncHandoff(reviewedNewSyncCommands(imported, { entity }))
+      setReviewedNewEnrichmentHandoff(reviewedNewEnrichmentCommands(imported, { entity }))
       setImportPreflightRefreshKey(value => value + 1)
       setSourceRefreshKey(value => value + 1)
       setQueueRefreshKey(value => value + 1)
@@ -993,6 +1065,30 @@ export default function AdminSourceProvenancePanel({ entity }) {
   })()
   const bulkBusy = Boolean(actionState.bulk)
   const importReviewedNewBusy = Boolean(actionState.importReviewedNew || actionState.importSelectedReviewedNew)
+  const currentQueueExportCommand = reviewQueueExportCommand({
+    source: queueSource,
+    reportFile: queueReportFile,
+    kind: queueKind,
+    status: queueStatus,
+    readiness: queueReadiness,
+    scope: queueScope,
+    state: queueState.trim(),
+    search: queueSearch.trim(),
+  }, { entity })
+  const selectedQueueExportCommand = selectedIds.length
+    ? reviewQueueExportCommand({
+      source: queueSource,
+      reportFile: queueReportFile,
+      kind: queueKind,
+      status: queueStatus,
+      readiness: queueReadiness,
+      scope: queueScope,
+      state: queueState.trim(),
+      search: queueSearch.trim(),
+      ids: selectedIds,
+    }, { entity })
+    : ''
+  const selectedEligibilitySummary = selectedReviewEligibilitySummary(queueRows, selectedIds)
 
   return (
     <div style={panelStyle}>
@@ -1005,11 +1101,13 @@ export default function AdminSourceProvenancePanel({ entity }) {
         <h2 style={{ margin: '0 0 0.75rem', color: '#f8fafc', fontSize: '1rem' }}>FSQ OS Places Sample</h2>
         <div style={{ display: 'grid', gap: '0.65rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ ...badgeStyle, color: fsqSample.state === 'sample_ready' ? '#86efac' : fsqSample.state === 'hf_export_ready' ? '#fbbf24' : '#fca5a5' }}>
+            <span style={{ ...badgeStyle, color: fsqSample.state === 'sample_ready' ? '#86efac' : ['hf_export_ready', 'portal_export_ready', 'portal_setup_needed'].includes(fsqSample.state) ? '#fbbf24' : '#fca5a5' }}>
               {fsqSample.state || 'unknown'}
             </span>
             <span style={badgeStyle}>{fsqSample.recommendedAction || 'no action available'}</span>
             <span style={badgeStyle}>{fsqSample.sampleExists ? 'sample present' : 'sample missing'}</span>
+            <span style={badgeStyle}>portal SQL: {fsqSample.portalInitSqlExists ? 'present' : 'missing'}</span>
+            <span style={badgeStyle}>portal Python: {fsqSample.portalPythonDuckdbExists ? 'present' : 'missing'}</span>
             {(fsqSample.tokenStatus || []).map(token => (
               <span key={token.name} style={badgeStyle}>
                 {token.name}: {token.present ? 'present' : 'missing'}
@@ -1027,6 +1125,27 @@ export default function AdminSourceProvenancePanel({ entity }) {
               Missing: {fsqSample.missing.join('; ')}
             </div>
           ) : null}
+          {Array.isArray(fsqSample.portalSetupSteps) && fsqSample.portalSetupSteps.length ? (
+            <div style={{ display: 'grid', gap: '0.35rem' }}>
+              <strong style={{ color: '#f8fafc' }}>Places Portal setup checklist</strong>
+              <div style={{ display: 'grid', gap: '0.3rem' }}>
+                {fsqSample.portalSetupSteps.map(step => (
+                  <div key={step.id} style={{ display: 'grid', gap: '0.15rem', padding: '0.55rem', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 8, background: 'rgba(15, 23, 42, 0.55)' }}>
+                    <span style={{ color: step.status === 'done' || step.status === 'ready' ? '#86efac' : step.status === 'needed' ? '#fbbf24' : '#fca5a5', fontWeight: 800 }}>
+                      {step.status}: {step.title}
+                    </span>
+                    <span style={{ color: '#94a3b8' }}>{step.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {fsqSample.portalSetupCommand ? (
+            <div style={{ display: 'grid', gap: '0.25rem' }}>
+              <strong style={{ color: '#f8fafc' }}>Places Portal setup command</strong>
+              <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.portalSetupCommand}</code>
+            </div>
+          ) : null}
           {fsqSample.adapterCommand ? (
             <div style={{ display: 'grid', gap: '0.25rem' }}>
               <strong style={{ color: '#f8fafc' }}>Adapter report</strong>
@@ -1037,6 +1156,12 @@ export default function AdminSourceProvenancePanel({ entity }) {
             <div style={{ display: 'grid', gap: '0.25rem' }}>
               <strong style={{ color: '#f8fafc' }}>HF export</strong>
               <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.exportCommand}</code>
+            </div>
+          ) : null}
+          {fsqSample.portalExportCommand ? (
+            <div style={{ display: 'grid', gap: '0.25rem' }}>
+              <strong style={{ color: '#f8fafc' }}>Places Portal export</strong>
+              <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.portalExportCommand}</code>
             </div>
           ) : null}
         </div>
@@ -1355,7 +1480,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       </span>
                     </div>
                   ) : null}
-                  {reviewedNewSyncHandoff ? (
+                  {(reviewedNewSyncHandoff || reviewedNewEnrichmentHandoff) ? (
                     <div style={{ marginTop: '0.85rem', border: '1px solid rgba(56, 189, 248, 0.28)', borderRadius: 10, background: 'rgba(14, 165, 233, 0.08)', padding: '0.85rem', display: 'grid', gap: '0.55rem' }}>
                       {reviewedNewEnrichmentHandoff ? (
                         <>
@@ -1366,35 +1491,63 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
                             Enqueue scrape first. Enqueue classify after scrape has written fetched page data.
                           </p>
+                          <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
+                            For reviewed ATP imports without websites, run the deterministic dry-run before the apply command.
+                          </p>
                           <div style={{ display: 'grid', gap: '0.25rem' }}>
                             <strong style={{ color: '#bbf7d0', fontSize: '0.82rem' }}>Scrape queue</strong>
                             {reviewedNewEnrichmentHandoff.scrape.map(command => (
                               <code key={command} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{command}</code>
                             ))}
                           </div>
+                          {reviewedNewEnrichmentHandoff.classify ? (
+                            <div style={{ display: 'grid', gap: '0.25rem' }}>
+                              <strong style={{ color: '#bbf7d0', fontSize: '0.82rem' }}>Classify queue</strong>
+                              {reviewedNewEnrichmentHandoff.classify.map(command => (
+                                <code key={command} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{command}</code>
+                              ))}
+                            </div>
+                          ) : null}
+                          {reviewedNewEnrichmentHandoff.deterministic ? (
+                            <div style={{ display: 'grid', gap: '0.25rem' }}>
+                              <strong style={{ color: '#bbf7d0', fontSize: '0.82rem' }}>Deterministic no-website classification</strong>
+                              <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{reviewedNewEnrichmentHandoff.deterministic.dryRun}</code>
+                              <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{reviewedNewEnrichmentHandoff.deterministic.apply}</code>
+                            </div>
+                          ) : null}
+                          {reviewedNewEnrichmentHandoff.unsupported ? (
+                            <div style={{ display: 'grid', gap: '0.25rem', color: '#fbbf24', fontSize: '0.84rem' }}>
+                              <strong>Not yet automated for this dataset</strong>
+                              <span>{reviewedNewEnrichmentHandoff.unsupported.classify}</span>
+                              <span>{reviewedNewEnrichmentHandoff.unsupported.deterministic}</span>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {reviewedNewSyncHandoff?.unsupported ? (
+                        <div style={{ display: 'grid', gap: '0.25rem', color: '#fbbf24', fontSize: '0.84rem' }}>
+                          <strong>Supabase publish handoff unavailable</strong>
+                          <span>{reviewedNewSyncHandoff.reason}</span>
+                        </div>
+                      ) : reviewedNewSyncHandoff ? (
+                        <>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <strong style={{ color: '#e0f2fe' }}>Supabase publish handoff</strong>
+                            <span style={badgeStyle}>{formatCount(reviewedNewSyncHandoff.ids.length)} reviewed-new ids</span>
+                          </div>
+                          <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
+                            Run the dry-run first, then the apply command only if it shows reviewed-new inserts for this exact id list.
+                          </p>
                           <div style={{ display: 'grid', gap: '0.25rem' }}>
-                            <strong style={{ color: '#bbf7d0', fontSize: '0.82rem' }}>Classify queue</strong>
-                            {reviewedNewEnrichmentHandoff.classify.map(command => (
-                              <code key={command} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{command}</code>
-                            ))}
+                            <strong style={{ color: '#bae6fd', fontSize: '0.82rem' }}>Dry run</strong>
+                            <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{reviewedNewSyncHandoff.dryRun}</code>
+                          </div>
+                          <div style={{ display: 'grid', gap: '0.25rem' }}>
+                            <strong style={{ color: '#bae6fd', fontSize: '0.82rem' }}>Apply</strong>
+                            <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{reviewedNewSyncHandoff.apply}</code>
                           </div>
                         </>
                       ) : null}
-                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <strong style={{ color: '#e0f2fe' }}>Supabase publish handoff</strong>
-                        <span style={badgeStyle}>{formatCount(reviewedNewSyncHandoff.ids.length)} reviewed-new ids</span>
-                      </div>
-                      <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
-                        Run the dry-run first, then the apply command only if it shows reviewed-new inserts for this exact id list.
-                      </p>
-                      <div style={{ display: 'grid', gap: '0.25rem' }}>
-                        <strong style={{ color: '#bae6fd', fontSize: '0.82rem' }}>Dry run</strong>
-                        <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{reviewedNewSyncHandoff.dryRun}</code>
-                      </div>
-                      <div style={{ display: 'grid', gap: '0.25rem' }}>
-                        <strong style={{ color: '#bae6fd', fontSize: '0.82rem' }}>Apply</strong>
-                        <code style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#cbd5e1' }}>{reviewedNewSyncHandoff.apply}</code>
-                      </div>
                     </div>
                   ) : null}
                 </>
@@ -1682,6 +1835,27 @@ export default function AdminSourceProvenancePanel({ entity }) {
                     </select>
                   </label>
                   <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
+                    Feed scope
+                    <select
+                      value={queueScope}
+                      onChange={event => setQueueScope(event.target.value)}
+                      style={{ padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    >
+                      {REVIEW_SCOPE_OPTIONS.map(option => (
+                        <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
+                    State / region
+                    <input
+                      value={queueState}
+                      onChange={event => setQueueState(event.target.value)}
+                      placeholder="MI, NY, Ontario"
+                      style={{ width: 110, padding: '0.55rem 0.7rem', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#f8fafc' }}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: '0.35rem', color: '#cbd5e1', fontWeight: 700 }}>
                     Source
                     <select
                       value={queueSource}
@@ -1740,7 +1914,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                     >
                       Next
                     </button>
-                    {queueSearch || queueSource || queueReportFile || queueKind || queueReadiness ? (
+                    {queueSearch || queueSource || queueReportFile || queueKind || queueReadiness || queueScope || queueState ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -1748,6 +1922,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           setQueueSource('')
                           setQueueKind('')
                           setQueueReadiness('')
+                          setQueueScope('')
                           setQueueReportFile('')
                         }}
                         style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: 'pointer' }}
@@ -1758,57 +1933,101 @@ export default function AdminSourceProvenancePanel({ entity }) {
                   </div>
                 </div>
 
+                {queueTotal > 0 ? (
+                  <div
+                    aria-label="Current queue export command"
+                    style={{
+                      border: '1px solid rgba(56, 189, 248, 0.24)',
+                      borderRadius: 10,
+                      background: 'rgba(14, 165, 233, 0.08)',
+                      padding: '0.75rem',
+                      display: 'grid',
+                      gap: '0.35rem',
+                    }}
+                  >
+                    <strong style={{ color: '#bae6fd', fontSize: '0.84rem' }}>Export current filtered queue</strong>
+                    <span style={{ color: '#94a3b8', fontSize: '0.82rem' }}>
+                      Uses the current status, kind, source, report, readiness, and search filters.
+                    </span>
+                    <code style={{ color: '#cbd5e1', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                      {currentQueueExportCommand}
+                    </code>
+                  </div>
+                ) : null}
+
                 {queueStatus === 'pending' && selectedIds.length > 0 ? (
-                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center', border: '1px solid rgba(251, 191, 36, 0.28)', borderRadius: 10, background: 'rgba(251, 191, 36, 0.08)', padding: '0.7rem' }}>
-                    <strong style={{ color: '#fde68a' }}>{formatCount(selectedIds.length)} selected</strong>
-                    <span style={{ color: '#94a3b8' }}>Bulk accept affects pending likely-new rows; bulk link affects pending ambiguous rows with a nearest canonical place.</span>
-                    <button
-                      type="button"
-                      disabled={bulkBusy}
-                      onClick={() => recordBulkDecision('accepted')}
-                      style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
-                    >
-                      Accept selected as new candidates
-                    </button>
-                    <button
-                      type="button"
-                      disabled={bulkBusy}
-                      onClick={() => recordBulkDecision('linked')}
-                      style={{ border: '1px solid #38bdf8', borderRadius: 8, background: 'transparent', color: '#7dd3fc', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
-                    >
-                      Link selected to nearest
-                    </button>
-                    <button
-                      type="button"
-                      disabled={bulkBusy}
-                      onClick={() => recordBulkDecision('rejected')}
-                      style={{ border: '1px solid #f87171', borderRadius: 8, background: 'transparent', color: '#fca5a5', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
-                    >
-                      Reject selected
-                    </button>
-                    <button
-                      type="button"
-                      disabled={bulkBusy}
-                      onClick={() => recordBulkDecision('ignored')}
-                      style={{ border: '1px solid #64748b', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
-                    >
-                      Ignore selected
-                    </button>
+                  <div style={{ display: 'grid', gap: '0.65rem', border: '1px solid rgba(251, 191, 36, 0.28)', borderRadius: 10, background: 'rgba(251, 191, 36, 0.08)', padding: '0.7rem' }}>
+                    <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <strong style={{ color: '#fde68a' }}>{formatCount(selectedIds.length)} selected</strong>
+                      <span style={{ color: '#94a3b8' }}>Bulk accept affects pending likely-new rows; bulk link affects pending ambiguous rows with a nearest canonical place.</span>
+                      <button
+                        type="button"
+                        disabled={bulkBusy}
+                        onClick={() => recordBulkDecision('accepted')}
+                        style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
+                      >
+                        Accept selected as new candidates
+                      </button>
+                      <button
+                        type="button"
+                        disabled={bulkBusy}
+                        onClick={() => recordBulkDecision('linked')}
+                        style={{ border: '1px solid #38bdf8', borderRadius: 8, background: 'transparent', color: '#7dd3fc', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
+                      >
+                        Link selected to nearest
+                      </button>
+                      <button
+                        type="button"
+                        disabled={bulkBusy}
+                        onClick={() => recordBulkDecision('rejected')}
+                        style={{ border: '1px solid #f87171', borderRadius: 8, background: 'transparent', color: '#fca5a5', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
+                      >
+                        Reject selected
+                      </button>
+                      <button
+                        type="button"
+                        disabled={bulkBusy}
+                        onClick={() => recordBulkDecision('ignored')}
+                        style={{ border: '1px solid #64748b', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: bulkBusy ? 'not-allowed' : 'pointer', opacity: bulkBusy ? 0.5 : 1 }}
+                      >
+                        Ignore selected
+                      </button>
+                    </div>
+                    <div aria-label="Selected row eligibility" style={{ color: '#fde68a', fontSize: '0.84rem', fontWeight: 800 }}>
+                      {selectedEligibilitySummary.text}
+                    </div>
+                    {selectedQueueExportCommand ? (
+                      <div aria-label="Selected queue export command" style={{ display: 'grid', gap: '0.25rem' }}>
+                        <strong style={{ color: '#fde68a', fontSize: '0.82rem' }}>Export selected rows</strong>
+                        <code style={{ color: '#cbd5e1', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selectedQueueExportCommand}</code>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
                 {queueStatus === 'accepted' && queueKind === 'likely_new' && selectedIds.length > 0 ? (
-                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center', border: '1px solid rgba(34, 197, 94, 0.28)', borderRadius: 10, background: 'rgba(34, 197, 94, 0.08)', padding: '0.7rem' }}>
-                    <strong style={{ color: '#bbf7d0' }}>{formatCount(selectedIds.length)} selected</strong>
-                    <span style={{ color: '#94a3b8' }}>Imports selected accepted likely-new rows by exact review ID after a fresh duplicate check.</span>
-                    <button
-                      type="button"
-                      disabled={importReviewedNewBusy}
-                      onClick={importSelectedReviewedNewCandidates}
-                      style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: importReviewedNewBusy ? 'not-allowed' : 'pointer', opacity: importReviewedNewBusy ? 0.5 : 1 }}
-                    >
-                      Import selected locally
-                    </button>
+                  <div style={{ display: 'grid', gap: '0.65rem', border: '1px solid rgba(34, 197, 94, 0.28)', borderRadius: 10, background: 'rgba(34, 197, 94, 0.08)', padding: '0.7rem' }}>
+                    <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <strong style={{ color: '#bbf7d0' }}>{formatCount(selectedIds.length)} selected</strong>
+                      <span style={{ color: '#94a3b8' }}>Imports selected accepted likely-new rows by exact review ID after a fresh duplicate check.</span>
+                      <button
+                        type="button"
+                        disabled={importReviewedNewBusy}
+                        onClick={importSelectedReviewedNewCandidates}
+                        style={{ border: '1px solid #16a34a', borderRadius: 8, background: 'transparent', color: '#86efac', padding: '0.45rem 0.65rem', fontWeight: 800, cursor: importReviewedNewBusy ? 'not-allowed' : 'pointer', opacity: importReviewedNewBusy ? 0.5 : 1 }}
+                      >
+                        Import selected locally
+                      </button>
+                    </div>
+                    <div aria-label="Selected row eligibility" style={{ color: '#bbf7d0', fontSize: '0.84rem', fontWeight: 800 }}>
+                      {selectedEligibilitySummary.text}
+                    </div>
+                    {selectedQueueExportCommand ? (
+                      <div aria-label="Selected queue export command" style={{ display: 'grid', gap: '0.25rem' }}>
+                        <strong style={{ color: '#bbf7d0', fontSize: '0.82rem' }}>Export selected rows</strong>
+                        <code style={{ color: '#cbd5e1', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selectedQueueExportCommand}</code>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -1865,6 +2084,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       const canonicalLines = canonicalContextLines(row)
                       const decisionLines = decisionCanonicalContextLines(row)
                       const lifecycle = reviewLifecycleCopy(row)
+                      const checklist = reviewDecisionChecklist(row)
                       return (
                         <article key={row.id} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: 10, padding: '0.9rem', background: '#101418' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
@@ -1906,6 +2126,16 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           </div>
                           <p style={{ margin: '0.7rem 0 0', color: '#94a3b8', fontSize: '0.84rem' }}>{recommendation.detail}</p>
                           <p style={{ margin: '0.35rem 0 0', color: lifecycle.tone, fontSize: '0.84rem' }}>{lifecycle.detail}</p>
+                          {checklist.length ? (
+                            <div style={{ marginTop: '0.65rem', border: '1px solid rgba(148, 163, 184, 0.14)', borderRadius: 8, padding: '0.65rem', background: 'rgba(15, 23, 42, 0.4)' }}>
+                              <strong style={{ color: '#f8fafc', fontSize: '0.82rem' }}>Decision checklist</strong>
+                              <ul style={{ margin: '0.4rem 0 0', paddingLeft: '1.1rem', color: '#cbd5e1', fontSize: '0.82rem' }}>
+                                {checklist.map(item => (
+                                  <li key={item}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
                           <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', color: '#cbd5e1' }}>
                             <div>
                               <strong style={{ color: '#f8fafc' }}>Source</strong>
