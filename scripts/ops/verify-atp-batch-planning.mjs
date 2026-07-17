@@ -76,6 +76,14 @@ function main() {
   assert(blockedPlan.next_batch.blocked_by_review === true, 'pending review work should block source expansion guidance');
   assert(blockedPlan.next_batch.review_work_rows === 2, 'blocked plan should count pending review rows');
   assert(blockedPlan.next_batch.review_work_preview[0].spider === 'pizza_hut_us', 'ambiguous review work should sort ahead of likely-new review');
+  assert(blockedPlan.next_batch.review_work_preview[0].review_export_command.includes('export-reviewed-source-candidates.mjs'), 'blocked plan should include a review CSV export command');
+  assert(blockedPlan.next_batch.review_work_preview[0].review_export_command.includes('--kind ambiguous'), 'ambiguous review export must filter ambiguous rows');
+  assert(blockedPlan.next_batch.review_work_preview[0].review_dry_run_command.includes('auto-link-source-review-queue.mjs'), 'ambiguous review command should be an auto-link dry run');
+  assert(!blockedPlan.next_batch.review_work_preview[0].review_dry_run_command.includes('--apply'), 'ambiguous review command must not apply changes');
+  assert(blockedPlan.next_batch.review_work_preview[1].review_dry_run_command.includes('accept-likely-new-source-candidates.mjs'), 'likely-new review command should be an accept dry run');
+  assert(!blockedPlan.next_batch.review_work_preview[1].review_dry_run_command.includes('--apply'), 'likely-new review command must not apply changes');
+  assert(blockedPlan.next_review_work[0].review_export_command.includes('reports/source-review-pizza_hut_us-ambiguous-link_review-pending.csv'), 'next review work should include deterministic export path');
+  assert(blockedPlan.next_review_work.every(row => row.next_action.startsWith('review_')), 'next review work must exclude source batch rows');
   assert(blockedPlan.rows.find(row => row.spider === 'pizza_hut_us').next_action === 'review_ambiguous_links', 'ambiguous row should recommend review');
   assert(blockedPlan.rows.find(row => row.spider === 'dominos_pizza_us').next_action === 'review_likely_new_candidates', 'likely-new row should recommend review');
 

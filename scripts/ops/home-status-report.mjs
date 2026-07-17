@@ -390,6 +390,9 @@ async function main() {
   const processes = processReport()
   const launchd = [
     launchdServiceReport('com.apizzamichigan.classifier'),
+    launchdServiceReport('com.apizzamichigan.classifier-2'),
+    launchdServiceReport('com.apizzamichigan.scraper'),
+    launchdServiceReport('com.apizzamichigan.laptop-ollama-tunnel'),
     launchdServiceReport('com.apizzamichigan.supabase-sync')
   ]
   const syncLock = syncLockReport()
@@ -502,7 +505,10 @@ async function main() {
     console.log(`- input: ${fsqSample.input || '(missing)'}`)
     console.log(`- input_exists: ${fsqSample.input_exists ? 'yes' : 'no'}`)
     console.log(`- can_export_via_hf: ${fsqSample.can_export_via_hf ? 'yes' : 'no'}`)
+    console.log(`- can_export_via_portal: ${fsqSample.can_export_via_portal ? 'yes' : 'no'}`)
     console.log(`- duckdb_cli: ${fsqSample.duckdb_cli}`)
+    console.log(`- portal_python_duckdb: ${fsqSample.portal_python_duckdb}`)
+    console.log(`- portal_init_sql: ${fsqSample.portal_init_sql}`)
     if (fsqSample.missing?.length) {
       console.log(`- missing:`)
       for (const item of fsqSample.missing) console.log(`  - ${item}`)

@@ -183,6 +183,19 @@ async function loadReviewedNewRows(client, args) {
 
 async function linkedReviewRowsWithoutProvenance(client, args) {
   const tableName = ENTITY_TABLES[args.entity];
+  const values = [args.entity];
+  const filters = [
+    'srq.entity_type = $1',
+    "srq.review_kind = 'likely_new'",
+    "srq.status = 'linked'",
+    "srq.decision = 'imported_new'",
+    'ps.id IS NULL',
+  ];
+  if (args.ids.length) {
+    values.push(args.ids);
+    filters.push(`srq.canonical_place_id = ANY($${values.length}::int[])`);
+  }
+  values.push(args.limit);
   const result = await client.query(`
     SELECT
       srq.id AS review_id,
@@ -195,19 +208,20 @@ async function linkedReviewRowsWithoutProvenance(client, args) {
     LEFT JOIN ${tableName} p
       ON p.id = srq.canonical_place_id
     LEFT JOIN place_sources ps
-      ON ps.entity_type = srq.entity_type
+     ON ps.entity_type = srq.entity_type
      AND ps.source = srq.source
-     AND ps.source_id = srq.source_id
+     AND ps.source_id = CASE
+       WHEN srq.source = 'osm' THEN regexp_replace(srq.source_id, '^osm:', '')
+       ELSE srq.source_id
+     END
      AND ps.place_id = srq.canonical_place_id
-     AND ps.match_method = 'reviewed_new_import'
-    WHERE srq.entity_type = $1
-      AND srq.review_kind = 'likely_new'
-      AND srq.status = 'linked'
-      AND srq.decision = 'imported_new'
-      AND ps.id IS NULL
+     -- A reviewed-new decision may reuse evidence that was already attached
+     -- during source matching. Identity and place linkage are the invariant;
+     -- the original match_method remains historical provenance.
+    WHERE ${filters.join('\n      AND ')}
     ORDER BY srq.canonical_place_id
-    LIMIT $2
-  `, [args.entity, args.limit]);
+    LIMIT $${values.length}
+  `, values);
 
   return result.rows;
 }

@@ -13,6 +13,24 @@ New source evidence goes into one shared table: `place_sources`.
 Ambiguous and likely-new source rows go into one local operator table:
 `source_review_queue`.
 
+## Freshness and source priority
+
+Operational source policy is defined in
+[`config/source-policy.json`](../config/source-policy.json). Each source has a
+priority, freshness window, minimum match confidence, and role. This keeps
+cadence and evidence policy configurable without adding source-specific
+columns or migrations.
+
+Run the read-only report before promotion or sync:
+
+```bash
+node scripts/ops/source-freshness-report.mjs
+```
+
+Stale evidence remains available for audit but is not eligible to refresh
+contact fields. Source evidence cannot promote classifier or editorial fields,
+and lower-priority evidence must not overwrite newer higher-priority evidence.
+
 ## Current Table Count
 
 The near-term model manages two product tables and two provenance/review tables:
@@ -36,6 +54,12 @@ for the current Supabase boundary: only `pizza_places` can sync, while
 The current `google_place_id` column is overloaded. Many rows contain OSM IDs
 such as `osm:node/12064802655`, while some user-suggestion/admin flows may use
 real Google Place IDs.
+
+The additive `place_external_ids` migration in
+`scripts/enrichment/external-ids-migration.sql` provides an explicit identity
+namespace. Known `osm:` values are stored as `source='osm'`; unknown historical
+values are preserved as `source='legacy'` rather than being guessed as Google
+IDs. Existing application reads remain compatible during the transition.
 
 Before adding Foursquare OS Places, All the Places, Overture, Wikidata, DENUE,
 or government records, we need somewhere to store each source's view of a place

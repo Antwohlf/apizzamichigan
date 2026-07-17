@@ -96,9 +96,28 @@ const sourceReviewReadinessSql = `(
       THEN 'missing_required_data'
     WHEN nearest_distance_m IS NOT NULL AND nearest_distance_m <= 150
       THEN 'nearby_canonical_review'
+    WHEN status = 'accepted' AND EXISTS (
+      SELECT 1
+      FROM source_review_queue peer
+      WHERE peer.entity_type = source_review_queue.entity_type
+        AND peer.source = source_review_queue.source
+        AND peer.review_kind = 'likely_new'
+        AND peer.status = 'accepted'
+        AND peer.id <> source_review_queue.id
+        AND NULLIF(peer.source_data->>'lat', '') IS NOT NULL
+        AND NULLIF(peer.source_data->>'lng', '') IS NOT NULL
+        AND NULLIF(source_review_queue.source_data->>'lat', '') IS NOT NULL
+        AND NULLIF(source_review_queue.source_data->>'lng', '') IS NOT NULL
+        AND (111320 * sqrt(
+          power(NULLIF(peer.source_data->>'lat', '')::double precision - NULLIF(source_review_queue.source_data->>'lat', '')::double precision, 2)
+          + power((NULLIF(peer.source_data->>'lng', '')::double precision - NULLIF(source_review_queue.source_data->>'lng', '')::double precision)
+            * cos(radians(NULLIF(source_review_queue.source_data->>'lat', '')::double precision)), 2)
+        )) <= 150
+    ) THEN 'duplicate_accepted_source_coordinate'
     ELSE 'candidate_ready'
   END
 )`
+const sourceReviewReadinessSqlForAlias = sourceReviewReadinessSql.replaceAll('source_review_queue.', 'srq.')
 
 function readSourceReviewReports(entity, inputDir = SOURCE_REVIEW_DIR) {
   const absDir = resolve(process.cwd(), inputDir)
@@ -166,6 +185,35 @@ function commandPartsToString(parts) {
   }).join(' ')
 }
 
+function fsqPortalSetupSteps({
+  portalInitSqlExists,
+  portalPythonDuckdbExists,
+  canExportViaPortal,
+  portalInitSqlPath,
+  portalInitSqlExamplePath,
+}) {
+  return [
+    {
+      id: 'copy_portal_sql',
+      status: portalInitSqlExists ? 'done' : 'needed',
+      title: 'Save the Places Portal DuckDB/Iceberg setup SQL',
+      detail: `Copy the Portal-provided setup snippet into ${portalInitSqlPath}; use ${portalInitSqlExamplePath} as the checklist and keep tokens out of git.`,
+    },
+    {
+      id: 'create_python_duckdb_venv',
+      status: portalPythonDuckdbExists ? 'done' : 'needed',
+      title: 'Create the ignored Python DuckDB environment',
+      detail: 'Run the setup command once on the machine that will export the bounded FSQ sample.',
+    },
+    {
+      id: 'run_portal_export',
+      status: canExportViaPortal ? 'ready' : 'blocked',
+      title: 'Export a bounded sample and run the read-only adapter report',
+      detail: 'After the token, SQL setup, and Python environment are present, run the Places Portal export command.',
+    },
+  ]
+}
+
 function readFsqSampleReadiness(entity) {
   const sampleFromEnv = process.env.FSQ_OS_PLACES_SAMPLE || ''
   const defaultSample = entity === 'taco'
@@ -173,11 +221,17 @@ function readFsqSampleReadiness(entity) {
     : 'data/source-samples/fsq-os-places-pizza-sample.json'
   const samplePath = sampleFromEnv || defaultSample
   const sampleExists = Boolean(samplePath && existsSync(resolve(process.cwd(), samplePath)))
+  const portalInitSqlPath = 'scripts/.fsq-portal-init.sql'
+  const portalInitSqlExamplePath = 'scripts/ops/fsq-portal-init.example.sql'
+  const portalInitSqlExists = existsSync(resolve(process.cwd(), portalInitSqlPath))
+  const portalPythonDuckdbExists = existsSync(resolve(process.cwd(), 'scripts/.fsq-venv/bin/python'))
   const tokens = ['FSQ_PLACES_TOKEN', 'HF_TOKEN', 'HUGGINGFACE_HUB_TOKEN'].map(name => ({
     name,
     present: Boolean(process.env[name]),
   }))
-  const hasToken = tokens.some(token => token.present)
+  const hasPortalToken = tokens.some(token => token.name === 'FSQ_PLACES_TOKEN' && token.present)
+  const hasHfToken = tokens.some(token => ['HF_TOKEN', 'HUGGINGFACE_HUB_TOKEN'].includes(token.name) && token.present)
+  const canExportViaPortal = hasPortalToken && portalInitSqlExists && portalPythonDuckdbExists
   const reviewOutput = entity === 'taco'
     ? 'reports/source-review/fsq-os-places-taco-review.json'
     : 'reports/source-review/fsq-os-places-review.json'
@@ -216,20 +270,52 @@ function readFsqSampleReadiness(entity) {
     reviewOutput,
     '--run-report',
   ]
+  const portalExportCommand = [
+    'scripts/.fsq-venv/bin/python',
+    'scripts/ops/export-fsq-portal-duckdb-sample.py',
+    '--init-sql-file',
+    portalInitSqlPath,
+    '--query',
+    entity === 'taco' ? 'taco' : 'pizza',
+    '--limit',
+    '100',
+    '--output',
+    samplePath || defaultSample,
+    '--entity',
+    entity,
+    '--review-output',
+    reviewOutput,
+    '--run-report',
+  ]
+  const portalSetupCommand = [
+    'sh',
+    '-lc',
+    'python3 -m venv scripts/.fsq-venv && scripts/.fsq-venv/bin/python -m pip install --upgrade pip duckdb pyiceberg pyarrow',
+  ]
 
   const state = sampleExists
     ? 'sample_ready'
-    : hasToken
+    : hasHfToken
       ? 'hf_export_ready'
+      : hasPortalToken
+        ? canExportViaPortal
+          ? 'portal_export_ready'
+          : 'portal_setup_needed'
       : 'blocked_missing_sample_or_token'
   const recommendedAction = sampleExists
     ? 'run_adapter_report'
-    : hasToken
+    : hasHfToken
       ? 'export_hf_sample_and_run_report'
-      : 'provide_fsq_sample_or_token'
+      : hasPortalToken
+        ? canExportViaPortal
+          ? 'export_places_portal_sample_then_run_report'
+          : 'save_places_portal_init_sql_then_export'
+        : 'provide_fsq_sample_or_token'
   const missing = []
   if (!sampleExists) missing.push(`FSQ sample file: ${samplePath}`)
-  if (!sampleExists && !hasToken) missing.push('FSQ/Hugging Face token env var')
+  if (!sampleExists && hasPortalToken && !portalPythonDuckdbExists) missing.push('Places Portal Python DuckDB venv: scripts/.fsq-venv/bin/python')
+  if (!sampleExists && hasPortalToken && !portalInitSqlExists) missing.push(`Places Portal DuckDB setup SQL: ${portalInitSqlPath}`)
+  if (!sampleExists && !hasHfToken && !hasPortalToken) missing.push('FSQ sample file, Hugging Face token, or Places Portal token')
 
   return {
     source: 'fsq_os_places',
@@ -237,10 +323,24 @@ function readFsqSampleReadiness(entity) {
     recommendedAction,
     samplePath,
     sampleExists,
+    portalInitSqlPath,
+    portalInitSqlExamplePath,
+    portalInitSqlExists,
+    portalPythonDuckdbExists,
+    canExportViaPortal,
     tokenStatus: tokens,
     missing,
     adapterCommand: commandPartsToString(adapterCommand),
     exportCommand: commandPartsToString(exportCommand),
+    portalExportCommand: commandPartsToString(portalExportCommand),
+    portalSetupCommand: commandPartsToString(portalSetupCommand),
+    portalSetupSteps: fsqPortalSetupSteps({
+      portalInitSqlExists,
+      portalPythonDuckdbExists,
+      canExportViaPortal,
+      portalInitSqlPath,
+      portalInitSqlExamplePath,
+    }),
   }
 }
 
@@ -513,7 +613,44 @@ async function sourceReviewQueueExists(client) {
         AND table_name = 'source_review_queue'
     ) AS exists
   `)
-  return Boolean(result.rows[0]?.exists)
+  if (!result.rows[0]?.exists) return false
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS source_review_decision_history (
+      id BIGSERIAL PRIMARY KEY,
+      review_queue_id BIGINT NOT NULL,
+      entity_type TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      previous_review_kind TEXT,
+      previous_status TEXT,
+      previous_decision TEXT,
+      previous_canonical_place_id BIGINT,
+      review_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      decision TEXT,
+      canonical_place_id BIGINT,
+      action TEXT NOT NULL,
+      reviewer_notes TEXT,
+      reviewed_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  return true
+}
+
+async function recordSourceReviewDecision(client, row, next, action) {
+  await client.query(`
+    INSERT INTO source_review_decision_history (
+      review_queue_id, entity_type, source, source_id,
+      previous_review_kind, previous_status, previous_decision, previous_canonical_place_id,
+      review_kind, status, decision, canonical_place_id, action, reviewer_notes, reviewed_by
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+  `, [
+    row.id, row.entity_type, row.source, row.source_id,
+    row.review_kind || null, row.status || null, row.decision || null, row.canonical_place_id || null,
+    next.review_kind || row.review_kind, next.status, next.decision || null,
+    next.canonical_place_id || null, action, next.reviewer_notes || null, next.reviewed_by || 'admin',
+  ])
 }
 
 const safeInteger = (value, fallback, { min = 0, max = 1000 } = {}) => {
@@ -532,9 +669,10 @@ const parseReviewIdList = value => {
 
 const allowedSourceReviewStatuses = new Set(['pending', 'accepted', 'linked', 'rejected', 'ignored'])
 const allowedSourceReviewKinds = new Set(['ambiguous', 'likely_new'])
-const allowedSourceReviewReadiness = new Set(['candidate_ready', 'nearby_canonical_review', 'missing_required_data', 'link_review'])
+const allowedSourceReviewReadiness = new Set(['candidate_ready', 'nearby_canonical_review', 'duplicate_accepted_source_coordinate', 'missing_required_data', 'link_review'])
+const allowedSourceReviewScopes = new Set(['chain', 'independent'])
 const SOURCE_CONTACT_PROMOTION_PREVIEW = {
-  sources: ['all_the_places', 'osm'],
+  sources: ['official_website', 'osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata'],
   fields: ['website_url', 'phone'],
   matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import'],
   minConfidence: 0.9,
@@ -1788,6 +1926,8 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   const source = (req.query?.source || '').toString().trim().slice(0, 80)
   const reportFile = (req.query?.reportFile || '').toString().trim().slice(0, 160)
   const readiness = (req.query?.readiness || '').toString().trim().slice(0, 80)
+  const scope = (req.query?.scope || '').toString().trim().slice(0, 20)
+  const state = (req.query?.state || '').toString().trim().slice(0, 40)
   const search = (req.query?.search || '').toString().trim().slice(0, 120)
   const limit = safeInteger(req.query?.limit, 50, { min: 1, max: 100 })
   const offset = safeInteger(req.query?.offset, 0, { min: 0, max: 1000000 })
@@ -1800,6 +1940,9 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   }
   if (readiness && !allowedSourceReviewReadiness.has(readiness)) {
     return res.status(400).json({ error: 'Invalid source review readiness.' })
+  }
+  if (scope && !allowedSourceReviewScopes.has(scope)) {
+    return res.status(400).json({ error: 'Invalid source review scope.' })
   }
 
   try {
@@ -1825,7 +1968,22 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
       }
       if (readiness) {
         values.push(readiness)
-        filters.push(`${sourceReviewReadinessSql} = $${values.length}`)
+        filters.push(`${sourceReviewReadinessSqlForAlias} = $${values.length}`)
+      }
+      if (scope === 'chain') {
+        filters.push("srq.source = 'all_the_places'")
+      } else if (scope === 'independent') {
+        filters.push("srq.source IN ('osm', 'fsq_os_places', 'overture_places')")
+      }
+      if (state) {
+        values.push(state.toLowerCase())
+        filters.push(`(
+          lower(COALESCE(srq.source_data->>'region', '')) = $${values.length}
+          OR lower(COALESCE(srq.source_data->>'state', '')) = $${values.length}
+          OR lower(COALESCE(srq.source_data->>'country', '')) = $${values.length}
+          OR lower(COALESCE(nearest.state, '')) = $${values.length}
+          OR lower(COALESCE(decision_place.state, '')) = $${values.length}
+        )`)
       }
       if (search) {
         values.push(`%${search.toLowerCase()}%`)
@@ -1894,7 +2052,7 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
           decision_place.website_url AS decision_canonical_website_url,
           decision_place.phone AS decision_canonical_phone,
           ${sourceReviewSignalCountSql}::int AS source_signal_count,
-          ${sourceReviewReadinessSql} AS review_readiness,
+          ${sourceReviewReadinessSqlForAlias} AS review_readiness,
           srq.review_reason,
           srq.status,
           srq.decision,
@@ -1914,9 +2072,9 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
           CASE srq.review_kind WHEN 'ambiguous' THEN 0 ELSE 1 END,
           CASE WHEN srq.review_kind = 'ambiguous' THEN srq.nearest_distance_m END ASC NULLS LAST,
           CASE
-            WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSql} = 'candidate_ready' THEN 0
-            WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSql} = 'nearby_canonical_review' THEN 1
-            WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSql} = 'missing_required_data' THEN 2
+            WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSqlForAlias} = 'candidate_ready' THEN 0
+            WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSqlForAlias} = 'nearby_canonical_review' THEN 1
+            WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSqlForAlias} = 'missing_required_data' THEN 2
             ELSE 3
           END,
           CASE WHEN srq.review_kind = 'likely_new' THEN ${sourceReviewSignalCountSql} END DESC,
@@ -1984,6 +2142,13 @@ app.patch('/api/admin/source-review-queue/bulk', requireAdminAuth, async (req, r
           }
         }
 
+        const previous = await client.query(`
+          SELECT id, entity_type, source, source_id, review_kind, status, decision, canonical_place_id
+          FROM source_review_queue
+          WHERE id = ANY($1::bigint[])
+            AND status = 'pending'
+            ${status === 'accepted' ? "AND review_kind = 'likely_new'" : ''}
+        `, [ids])
         const result = await client.query(`
           UPDATE source_review_queue
           SET
@@ -1998,6 +2163,10 @@ app.patch('/api/admin/source-review-queue/bulk', requireAdminAuth, async (req, r
             ${status === 'accepted' ? "AND review_kind = 'likely_new'" : ''}
           RETURNING id, source_name, source_id, status
         `, [ids, status, reviewerNotes])
+        for (const updated of result.rows) {
+          const prior = previous.rows.find(row => String(row.id) === String(updated.id))
+          if (prior) await recordSourceReviewDecision(client, prior, { status, decision: status, reviewer_notes: reviewerNotes, reviewed_by: 'admin' }, `bulk_${status}`)
+        }
 
         return {
           data: result.rows,
@@ -2077,6 +2246,12 @@ app.patch('/api/admin/source-review-queue/bulk', requireAdminAuth, async (req, r
             RETURNING id, source_name, source_id, status, canonical_place_id
           `, [row.id, row.nearest_place_id, reviewerNotes])
           if (result.rows[0]) linkedRows.push(result.rows[0])
+          if (result.rows[0]) {
+            await recordSourceReviewDecision(client, row, {
+              status: 'linked', decision: 'linked', canonical_place_id: row.nearest_place_id,
+              reviewer_notes: reviewerNotes, reviewed_by: 'admin',
+            }, 'bulk_linked')
+          }
         }
         await client.query('COMMIT')
       } catch (error) {
@@ -2166,6 +2341,15 @@ app.patch('/api/admin/source-review-queue/:id/reclassify-likely-new', requireAdm
         RETURNING *
       `, [id, reviewerNotes])
 
+      await recordSourceReviewDecision(client, row, {
+        review_kind: 'likely_new',
+        status: 'pending',
+        decision: null,
+        canonical_place_id: null,
+        reviewer_notes: reviewerNotes,
+        reviewed_by: 'admin:reclassified-likely-new',
+      }, 'reclassify_likely_new')
+
       return { data: result.rows[0] }
     })
 
@@ -2173,6 +2357,33 @@ app.patch('/api/admin/source-review-queue/:id/reclassify-likely-new', requireAdm
   } catch (error) {
     console.error('[admin] source review queue reclassify error', error)
     return res.status(error.status || 500).json({ error: error.message || 'Failed to reclassify source review row.' })
+  }
+})
+
+app.get('/api/admin/source-review-queue/:id/history', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  if (!id) return res.status(400).json({ error: 'Invalid source review queue id.' })
+  try {
+    const payload = await withLocalPostgres(async client => {
+      if (!(await sourceReviewQueueExists(client))) {
+        const error = new Error('source_review_queue is not configured.')
+        error.status = 503
+        throw error
+      }
+      const result = await client.query(`
+        SELECT id, review_queue_id, previous_review_kind, previous_status,
+          previous_decision, previous_canonical_place_id, review_kind, status,
+          decision, canonical_place_id, action, reviewer_notes, reviewed_by, created_at
+        FROM source_review_decision_history
+        WHERE review_queue_id = $1
+        ORDER BY created_at DESC, id DESC
+      `, [id])
+      return { data: result.rows }
+    })
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review history fetch error', error)
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to load source review history.' })
   }
 })
 
@@ -2271,6 +2482,15 @@ app.patch('/api/admin/source-review-queue/:id', requireAdminAuth, async (req, re
           WHERE id = $1
           RETURNING *
         `, [id, status, canonicalPlaceId, reviewerNotes])
+
+        await recordSourceReviewDecision(client, row, {
+          review_kind: row.review_kind,
+          status,
+          decision: status,
+          canonical_place_id: canonicalPlaceId,
+          reviewer_notes: reviewerNotes,
+          reviewed_by: 'admin',
+        }, status === 'linked' ? 'linked' : `set_${status}`)
 
         await client.query('COMMIT')
       } catch (error) {

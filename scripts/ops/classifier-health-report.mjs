@@ -22,6 +22,8 @@ const WORKER_ID = process.env.CLASSIFIER_WORKER_ID || 'launchd-classify'
 const STALE_MINUTES = parsePositiveInt(process.env.CLASSIFIER_HEALTH_STALE_MINUTES, 30)
 const WINDOW_HOURS = parsePositiveInt(process.env.CLASSIFIER_HEALTH_WINDOW_HOURS, 1)
 const MAX_ROWS = parsePositiveInt(process.env.CLASSIFIER_HEALTH_MAX_ROWS, 5)
+const EXPECTED_CLASSIFIER_PROCESSES = parsePositiveInt(process.env.CLASSIFIER_WORKER_COUNT, 2)
+const EXPECTED_SCRAPER_PROCESSES = parsePositiveInt(process.env.SCRAPER_PROCESS_COUNT, 1)
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10)
@@ -67,7 +69,7 @@ function gitReport(root) {
   }
 }
 
-function launchdReport() {
+function launchdReport(label = SERVICE_LABEL) {
   if (os.platform() !== 'darwin') {
     return { ok: false, skipped: true, reason: 'launchd is macOS-only' }
   }
@@ -75,7 +77,7 @@ function launchdReport() {
   const uid = run('id', ['-u'])
   if (!uid.ok) return { ok: false, error: uid.stderr || 'unable to resolve uid' }
 
-  const service = `gui/${uid.stdout}/${SERVICE_LABEL}`
+  const service = `gui/${uid.stdout}/${label}`
   const result = run('launchctl', ['print', service], { timeout: 10000 })
   if (!result.ok) {
     return { ok: false, service, error: result.stderr || result.stdout || 'launchctl print failed' }
@@ -111,17 +113,35 @@ function processReport() {
   const classifier = rows.filter(row =>
     /^\d+\s+(?:\S*\/)?node\s+scripts\/enrichment\/agents\/llm-classifier\.mjs\b/.test(row)
   )
+  const scraper = rows.filter(row =>
+    /^\d+\s+(?:\S*\/)?node\s+scripts\/enrichment\/agents\/web-scraper\.mjs\b/.test(row)
+  )
   const unexpected = rows.filter(row =>
     row.includes('coordinator.mjs') ||
     row.includes('watchdog.mjs') ||
     row.includes('watchdog-keepalive.mjs') ||
-    row.includes('web-scraper.mjs') ||
     row.includes('osm-extractor.mjs') ||
     row.includes('sync-agent.mjs')
   )
   const ollama = rows.filter(row => row.includes('ollama'))
 
-  return { ok: true, classifier, unexpected, ollama }
+  return { ok: true, classifier, scraper, unexpected, ollama }
+}
+
+function tunnelReport() {
+  const result = spawnSync('lsof', ['-nP', '-iTCP:11435', '-sTCP:LISTEN'], { encoding: 'utf8' })
+  if (result.status !== 0 && !result.stdout?.trim()) {
+    return { ok: false, port: 11435, error: result.stderr?.trim() || 'listener check failed' }
+  }
+  const lines = (result.stdout || '').split('\n').map(line => line.trim()).filter(Boolean)
+  return {
+    ok: lines.length > 1,
+    port: 11435,
+    ownership: 'remote-laptop',
+    controlPlane: 'laptop launchd is intentionally not inspectable from the iMac',
+    listeners: lines.slice(1),
+    error: lines.length > 1 ? null : 'no listener on 127.0.0.1:11435'
+  }
 }
 
 function queueReport(root) {
@@ -205,6 +225,15 @@ function queueReport(root) {
       WHERE worker_id = ?
     `).get(WORKER_ID)
 
+    const workers = db.prepare(`
+      SELECT worker_id, agent_type, status, current_job_id, jobs_completed,
+             jobs_failed, last_heartbeat,
+             ROUND((julianday('now') - julianday(last_heartbeat)) * 24 * 60, 1) as minutes_since_heartbeat
+      FROM workers
+      WHERE agent_type = 'classify'
+      ORDER BY worker_id
+    `).all()
+
     const staleWorkers = db.prepare(`
       SELECT
         worker_id,
@@ -215,6 +244,7 @@ function queueReport(root) {
         ROUND((julianday('now') - julianday(last_heartbeat)) * 24 * 60, 1) as minutes_since_heartbeat
       FROM workers
       WHERE last_heartbeat < datetime('now', '-' || ? || ' minutes')
+        AND (status != 'idle' OR current_job_id IS NOT NULL)
       ORDER BY last_heartbeat
       LIMIT ?
     `).all(STALE_MINUTES, MAX_ROWS)
@@ -238,6 +268,7 @@ function queueReport(root) {
       processingJobs,
       staleProcessingJobs,
       worker: worker || null,
+      workers,
       staleWorkers,
       recentCompleted
     }
@@ -284,7 +315,10 @@ async function postgresReport() {
 }
 
 async function ollamaReport() {
-  const baseUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
+  const configuredUrl = process.env.CLASSIFIER_OLLAMA_URL || process.env.OLLAMA_URL
+  const baseUrl = configuredUrl === 'http://localhost:11434' || configuredUrl === 'http://127.0.0.1:11434'
+    ? 'http://127.0.0.1:11435'
+    : (configuredUrl || 'http://127.0.0.1:11435')
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 3000)
   try {
@@ -300,7 +334,7 @@ async function ollamaReport() {
   }
 }
 
-function classifyHealth({ git, launchd, processes, queue, postgres, ollama }) {
+function classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgres, ollama, tunnel }) {
   const issues = []
   const warnings = []
 
@@ -308,19 +342,24 @@ function classifyHealth({ git, launchd, processes, queue, postgres, ollama }) {
   if (git.head !== git.originMain) warnings.push(`HEAD (${git.head}) differs from origin/main (${git.originMain})`)
 
   if (!launchd.skipped && !launchd.ok) issues.push(`launchd service is not running: ${launchd.error || launchd.state}`)
+  if (!tunnelLaunchd.skipped && !tunnelLaunchd.ok && !tunnel.ok) {
+    issues.push(`laptop Ollama tunnel is unavailable: ${tunnelLaunchd.error || tunnelLaunchd.state}`)
+  }
   if (!processes.ok) warnings.push(`process scan failed: ${processes.error}`)
   else {
-    if (processes.classifier.length !== 1) issues.push(`expected exactly 1 classifier process, found ${processes.classifier.length}`)
+    if (processes.classifier.length !== EXPECTED_CLASSIFIER_PROCESSES) issues.push(`expected exactly ${EXPECTED_CLASSIFIER_PROCESSES} classifier processes, found ${processes.classifier.length}`)
+    if (processes.scraper.length !== EXPECTED_SCRAPER_PROCESSES) warnings.push(`expected ${EXPECTED_SCRAPER_PROCESSES} managed scraper process${EXPECTED_SCRAPER_PROCESSES === 1 ? '' : 'es'}, found ${processes.scraper.length}`)
     if (processes.unexpected.length) issues.push(`unexpected enrichment processes found: ${processes.unexpected.length}`)
   }
 
   if (!queue.ok) issues.push(`queue unavailable: ${queue.error}`)
   else {
-    if (queue.totals.processing > 1) issues.push(`too many classify jobs processing: ${queue.totals.processing}`)
+    if (queue.totals.processing > EXPECTED_CLASSIFIER_PROCESSES) issues.push(`too many classify jobs processing: ${queue.totals.processing}`)
     if (queue.staleProcessingJobs.length) issues.push(`stale classify processing jobs: ${queue.staleProcessingJobs.length}`)
     if (queue.staleWorkers.length) issues.push(`stale worker rows: ${queue.staleWorkers.length}`)
     if (!queue.worker) issues.push(`worker row ${WORKER_ID} is missing`)
     else if (queue.worker.minutes_since_heartbeat > STALE_MINUTES) issues.push(`worker heartbeat is stale: ${queue.worker.minutes_since_heartbeat}m`)
+    if (queue.workers && queue.workers.length < EXPECTED_CLASSIFIER_PROCESSES) issues.push(`expected ${EXPECTED_CLASSIFIER_PROCESSES} classify worker rows, found ${queue.workers.length}`)
     if (queue.recent.completed === 0 && queue.totals.pending > 0) warnings.push(`no classify completions in last ${WINDOW_HOURS}h`)
   }
 
@@ -330,6 +369,7 @@ function classifyHealth({ git, launchd, processes, queue, postgres, ollama }) {
   }
 
   if (!ollama.ok) issues.push(`Ollama unavailable: ${ollama.error}`)
+  if (!tunnel.ok) issues.push(`Ollama tunnel unavailable: ${tunnel.error}`)
 
   const state = issues.length ? 'FAIL' : warnings.length ? 'WARN' : 'OK'
   return { state, issues, warnings }
@@ -357,12 +397,14 @@ async function main() {
   const generatedAt = new Date().toISOString()
   const git = gitReport(root)
   const launchd = launchdReport()
+  const tunnelLaunchd = launchdReport('com.apizzamichigan.laptop-ollama-tunnel')
   const processes = processReport()
+  const tunnel = tunnelReport()
   const queue = queueReport(root)
   const [postgres, ollama] = await Promise.all([postgresReport(), ollamaReport()])
-  const health = classifyHealth({ git, launchd, processes, queue, postgres, ollama })
+  const health = classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgres, ollama, tunnel })
 
-  const payload = { generatedAt, root, health, git, launchd, processes, queue, postgres, ollama }
+  const payload = { generatedAt, root, health, git, launchd, tunnelLaunchd, processes, tunnel, queue, postgres, ollama }
   if (args.has('--json')) {
     console.log(JSON.stringify(payload, null, 2))
     return
@@ -372,6 +414,7 @@ async function main() {
   console.log('')
   console.log(`Generated: ${generatedAt}`)
   console.log(`Repo: \`${root}\``)
+  console.log(`Tunnel: ${tunnel.ok ? `ok (127.0.0.1:${tunnel.port})` : `failed (${tunnel.error})`}`)
   console.log('')
 
   console.log('## Summary')
@@ -394,6 +437,7 @@ async function main() {
     console.log(`- Postgres: unavailable (${postgres.error})`)
   }
   console.log(`- Ollama: ${ollama.ok ? `ok (${ollama.models.join(', ') || 'no models'})` : `failed (${ollama.error})`}`)
+  console.log(`- Ollama tunnel control: ${tunnel.ok ? 'healthy remote listener' : tunnelLaunchd.ok ? `running (${tunnelLaunchd.service})` : `unavailable (${tunnelLaunchd.error || tunnelLaunchd.state})`}`)
   console.log('')
 
   console.log('## Issues')
@@ -424,6 +468,9 @@ async function main() {
   if (processes.ok) {
     console.log('## Classifier Processes')
     console.log(processList(processes.classifier))
+    console.log('')
+    console.log('## Managed Scraper Processes')
+    console.log(processList(processes.scraper))
     console.log('')
     console.log('## Unexpected Enrichment Processes')
     console.log(processList(processes.unexpected))

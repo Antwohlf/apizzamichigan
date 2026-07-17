@@ -146,6 +146,65 @@ export const reviewRecommendation = row => {
   }
 }
 
+export const reviewDecisionChecklist = row => {
+  const kind = row?.review_kind || ''
+  const status = row?.status || 'pending'
+  const readiness = row?.review_readiness || row?.readiness || ''
+  const hasNearest = Boolean(row?.nearest_place_id)
+  const hasSourceCoords = row?.source_data?.lat != null || row?.source_data?.latitude != null
+  const hasSourceIdentity = Boolean(row?.source_name || row?.source_id)
+
+  if (status === 'linked') {
+    return [
+      'Source evidence is already attached to a canonical place.',
+      'Use the decision canonical block to audit the final linked destination.',
+    ]
+  }
+
+  if (status === 'accepted' && kind === 'likely_new') {
+    return [
+      'Run reviewed-new import preflight before creating any canonical place.',
+      'Confirm no nearby canonical place appeared since the row was accepted.',
+    ]
+  }
+
+  if (kind === 'ambiguous') {
+    return [
+      hasSourceIdentity ? 'Confirm the source identity matches the canonical row.' : 'Confirm the source row has enough identity to review.',
+      hasNearest ? 'Compare source coordinates and nearest canonical coordinates.' : 'No nearest canonical row is available; do not link without a manual canonical id.',
+      'Link only when this is the same place; otherwise reject, ignore, or review as likely-new.',
+    ]
+  }
+
+  if (kind === 'likely_new') {
+    if (readiness === 'candidate_ready') {
+      return [
+        hasSourceCoords ? 'Confirm source coordinates look plausible.' : 'Do not accept until source coordinates are present.',
+        'Accept only stages the row for import preflight; it does not create a place.',
+        'Run import preflight before local canonical insertion.',
+      ]
+    }
+    if (readiness === 'nearby_canonical_review') {
+      return [
+        'Compare the nearby canonical row before accepting this as new.',
+        'Link if it is the same place; reject or ignore if the source is stale or unusable.',
+        'Use Accept only after duplicate risk is resolved.',
+      ]
+    }
+    if (readiness === 'missing_required_data') {
+      return [
+        'Missing identity or coordinates block reviewed-new import.',
+        'Reject stale/bad source rows or ignore rows that may become useful later.',
+      ]
+    }
+  }
+
+  return [
+    'Open the source evidence and compare it with canonical context.',
+    'Choose the narrowest decision that preserves auditability.',
+  ]
+}
+
 export const reviewActionCopy = row => {
   const kind = row?.review_kind || ''
   const readiness = row?.readiness || ''

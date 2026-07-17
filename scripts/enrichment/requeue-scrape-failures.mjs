@@ -20,6 +20,16 @@ const limit = Math.max(1, Math.min(5000, Number.parseInt(limitIdx >= 0 ? args[li
 
 const q = getQueue()
 
+function normalizedError(error) {
+  return String(error || '').replace(/^Cached error:\s*/i, '').trim()
+}
+
+function isTransient(error) {
+  const value = normalizedError(error).toLowerCase()
+  if (/^http (401|403|404|410)\b/.test(value) || /forbidden|access denied|not found|no website|invalid url/.test(value)) return false
+  return /fetch failed|this operation was aborted|timeout|^http 5\d\d\b|econnreset|etimedout|econnrefused|network/.test(value)
+}
+
 const candidates = q.db.prepare(
   `
   SELECT id, osm_id, place_type, last_error
@@ -28,30 +38,15 @@ const candidates = q.db.prepare(
     AND status = 'failed'
     AND last_error IS NOT NULL
 
-    -- include transient-ish
-    AND (
-      last_error LIKE '%fetch failed%'
-      OR last_error LIKE '%This operation was aborted%'
-      OR last_error LIKE '%timeout%'
-      OR last_error LIKE 'HTTP 5%'
-      OR last_error LIKE '%ECONNRESET%'
-      OR last_error LIKE '%ETIMEDOUT%'
-    )
-
-    -- exclude things we do NOT want to retry right now
-    AND last_error NOT LIKE 'HTTP 403%'
-    AND last_error NOT LIKE 'HTTP 404%'
-    AND last_error NOT LIKE 'HTTP 410%'
-
   ORDER BY id ASC
-  LIMIT ?
   `
-).all(limit)
+).all()
 
+const transientCandidates = candidates.filter(candidate => isTransient(candidate.last_error)).slice(0, limit)
 const now = new Date().toISOString()
 
 const byReason = new Map()
-for (const c of candidates) {
+for (const c of transientCandidates) {
   const k = String(c.last_error || 'unknown')
   byReason.set(k, (byReason.get(k) || 0) + 1)
 }
@@ -76,9 +71,9 @@ const requeueTx = q.db.transaction((rows) => {
   }
 })
 
-requeueTx(candidates)
+requeueTx(transientCandidates)
 
-console.log(`requeued scrape jobs: ${candidates.length} (limit=${limit})`)
+console.log(`requeued scrape jobs: ${transientCandidates.length} (limit=${limit}, scanned=${candidates.length})`)
 console.log('breakdown (original last_error):')
 for (const [reason, n] of [...byReason.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25)) {
   console.log(`- ${n}\t${reason}`)

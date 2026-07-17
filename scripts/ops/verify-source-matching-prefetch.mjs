@@ -134,11 +134,15 @@ async function main() {
     const inputRows = metricValue(output, 'input rows inspected');
     const compared = metricValue(output, 'pizza-ish active candidates');
     const prefetched = metricValue(output, 'canonical rows prefetched');
+    const prefetchTiles = metricValue(output, 'canonical prefetch tiles');
+    const prefetchQueries = metricValue(output, 'canonical prefetch queries');
     const gridCells = metricValue(output, 'coordinate grid cells built');
 
     assert(inputRows === 1, `Expected one input row, got ${inputRows}`);
     assert(compared === 1, `Expected one candidate compared, got ${compared}`);
     assert(prefetched > 0, `Expected prefetch to load at least one canonical row, got ${prefetched}`);
+    assert(prefetchTiles === 1, `Expected one canonical prefetch tile, got ${prefetchTiles}`);
+    assert(prefetchQueries === 1, `Expected one canonical prefetch query, got ${prefetchQueries}`);
     assert(gridCells > 0, `Expected grid to contain at least one coordinate cell, got ${gridCells}`);
     assert(output.includes('Review output:'), 'Report should complete and write review output in dry-run mode.');
 
@@ -147,6 +151,8 @@ async function main() {
     console.log(`input_rows=${inputRows}`);
     console.log(`candidates_compared=${compared}`);
     console.log(`canonical_rows_prefetched=${prefetched}`);
+    console.log(`canonical_prefetch_tiles=${prefetchTiles}`);
+    console.log(`canonical_prefetch_queries=${prefetchQueries}`);
     console.log(`coordinate_grid_cells_built=${gridCells}`);
     console.log('status=ok');
   } finally {

@@ -25,6 +25,13 @@ function buildMetadata(selectedPlace) {
         address: selectedPlace.address ?? null,
         city: selectedPlace.city ?? null,
         state: selectedPlace.state ?? null,
+        type: selectedPlace.type ?? null,
+        style: selectedPlace.style ?? null,
+        price_range: selectedPlace.price_range ?? selectedPlace.priceRange ?? selectedPlace.price ?? null,
+        status: selectedPlace.status ?? null,
+        rating: typeof selectedPlace.rating === 'number' && Number.isFinite(selectedPlace.rating) ? selectedPlace.rating : null,
+        lat: typeof selectedPlace.lat === 'number' && Number.isFinite(selectedPlace.lat) ? selectedPlace.lat : null,
+        lng: typeof selectedPlace.lng === 'number' && Number.isFinite(selectedPlace.lng) ? selectedPlace.lng : null,
       }
     : null
 
@@ -164,6 +171,18 @@ export function BugReportModal({ onClose, onSuccess, onError, selectedPlace }) {
       metadata.selectedPlace.google_place_id
         ? `Google place ID: ${metadata.selectedPlace.google_place_id}`
         : null,
+      metadata.selectedPlace.type ? `Type: ${metadata.selectedPlace.type}` : null,
+      metadata.selectedPlace.style ? `Style: ${metadata.selectedPlace.style}` : null,
+      metadata.selectedPlace.price_range ? `Price: ${metadata.selectedPlace.price_range}` : null,
+      typeof metadata.selectedPlace.rating === 'number' ? `Rating: ${metadata.selectedPlace.rating}` : null,
+      metadata.selectedPlace.status ? `Status: ${metadata.selectedPlace.status}` : null,
+      metadata.selectedPlace.address ? `Address: ${metadata.selectedPlace.address}` : null,
+      metadata.selectedPlace.city || metadata.selectedPlace.state
+        ? `Location: ${[metadata.selectedPlace.city, metadata.selectedPlace.state].filter(Boolean).join(', ')}`
+        : null,
+      typeof metadata.selectedPlace.lat === 'number' && typeof metadata.selectedPlace.lng === 'number'
+        ? `Coordinates: ${metadata.selectedPlace.lat.toFixed(6)}, ${metadata.selectedPlace.lng.toFixed(6)}`
+        : null,
     ].filter(Boolean)
     if (entries.length === 0) return null
     return entries.join(' · ')
@@ -247,7 +266,14 @@ export function BugReportModal({ onClose, onSuccess, onError, selectedPlace }) {
               {selectedPlaceSummary ? (
                 <div>
                   <dt>Selected place</dt>
-                  <dd>{selectedPlaceSummary}</dd>
+                  <dd>
+                    <span>{selectedPlaceSummary}</span>
+                    {metadata.mapsUrl ? (
+                      <a className="bug-report-meta-link" href={metadata.mapsUrl} target="_blank" rel="noreferrer">
+                        Open selected place in Google Maps
+                      </a>
+                    ) : null}
+                  </dd>
                 </div>
               ) : null}
             </dl>

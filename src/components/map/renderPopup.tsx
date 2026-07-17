@@ -43,6 +43,24 @@ function displayPrice(place: Place) {
   return place.price_range || place.priceRange || place.price || null
 }
 
+function displayStatus(place: Place) {
+  const raw = String(place.status || '').trim()
+  if (!raw) return null
+  const normalized = raw.toLowerCase()
+  if (normalized.startsWith('visited')) return 'Anthony reviewed'
+  if (normalized.startsWith('golden')) return 'Golden'
+  return raw
+}
+
+function displayLocation(place: Place) {
+  const cityState = [place.city, place.state].filter(Boolean).join(', ')
+  if (!place.address) return cityState || null
+  if (place.city && !place.address.toLowerCase().includes(place.city.toLowerCase())) {
+    return `${place.address}, ${place.city}`
+  }
+  return place.address
+}
+
 function getRoot(node: HTMLElement) {
   let root = roots.get(node)
   if (!root) {
@@ -55,6 +73,7 @@ function getRoot(node: HTMLElement) {
 export function renderPreview(node: HTMLElement, place: Place) {
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
   const price = displayPrice(place)
+  const status = displayStatus(place)
   const classNames = ['popup-card']
   if (isGolden) {
     classNames.push('popup-card--favorited', 'golden-glow')
@@ -71,7 +90,7 @@ export function renderPreview(node: HTMLElement, place: Place) {
       <div className="meta">
         {price ? <span className="badge">{price}</span> : null}
         {place.style ? <span className="badge badge--style">{place.style}</span> : null}
-        {place.status && place.status !== 'visited' ? <span className="badge">{place.status}</span> : null}
+        {status ? <span className="badge badge--status">{status}</span> : null}
         {isGolden ? <span className="badge badge--golden">Golden</span> : null}
       </div>
     </div>
@@ -81,6 +100,8 @@ export function renderPreview(node: HTMLElement, place: Place) {
 export function renderExpanded(node: HTMLElement, place: Place, onClose: () => void) {
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
   const price = displayPrice(place)
+  const status = displayStatus(place)
+  const location = displayLocation(place)
   const photos = Array.isArray(place.photos) ? place.photos.filter(Boolean) : []
   const classNames = ['popup-card']
   if (isGolden) {
@@ -112,20 +133,19 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       </button>
       <div className="popup-card__body">
         <div className="title">{place.name}</div>
-        {(place.style || price) ? (
-          <div className="style-label">
-            {[place.style, price].filter(Boolean).join(' · ')}
+        {(place.style || price || status) ? (
+          <div className="popup-card__chips">
+            {place.style ? <span className="badge badge--style">{place.style}</span> : null}
+            {price ? <span className="badge">{price}</span> : null}
+            {status ? <span className="badge badge--status">{status}</span> : null}
           </div>
         ) : null}
         {typeof place.rating === 'number' ? (
           <div className="rating">★ {place.rating.toFixed(1)}</div>
         ) : null}
-        {place.address ? (
+        {location ? (
           <div className="addr">
-            {place.address}
-            {place.city && !place.address.toLowerCase().includes(place.city.toLowerCase())
-              ? `, ${place.city}`
-              : null}
+            {location}
           </div>
         ) : null}
         {photos.length ? (
@@ -154,7 +174,7 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
           onMouseDown={stopPopupEvent}
           onPointerDown={stopPopupEvent}
         >
-          View details
+          Open in Google Maps
         </a>
       </div>
     </div>

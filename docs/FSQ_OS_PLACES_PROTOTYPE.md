@@ -26,11 +26,25 @@ Foursquare also lists Hugging Face as an additional delivery option, but the
 dataset is gated there too. Either way, APizzaMichigan needs an exported slice
 before the local source adapter can run.
 
-For small samples, Hugging Face's Dataset Viewer API can export JSON rows after
-the user has been granted gated dataset access and provides `FSQ_PLACES_TOKEN`,
-`HF_TOKEN`, or `HUGGINGFACE_HUB_TOKEN`. The viewer API limits each `/rows` or
-`/search` request to small slices, so this is a prototype/sample path rather
-than a full-ingest path.
+For small samples, the iMac can export authenticated Hugging Face Parquet shards
+after the user has been granted gated dataset access and provides `HF_TOKEN` or
+`HUGGINGFACE_HUB_TOKEN`. Prefer that path for APizza sampling because it is
+independent of the Hugging Face Dataset Viewer search index. The Dataset Viewer
+JSON exporter remains available as a fallback. A Foursquare Places Portal token
+is a separate Iceberg-catalog credential; use it with the Portal-provided
+DuckDB, Spark, or PyIceberg connection snippet to export a sample file first.
+
+The official access docs describe two separate unblock paths:
+
+- Places Portal / Iceberg: create a Places Portal account, browse the Places,
+  Categories, and Deltas datasets, generate a token, and use the
+  Portal-provided connection snippet for DuckDB, Spark, PyIceberg, or another
+  Iceberg-compatible engine.
+- Hugging Face: accept the gated dataset terms, provide `HF_TOKEN` or
+  `HUGGINGFACE_HUB_TOKEN`, and query/download the release files. As of the
+  official Hugging Face dataset page checked on 2026-07-17, the current release
+  paths are `release/dt=2026-07-09/places/parquet/*.parquet` and
+  `release/dt=2026-07-09/categories/parquet/*.parquet`.
 
 ## Why Sample-Driven
 
@@ -112,24 +126,49 @@ That command:
 
 1. Runs the read-only adapter report if `--input` or `FSQ_OS_PLACES_SAMPLE`
    points to an exported sample.
-2. Exports a bounded Hugging Face sample and runs the report if an FSQ/HF token
-   is present.
-3. Writes `reports/fsq-os-places-handoff.sh` if neither a sample nor token is
-   available.
+2. Exports a bounded Hugging Face sample and runs the report if a Hugging Face
+   token is present. When the ignored Python/pyarrow environment exists,
+   preflight prefers the authenticated Parquet exporter.
+3. Reports `portal_setup_needed` if `FSQ_PLACES_TOKEN` is present but the
+   ignored Portal DuckDB setup SQL, Python DuckDB venv, or queryable `places`
+   table alias is missing.
+4. Exports a bounded Places Portal sample and runs the report when the state is
+   `portal_export_ready`.
+5. Writes `reports/fsq-os-places-handoff.sh` when no sample/export path is ready.
 
-The FSQ helper scripts read `FSQ_PLACES_TOKEN`, `HF_TOKEN`, or
-`HUGGINGFACE_HUB_TOKEN` from the shell, `.env`, or `.env.local`. A token is only
-needed to export a sample. If an FSQ sample file already exists locally,
-preflight and `--run` can use that file without a token.
+The FSQ helper scripts read `HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN` for the
+Hugging Face exporter, and report `FSQ_PLACES_TOKEN` as Places Portal/Iceberg
+readiness. A token is only needed to export a sample. If an FSQ sample file
+already exists locally, preflight and `--run` can use that file without a token.
 
-DuckDB is optional for this Hugging Face sample path. It will matter later for a
-larger Iceberg/full-slice workflow, but the first APizza FSQ comparison only
-needs a bounded exported sample file.
+DuckDB is optional for the Hugging Face sample path. The preferred Hugging Face
+Parquet exporter needs `pyarrow`, which is installed in the same ignored
+`scripts/.fsq-venv` environment used by the Portal helper. DuckDB is required
+for a local Places Portal/Iceberg export unless the sample is exported through
+another Portal-supported engine. The first APizza FSQ comparison only needs a
+bounded exported sample file.
 
-If Hugging Face access has been granted, export a small text-search sample:
+If Hugging Face access has been granted, export a small US pizza sample from
+authenticated Parquet shards:
 
 ```bash
-FSQ_PLACES_TOKEN=... \
+scripts/.fsq-venv/bin/python \
+  scripts/ops/export-fsq-hf-parquet-sample.py \
+  --query pizza \
+  --country US \
+  --limit 100 \
+  --max-files 1 \
+  --output data/source-samples/fsq-os-places-us-pizza-sample.json \
+  --entity pizza \
+  --review-output reports/source-review/fsq-os-places-us-review.json \
+  --run-report
+```
+
+If the Parquet path is not available, export a small Dataset Viewer text-search
+sample:
+
+```bash
+HF_TOKEN=... \
 node scripts/ops/export-fsq-hf-sample.mjs \
   --query pizza \
   --length 100 \
@@ -140,7 +179,7 @@ node scripts/ops/export-fsq-hf-sample.mjs \
 To export the sample and immediately run the read-only source report:
 
 ```bash
-FSQ_PLACES_TOKEN=... \
+HF_TOKEN=... \
 node scripts/ops/export-fsq-hf-sample.mjs \
   --query pizza \
   --length 100 \
@@ -152,8 +191,49 @@ node scripts/ops/export-fsq-hf-sample.mjs \
 ```
 
 `--pages` is capped at 20 and each page is capped at 100 rows so this remains a
-sample workflow. Use this to answer the overlap/gap question before considering
-any broader FSQ ingestion.
+sample workflow. The Parquet exporter is capped separately by `--limit` and
+`--max-files`. Use either exporter to answer the overlap/gap question before
+considering any broader FSQ ingestion.
+
+## First APizza FSQ Result
+
+On 2026-07-17, the iMac used authenticated Hugging Face Parquet metadata and
+the first `places` shard to export a bounded US pizza-name sample:
+
+```bash
+scripts/.fsq-venv/bin/python \
+  scripts/ops/export-fsq-hf-parquet-sample.py \
+  --query pizza \
+  --country US \
+  --limit 100 \
+  --max-files 1 \
+  --output data/source-samples/fsq-os-places-us-pizza-sample.json \
+  --entity pizza \
+  --review-output reports/source-review/fsq-os-places-us-review.json \
+  --run-report
+```
+
+The resulting source-input report found:
+
+| Bucket | Count |
+| --- | ---: |
+| Input rows inspected | 100 |
+| Usable active pizza candidates | 100 |
+| Matched existing places | 30 |
+| Ambiguous review candidates | 7 |
+| Likely new/unmatched candidates | 63 |
+| Accepted for `place_sources` import | 30 |
+
+Those 30 exact/strong matches were then applied to the local iMac
+`place_sources` table with `--apply`. No `pizza_places` rows, Supabase rows, or
+canonical field values were written. The 7 ambiguous and 63 likely-new rows
+remain review artifacts until they are deliberately imported to the local review
+queue.
+
+The Hugging Face route is gated separately from the Places Portal route. If the
+Places Portal token is present but `validate_portal_tables` remains blocked,
+the alternate unblock path is to accept the Hugging Face dataset terms and add
+`HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN` to the ignored runtime environment.
 
 Run this against a small exported FSQ sample:
 
@@ -202,15 +282,19 @@ node scripts/ops/fsq-sample-preflight.mjs \
   --run
 ```
 
-Without `--input`, preflight prints the exact Hugging Face export command. Use
-`--export-length` and `--export-pages` to size that sample. Use `--dataset`,
-`--config`, `--split`, `--query`, and `--output` if the Hugging Face Dataset
-Viewer exposes different settings than the defaults:
+Without `--input`, preflight prints the exact Hugging Face export command when
+a Hugging Face token is available. If only `FSQ_PLACES_TOKEN` is present,
+preflight reports `portal_setup_needed` until `scripts/.fsq-portal-init.sql`
+and `scripts/.fsq-venv/bin/python` both exist. Once those are present, it
+reports `portal_export_ready` and can run the Places Portal export command
+directly. Use `--export-length` and `--export-pages` to size the sample. Use
+`--dataset`, `--config`, `--split`, `--query`, and `--output` if the Hugging
+Face Dataset Viewer exposes different settings than the defaults:
 
 ```bash
 node scripts/ops/fsq-sample-preflight.mjs \
   --dataset foursquare/fsq-os-places \
-  --config default \
+  --config places \
   --split train \
   --query pizza \
   --output data/source-samples/fsq-os-places-pizza-sample.json \
@@ -219,9 +303,10 @@ node scripts/ops/fsq-sample-preflight.mjs \
 ```
 
 To persist the next operator handoff on the iMac without embedding a secret,
-add `--write-handoff`. The generated shell file expects one of
-`FSQ_PLACES_TOKEN`, `HF_TOKEN`, or `HUGGINGFACE_HUB_TOKEN` to be present when it
-is run:
+add `--write-handoff`. The generated shell file expects `HF_TOKEN` or
+`HUGGINGFACE_HUB_TOKEN` to be present for the Hugging Face path. If only
+`FSQ_PLACES_TOKEN` is available, use the Places Portal connection snippet to
+export the sample file first:
 
 ```bash
 node scripts/ops/fsq-sample-preflight.mjs \
@@ -235,6 +320,78 @@ node scripts/ops/fsq-sample-preflight.mjs \
 
 bash reports/fsq-os-places-handoff.sh
 ```
+
+## Places Portal DuckDB Export Helper
+
+When `FSQ_PLACES_TOKEN` is available, the next step is to save the
+Portal-provided DuckDB setup SQL into the ignored file
+`scripts/.fsq-portal-init.sql`. The setup SQL may include catalog URLs, account
+details, or a `${FSQ_PLACES_TOKEN}` / `{{FSQ_PLACES_TOKEN}}` placeholder. Keep
+the token in `.env`; do not commit either file.
+
+Use `scripts/ops/fsq-portal-init.example.sql` as the checked-in setup checklist.
+It documents the expected `places` and `categories` table aliases and the token
+placeholder forms that the exporter can substitute at runtime. Copy the real
+Portal SQL into `scripts/.fsq-portal-init.sql`; do not edit the example with
+account-specific details.
+
+Do not copy the checked-in example file itself to
+`scripts/.fsq-portal-init.sql`. Preflight and the Python exporter both inspect
+the ignored target file and keep reporting `portal_setup_needed` when the file
+is empty, still looks like the example, or does not contain executable DuckDB
+SQL. `portal_export_ready` means the token, Python DuckDB environment, setup
+SQL, and queryable `places` table alias are all present. The preflight validates
+that table visibility with the Python exporter before declaring the portal path
+ready.
+
+A generic H3 Hub Iceberg attachment is not enough by itself. On 2026-07-17, a
+token-backed generic endpoint check attached successfully but exposed no
+`places` or `categories` tables, so it remained `portal_setup_needed`. Use the
+actual Places Portal-provided DuckDB/Iceberg snippet, or create explicit
+`places` and `categories` views in `scripts/.fsq-portal-init.sql` from the
+Portal tables it exposes.
+
+Additional 2026-07-17 probes confirmed that this is a table-discovery/setup
+issue, not just a DuckDB display issue:
+
+- PyIceberg against the same generic H3 endpoint did not list usable FSQ Places
+  namespaces/tables.
+- Older public S3 Parquet release paths tested from the iMac were no longer
+  readable as a fallback sample source.
+- The checked-in preflight now has a separate `validate_portal_tables` checklist
+  step. It stays blocked until `SELECT * FROM places LIMIT 0` works after
+  running `scripts/.fsq-portal-init.sql`.
+
+The preflight command exposes these same steps as `portal_setup_steps` in JSON
+and prints them in text mode, so the admin panel and generated handoff can show
+the current missing prerequisite instead of relying on memory.
+
+Create the ignored Python tooling environment on the iMac. This is the same
+command emitted by `portal_setup_command`:
+
+```bash
+python3 -m venv scripts/.fsq-venv
+scripts/.fsq-venv/bin/python -m pip install duckdb pyiceberg pyarrow
+```
+
+Then export a bounded pizza sample and immediately run the read-only adapter
+report:
+
+```bash
+scripts/.fsq-venv/bin/python \
+  scripts/ops/export-fsq-portal-duckdb-sample.py \
+  --init-sql-file scripts/.fsq-portal-init.sql \
+  --query pizza \
+  --limit 100 \
+  --output data/source-samples/fsq-os-places-pizza-sample.json \
+  --entity pizza \
+  --review-output reports/source-review/fsq-os-places-review.json \
+  --run-report
+```
+
+The helper does not import FSQ rows into canonical tables or Supabase. It only
+writes an ignored sample JSON file and optionally runs the existing read-only
+source adapter report.
 
 ## Match Meaning
 

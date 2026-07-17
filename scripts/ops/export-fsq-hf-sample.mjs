@@ -40,7 +40,7 @@ function parseArgs(argv) {
   const env = mergedEnv();
   const args = {
     dataset: DEFAULT_DATASET,
-    config: 'default',
+    config: 'places',
     split: 'train',
     query: 'pizza',
     offset: 0,
@@ -50,7 +50,7 @@ function parseArgs(argv) {
     entity: 'pizza',
     reviewOutput: 'reports/source-review/fsq-os-places-review.json',
     runReport: false,
-    token: env.FSQ_PLACES_TOKEN || env.HF_TOKEN || env.HUGGINGFACE_HUB_TOKEN || '',
+    token: env.HF_TOKEN || env.HUGGINGFACE_HUB_TOKEN || '',
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -88,7 +88,7 @@ function parseArgs(argv) {
   }
   if (!['pizza', 'taco'].includes(args.entity)) throw new Error('Invalid --entity');
   if (!args.token) {
-    throw new Error('Missing FSQ_PLACES_TOKEN, HF_TOKEN, or HUGGINGFACE_HUB_TOKEN for gated FSQ OS Places access.');
+    throw new Error('Missing HF_TOKEN or HUGGINGFACE_HUB_TOKEN for gated Hugging Face FSQ OS Places access. FSQ_PLACES_TOKEN is for the Places Portal/Iceberg path.');
   }
 
   return args;
@@ -114,7 +114,7 @@ Options:
   --review-output <file>
                       Review JSON path for --run-report
   --run-report        After export, run source-input-sample-report
-  --token <token>     HF token; default FSQ_PLACES_TOKEN/HF_TOKEN/HUGGINGFACE_HUB_TOKEN
+  --token <token>     Hugging Face token; default HF_TOKEN/HUGGINGFACE_HUB_TOKEN
 
 After export, run:
   node scripts/ops/source-input-sample-report.mjs \\

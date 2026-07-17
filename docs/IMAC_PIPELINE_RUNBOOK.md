@@ -6,9 +6,9 @@ This is the APizzaMichigan home-runner playbook for the Michigan iMac.
 
 - Remote access: Tailscale SSH from the MacBook via `ssh example-host`.
 - Process manager: macOS `launchd`.
-- Production services: classifier plus guarded Supabase sync.
-- Manual-only until approved: OSM extraction, website scraping, menu parse, and
-  new source imports.
+- Production services: source pipeline, classifier, plus guarded Supabase sync.
+- Menu parsing remains manual/paused; source imports and bounded website
+  scraping run through the source pipeline.
 - Working DB: local Postgres database `pizza_enrichment`.
 - Queue: SQLite `scripts/.job-queue.db`.
 - Local model: Ollama `llama3.2:latest`.
@@ -16,8 +16,8 @@ This is the APizzaMichigan home-runner playbook for the Michigan iMac.
 OpenClaw may remain installed for unrelated local-agent work, but APizzaMichigan
 pipeline operation should not depend on OpenClaw, Discord, or GitHub Issues.
 
-APizzaMichigan OpenClaw cron jobs should remain disabled. The launchd classifier
-is the only approved always-on enrichment process in this phase. Guarded
+APizzaMichigan OpenClaw cron jobs should remain disabled. The launchd source
+pipeline and classifier are the approved enrichment processes. Guarded
 Supabase sync runs as a bounded launchd interval job and should not overlap.
 
 ## Baseline Checks
@@ -82,6 +82,84 @@ Stop service:
 ssh example-host 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
 ```
 
+## Source Pipeline Service
+
+## Website Scraper Service
+
+Website scraping runs as its own persistent launchd worker so it stays ahead
+of classification instead of waiting for the hourly source pipeline. It hands
+successful website evidence to the classifier and menu-parse queue.
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.scraper.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.scraper.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.scraper.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.scraper.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.scraper"
+launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.scraper"
+```
+
+Verify its queue activity with `home-status-report.mjs`; a healthy scraper
+should show recent scrape completions and no stale `launchd-scraper` worker.
+
+### Laptop Ollama tunnel
+
+The classifiers use the iMac loopback endpoint `http://127.0.0.1:11435`.
+That port is supplied by the laptop's persistent reverse SSH tunnel to its
+local Ollama service. The checked-in launchd template must be installed on the
+laptop, not the iMac, because the laptop owns the Ollama process and the
+reverse SSH connection:
+`infra/local/launchd/com.apizzamichigan.laptop-ollama-tunnel.plist.template`.
+Install it on the laptop with:
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.laptop-ollama-tunnel.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.laptop-ollama-tunnel.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.laptop-ollama-tunnel.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.laptop-ollama-tunnel.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.laptop-ollama-tunnel"
+launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.laptop-ollama-tunnel"
+```
+
+The classifier health report checks the same tunnel endpoint and reports the
+launchd owner when run on the laptop. On the iMac, the endpoint check is the
+authoritative connectivity check and a missing local tunnel service is shown
+as a warning, because the reverse tunnel is intentionally owned by the laptop.
+The report must show `baseUrl=http://127.0.0.1:11435`.
+
+The source pipeline is the US-first production entry point for OSM, FSQ OS
+Places, All the Places, Overture, Wikidata, and official-website enrichment.
+It uses the existing provenance/review tables and keeps machine-local cursors
+and downloaded inputs out of Git. Manual invocations are dry-run by default:
+
+Each regional OSM export has a resumable manifest. The exporter refuses to
+reuse a manifest when the requested bounding box or tile step differs from the
+manifest metadata. This prevents an accidental retry for one region from
+mixing tiles into another region's checkpoint. When a manifest is suspect,
+preserve it for audit and start a clean export with a new output and manifest
+path; do not overwrite the existing artifact.
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/run-source-pipeline.mjs --dry-run --max-work-units 2 --json'
+```
+
+The launchd template is the explicit apply path. It caps heavy work at two
+units per hour, strict new-place creation at five per run and 25 per day, and
+website scraping at 25 bounded jobs per run.
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && mkdir -p /tmp/apizzamichigan && cp infra/local/launchd/com.apizzamichigan.source-pipeline.plist.template ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist && plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist && launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist && launchctl enable "gui/$(id -u)/com.apizzamichigan.source-pipeline" && launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.source-pipeline"'
+```
+
+Check it with:
+
+```bash
+ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.source-pipeline"'
+ssh example-host 'tail -100 /tmp/apizzamichigan/source-pipeline.log'
+```
+
 ## Retire Legacy OpenClaw Cron Jobs
 
 OpenClaw can stay running for unrelated local-agent work, but old APizza cron
@@ -112,6 +190,51 @@ ssh example-host 'ps -axo pid,ppid,command | egrep "watchdog-keepalive|keepalive
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
 ```
 
+For a single machine-readable alert gate covering classifier health, queue
+balance, stale jobs, and scrape-failure categories:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/pipeline-alert-report.mjs --json'
+```
+
+The command is read-only. It exits nonzero only for actionable failures;
+warnings such as a scraper backlog imbalance remain exit-zero so routine
+throughput variation does not page anyone. Configure
+`PIPELINE_UNKNOWN_SCRAPE_FAILURE_LIMIT` and `PIPELINE_SCRAPE_AHEAD_MINIMUM`
+in the machine-local environment when deploying the check. The alert gate also
+reads `scripts/.source-pipeline-state.json`: a source run older than
+`PIPELINE_SOURCE_STALE_MINUTES` (default 180) is actionable, while individual
+source failures are reported as warnings so the scheduler can continue other
+sources.
+
+Before installing or updating launchd services, run the checked-in configuration
+contract check. It validates templates and entrypoints without reading local
+credentials or contacting runtime services:
+
+```bash
+node scripts/ops/verify-runtime-configuration.mjs
+```
+
+The reverse Ollama tunnel is owned by the laptop launchd job, not by the iMac.
+The iMac health report therefore treats a live listener on `127.0.0.1:11435`
+and a successful Ollama `/api/tags` response as the authoritative tunnel check.
+The iMac cannot inspect the laptop's launchd domain over the reverse tunnel, so
+that remote service's absence from `launchctl print` is not itself a warning.
+
+### Classifier queue reconciler
+
+The classifiers recover detached jobs during their normal loop. A separate
+launchd reconciler covers the case where a classifier is blocked inside an
+Ollama request and cannot run its own cleanup. It checks the actual process
+table and requeues only classify jobs older than 30 minutes whose owning
+classifier process is gone:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && cp infra/local/launchd/com.apizzamichigan.classifier-reconciler.plist.template ~/Library/LaunchAgents/com.apizzamichigan.classifier-reconciler.plist && plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.classifier-reconciler.plist && launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.classifier-reconciler.plist && launchctl enable "gui/$(id -u)/com.apizzamichigan.classifier-reconciler" && launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.classifier-reconciler"'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/reconcile-classifier-queue.mjs'
+ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier-reconciler"'
+```
+
 ## Guarded Sync Policy
 
 Supabase sync is automated through `com.apizzamichigan.supabase-sync`, but only
@@ -119,7 +242,10 @@ through the guarded wrapper. The wrapper runs health, QA, readiness, dry-run,
 bounded write, and post-check gates before applying at most one configured batch.
 
 The sync target is intentionally narrow: only canonical `pizza_places` rows are
-eligible. `place_sources` and `source_review_queue` are local-only provenance
+eligible. The scheduled job may insert a missing canonical row only when
+`place_sources` or `source_review_queue` proves `reviewed_new_import` or
+`imported_new`; unproven missing rows are skipped to avoid accidental duplicates.
+`place_sources` and `source_review_queue` are local-only provenance
 and review tables. The sync policy in `scripts/lib/supabase-sync-policy.mjs`
 defines that boundary, and both readiness/status reports print it before any
 operator uses the results.
@@ -142,6 +268,13 @@ and Supabase sync policy modules:
 
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/verify-source-contract-docs.mjs'
+```
+
+Summarize the whole source-pipeline backlog before choosing the next source
+task:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/source-pipeline-readiness-report.mjs'
 ```
 
 Verify source matching still uses the canonical-row prefetch and in-memory grid
@@ -172,6 +305,7 @@ or reviewed-new import code:
 
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/verify-source-review-workflow.mjs'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/verify-reviewed-new-backlog-report.mjs'
 ```
 
 Run QA before any sync:

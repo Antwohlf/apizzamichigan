@@ -19,6 +19,19 @@ const ENTITY_TABLES = {
 };
 
 export const SOURCE_CONFIGS = {
+  osm: {
+    label: 'OpenStreetMap / Overpass',
+    license: 'ODbL-1.0',
+    attribution: 'Data copyright OpenStreetMap contributors',
+    sourceId: ['id', 'osm_id'],
+    lat: ['lat', 'latitude'],
+    lng: ['lng', 'lon', 'longitude'],
+    category: ['amenity', 'cuisine', 'shop', 'category'],
+    website: ['website', 'contact:website'],
+    phone: ['phone', 'contact:phone'],
+    closed: ['operating_status'],
+    sourceUrl: ['source_url'],
+  },
   fsq_os_places: {
     label: 'Foursquare OS Places',
     license: 'Apache-2.0',
@@ -130,6 +143,8 @@ function parseArgs(argv) {
     apply: false,
     reviewOutput: null,
     gridCellDegrees: 0.02,
+    prefetchTileDegrees: 1,
+    prefetchBatchSize: 100,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -145,6 +160,8 @@ function parseArgs(argv) {
     else if (arg === '--apply') out.apply = true;
     else if (arg === '--review-output') out.reviewOutput = argv[++i];
     else if (arg === '--grid-cell-degrees') out.gridCellDegrees = parseFloat(argv[++i]);
+    else if (arg === '--prefetch-tile-degrees') out.prefetchTileDegrees = parseFloat(argv[++i]);
+    else if (arg === '--prefetch-batch-size') out.prefetchBatchSize = parseInt(argv[++i], 10);
     else if (arg === '--list-sources') {
       for (const [key, config] of Object.entries(SOURCE_CONFIGS)) {
         console.log(`${key}\t${config.label}`);
@@ -165,6 +182,8 @@ function parseArgs(argv) {
   if (!Number.isFinite(out.limit) || out.limit <= 0) throw new Error('Invalid --limit');
   if (!Number.isFinite(out.sample) || out.sample < 0) throw new Error('Invalid --sample');
   if (!Number.isFinite(out.gridCellDegrees) || out.gridCellDegrees <= 0) throw new Error('Invalid --grid-cell-degrees');
+  if (!Number.isFinite(out.prefetchTileDegrees) || out.prefetchTileDegrees <= 0) throw new Error('Invalid --prefetch-tile-degrees');
+  if (!Number.isFinite(out.prefetchBatchSize) || out.prefetchBatchSize <= 0) throw new Error('Invalid --prefetch-batch-size');
   return out;
 }
 
@@ -183,6 +202,10 @@ Options:
   --apply                   Upsert accepted matched records into place_sources
   --review-output <file>    Write ambiguous/new review candidates to JSON
   --grid-cell-degrees <n>   Coordinate grid size for matching (default 0.02)
+  --prefetch-tile-degrees <n>
+                            Tile size for batched canonical prefetch (default 1)
+  --prefetch-batch-size <n> Number of tiles per canonical prefetch query
+                            (default 100)
   --list-sources            Print supported source adapters
 
 Default mode is dry-run. With --apply, this writes source evidence only to
@@ -467,35 +490,97 @@ function acceptedForImport(match, { includeWeak }) {
   return includeWeak && match.match_method === 'weak_spatial_name';
 }
 
-async function loadCanonicalPlaces(client, tableName, candidates, maxDistanceM) {
-  if (!candidates.length) return [];
-  const lats = candidates.map(candidate => candidate.lat);
-  const lngs = candidates.map(candidate => candidate.lng);
-  const latPad = maxDistanceM / 111320;
-  const minLat = Math.min(...lats) - latPad;
-  const maxLat = Math.max(...lats) + latPad;
-  const minLngRaw = Math.min(...lngs);
-  const maxLngRaw = Math.max(...lngs);
-  const lngPad = maxDistanceM / (111320 * Math.max(Math.cos(((minLat + maxLat) / 2) * Math.PI / 180), 0.01));
-  const minLng = minLngRaw - lngPad;
-  const maxLng = maxLngRaw + lngPad;
-  const result = await client.query(`
-    SELECT
-      id,
-      name,
-      address,
-      state,
-      google_place_id,
-      lat::double precision AS lat,
-      lng::double precision AS lng
-    FROM ${tableName}
-    WHERE lat IS NOT NULL
-      AND lng IS NOT NULL
-      AND lat::double precision BETWEEN $1 AND $2
-      AND lng::double precision BETWEEN $3 AND $4
-  `, [minLat, maxLat, minLng, maxLng]);
+function buildPrefetchTiles(candidates, { maxDistanceM, tileDegrees }) {
+  const tiles = new Map();
+  for (const candidate of candidates) {
+    const latCell = Math.floor(candidate.lat / tileDegrees);
+    const lngCell = Math.floor(candidate.lng / tileDegrees);
+    const key = `${latCell}:${lngCell}`;
+    const existing = tiles.get(key);
+    if (existing) {
+      existing.minLat = Math.min(existing.minLat, candidate.lat);
+      existing.maxLat = Math.max(existing.maxLat, candidate.lat);
+      existing.minLng = Math.min(existing.minLng, candidate.lng);
+      existing.maxLng = Math.max(existing.maxLng, candidate.lng);
+    } else {
+      tiles.set(key, {
+        minLat: candidate.lat,
+        maxLat: candidate.lat,
+        minLng: candidate.lng,
+        maxLng: candidate.lng,
+      });
+    }
+  }
 
-  return result.rows;
+  const latPad = maxDistanceM / 111320;
+  return [...tiles.values()].map(tile => {
+    const centerLat = (tile.minLat + tile.maxLat) / 2;
+    const lngPad = maxDistanceM / (111320 * Math.max(Math.cos(centerLat * Math.PI / 180), 0.01));
+    return {
+      minLat: tile.minLat - latPad,
+      maxLat: tile.maxLat + latPad,
+      minLng: tile.minLng - lngPad,
+      maxLng: tile.maxLng + lngPad,
+    };
+  });
+}
+
+function chunks(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+async function loadCanonicalPlaces(client, tableName, candidates, { maxDistanceM, tileDegrees, batchSize }) {
+  if (!candidates.length) {
+    return { rows: [], tileCount: 0, queryCount: 0 };
+  }
+
+  const tiles = buildPrefetchTiles(candidates, { maxDistanceM, tileDegrees });
+  const byId = new Map();
+  let queryCount = 0;
+
+  for (const batch of chunks(tiles, batchSize)) {
+    const values = [];
+    const placeholders = batch.map((tile, idx) => {
+      const base = idx * 4;
+      values.push(tile.minLat, tile.maxLat, tile.minLng, tile.maxLng);
+      return `($${base + 1}::double precision, $${base + 2}::double precision, $${base + 3}::double precision, $${base + 4}::double precision)`;
+    });
+
+    const result = await client.query(`
+      WITH prefetch_boxes(min_lat, max_lat, min_lng, max_lng) AS (
+        VALUES ${placeholders.join(', ')}
+      )
+      SELECT DISTINCT
+        c.id,
+        c.name,
+        c.address,
+        c.state,
+        c.google_place_id,
+        c.lat::double precision AS lat,
+        c.lng::double precision AS lng
+      FROM ${tableName} c
+      JOIN prefetch_boxes b
+        ON c.lat::double precision BETWEEN b.min_lat AND b.max_lat
+       AND c.lng::double precision BETWEEN b.min_lng AND b.max_lng
+      WHERE c.lat IS NOT NULL
+        AND c.lng IS NOT NULL
+    `, values);
+
+    queryCount += 1;
+    for (const row of result.rows) {
+      byId.set(row.id, row);
+    }
+  }
+
+  return {
+    rows: [...byId.values()],
+    tileCount: tiles.length,
+    queryCount,
+  };
 }
 
 function cellKey(lat, lng, cellDegrees) {
@@ -754,12 +839,21 @@ async function main() {
   let importable = [];
   let canonicalRowsPrefetched = 0;
   let gridCellsBuilt = 0;
+  let prefetchTileCount = 0;
+  let prefetchQueryCount = 0;
 
   try {
-    const canonicalPlaces = await loadCanonicalPlaces(client, tableName, candidates, args.maxDistanceM);
+    const canonicalPrefetch = await loadCanonicalPlaces(client, tableName, candidates, {
+      maxDistanceM: args.maxDistanceM,
+      tileDegrees: args.prefetchTileDegrees,
+      batchSize: args.prefetchBatchSize,
+    });
+    const canonicalPlaces = canonicalPrefetch.rows;
     const placeGrid = buildPlaceGrid(canonicalPlaces, args.gridCellDegrees);
     canonicalRowsPrefetched = canonicalPlaces.length;
     gridCellsBuilt = placeGrid.size;
+    prefetchTileCount = canonicalPrefetch.tileCount;
+    prefetchQueryCount = canonicalPrefetch.queryCount;
 
     for (const candidate of candidates) {
       const nearby = nearbyPlacesFromGrid(placeGrid, candidate, {
@@ -817,6 +911,8 @@ async function main() {
     usableActiveRows: active.length,
     candidatesCompared: candidates.length,
     canonicalRowsPrefetched,
+    canonicalPrefetchTiles: prefetchTileCount,
+    canonicalPrefetchQueries: prefetchQueryCount,
     gridCellsBuilt,
     matchedExistingPlaces: matched.length,
     ambiguousReviewCandidates: ambiguous.length,
@@ -845,6 +941,8 @@ async function main() {
     { metric: 'rows with usable name/coordinates and active status', count: counts.usableActiveRows },
     { metric: args.includeNonPizza ? 'active candidates compared' : 'pizza-ish active candidates', count: counts.candidatesCompared },
     { metric: 'canonical rows prefetched', count: counts.canonicalRowsPrefetched },
+    { metric: 'canonical prefetch tiles', count: counts.canonicalPrefetchTiles },
+    { metric: 'canonical prefetch queries', count: counts.canonicalPrefetchQueries },
     { metric: 'coordinate grid cells built', count: counts.gridCellsBuilt },
     { metric: 'matched existing places', count: counts.matchedExistingPlaces },
     { metric: 'ambiguous/review candidates', count: counts.ambiguousReviewCandidates },

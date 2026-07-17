@@ -9,6 +9,7 @@
 
 import { getQueue } from '../queue.mjs'
 import pg from 'pg'
+import { extractMenuData } from '../../lib/menu-data-extractor.mjs'
 
 const queue = getQueue()
 
@@ -63,7 +64,10 @@ async function main() {
         website_url: place?.website_url ?? null,
         // scrape_notes may already be JSON string
         scrape_notes: place?.scrape_notes ?? null
-      }
+      },
+      // A worker may complete this deterministically without spending an
+      // Ollama request. Null means the evidence needs a later parser.
+      deterministic_menu_data: extractMenuData(place?.scrape_notes, { websiteUrl: place?.website_url })
     }
 
     console.log(JSON.stringify(payload))

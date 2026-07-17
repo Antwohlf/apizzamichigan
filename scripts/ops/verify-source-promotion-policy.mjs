@@ -17,9 +17,19 @@ import {
 } from '../lib/source-promotion-policy.mjs';
 
 const SCRIPT = 'scripts/ops/promote-source-contact-fields.mjs';
+const TOOL = readFileSync(SCRIPT, 'utf8');
+const SOURCE_POLICY = JSON.parse(readFileSync('config/source-policy.json', 'utf8'));
 const SERVER = readFileSync('server/index.js', 'utf8');
 const ADMIN_PANEL = readFileSync('src/admin/AdminSourceProvenancePanel.js', 'utf8');
 const ALLOWED_FIELDS = ['website_url', 'phone'];
+const EXPECTED_DEFAULT_SOURCES = [
+  'official_website',
+  'osm',
+  'fsq_os_places',
+  'all_the_places',
+  'overture_places',
+  'wikidata',
+];
 const IDENTITY_FIELDS = ['address', 'name', 'lat', 'lng', 'state', 'google_place_id', 'brand', 'operator'];
 const EVIDENCE_ONLY_FIELDS = ['menu_url', 'email', 'instagram_url', 'facebook_url', 'hours', 'delivery', 'takeaway'];
 const NON_SOURCE_FIELDS = ['style', 'price', 'price_range', 'style_confidence', 'rating', 'notes', 'status', 'photos'];
@@ -64,12 +74,21 @@ function main() {
     `Default fields drifted: ${SOURCE_PROMOTION_DEFAULTS.fields.join(',')}`,
   );
   assert(
+    JSON.stringify(SOURCE_PROMOTION_DEFAULTS.sources) === JSON.stringify(EXPECTED_DEFAULT_SOURCES),
+    `Default promotion sources drifted: ${SOURCE_PROMOTION_DEFAULTS.sources.join(',')}`,
+  );
+  assert(
     SOURCE_PROMOTION_DEFAULTS.minConfidence >= 0.9,
     `Default source promotion confidence is too low: ${SOURCE_PROMOTION_DEFAULTS.minConfidence}`,
   );
   assert(
     SOURCE_PROMOTION_DEFAULTS.maxUpdates > 0 && SOURCE_PROMOTION_DEFAULTS.maxUpdates <= 100,
     `Default source promotion apply batch is too broad: ${SOURCE_PROMOTION_DEFAULTS.maxUpdates}`,
+  );
+  const defaultPriorities = SOURCE_PROMOTION_DEFAULTS.sources.map(source => SOURCE_POLICY.sources?.[source]?.priority ?? -1);
+  assert(
+    defaultPriorities.every((priority, index) => index === 0 || priority <= defaultPriorities[index - 1]),
+    `Default promotion sources must be ordered by configured priority: ${SOURCE_PROMOTION_DEFAULTS.sources.join(',')}`,
   );
   for (const field of SOURCE_PROMOTION_DEFAULTS.matchMethods) {
     assert(field && typeof field === 'string', `Invalid match method in defaults: ${field}`);
@@ -111,10 +130,16 @@ function main() {
   for (const field of ALLOWED_FIELDS) {
     assert(help.stdout.includes(field), `Help should mention allowed field ${field}.`);
   }
+  assert(TOOL.includes('ps.match_method = ANY($3::text[])'), 'Promotion query must prefilter eligible match methods in SQL.');
+  assert(TOOL.includes('ps.match_confidence >= GREATEST($4'), 'Promotion query must prefilter minimum confidence in SQL.');
+  assert(TOOL.includes('ps.retrieved_at >= NOW()'), 'Promotion query must enforce source evidence freshness in SQL.');
+  assert(TOOL.includes("NULLIF(p.website_url, '') IS NULL"), 'Promotion query must prefilter blank website_url targets in SQL.');
+  assert(TOOL.includes("NULLIF(p.phone, '') IS NULL"), 'Promotion query must prefilter blank phone targets in SQL.');
+  assert(TOOL.includes('ps.data ?| ARRAY'), 'Promotion query must prefilter source JSON keys in SQL.');
 
   assert(SERVER.includes('SOURCE_CONTACT_PROMOTION_PREVIEW'), 'admin API should expose a promotion preview policy.');
   assert(SERVER.includes("fields: ['website_url', 'phone']"), 'admin promotion preview should include only website_url and phone.');
-  assert(SERVER.includes("sources: ['all_the_places', 'osm']"), 'admin promotion preview should use default source priority.');
+  assert(SERVER.includes("sources: ['official_website', 'osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata']"), 'admin promotion preview should use default source priority.');
   assert(SERVER.includes("matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import']"), 'admin promotion preview should use default eligible match methods.');
   assert(SERVER.includes('minConfidence: 0.9'), 'admin promotion preview should require high-confidence evidence.');
   assert(SERVER.includes('promotionCandidates'), 'admin source provenance payload should include promotion candidate preview.');

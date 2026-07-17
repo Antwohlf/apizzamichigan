@@ -41,6 +41,16 @@ const REQUIRED_REGIONAL_ENABLED = [
 const REQUIRED_DISABLED_GAPS = [
   'hungry_howies',
   'jet',
+  'blaze_pizza',
+  'lou_malnatis_pizzeria_us',
+  'godfathers_pizza',
+  'old_chicago_us',
+];
+
+const DISABLED_GAP_STATUSES = [
+  'missing_from_atp_stats',
+  'false_positive_non_pizza',
+  'empty_in_atp_stats',
 ];
 
 function assert(condition, message) {
@@ -74,7 +84,7 @@ function assertDisabledGap(map, spider) {
   assert(row, `Missing required disabled ATP gap row: ${spider}`);
   assert(row.group === 'gap', `${spider} must be in gap group.`);
   assert(row.import_enabled === false, `${spider} must remain disabled.`);
-  assert(['missing_from_atp_stats', 'false_positive_non_pizza'].includes(row.status), `${spider} must document why it is disabled.`);
+  assert(DISABLED_GAP_STATUSES.includes(row.status), `${spider} must document why it is disabled.`);
   assert(row.note || row.brand, `${spider} must explain the gap/false-positive reason.`);
 }
 

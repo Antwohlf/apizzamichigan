@@ -4,6 +4,9 @@ import './ReviewGallery.css'
 
 const SMALL_TRANSFORM = 'width=480&quality=70&format=webp'
 const LARGE_TRANSFORM = 'width=1600&quality=75&format=webp'
+const INLINE_THUMB_LIMIT = 4
+export const REVIEW_LIGHTBOX_OPEN_EVENT = 'apizza:review-lightbox-open'
+export const REVIEW_LIGHTBOX_CLOSE_EVENT = 'apizza:review-lightbox-close'
 
 const appendQuery = (url, query) => {
   if (!url) return ''
@@ -41,8 +44,15 @@ const stopMapEvent = event => {
   event.nativeEvent?.stopImmediatePropagation?.()
 }
 
+const dispatchLightboxEvent = eventName => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+  window.dispatchEvent(new CustomEvent(eventName))
+}
+
 export default function ReviewGallery({ photos = [], placeName }) {
   const eventShieldRef = useRef(null)
+  const openerRef = useRef(null)
+  const closeButtonRef = useRef(null)
   const normalizedPhotos = useMemo(() => {
     const entries = Array.isArray(photos) ? photos : []
     return entries
@@ -59,6 +69,11 @@ export default function ReviewGallery({ photos = [], placeName }) {
 
   const [isOpen, setIsOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  const [imageState, setImageState] = useState('idle')
+  const activePhoto = normalizedPhotos[activeIndex]
+  const hasMultiplePhotos = normalizedPhotos.length > 1
+  const visibleInlinePhotos = normalizedPhotos.slice(0, INLINE_THUMB_LIMIT)
+  const hiddenInlineCount = Math.max(0, normalizedPhotos.length - visibleInlinePhotos.length)
 
   const clearEventShield = useCallback(() => {
     const shield = eventShieldRef.current
@@ -74,7 +89,17 @@ export default function ReviewGallery({ photos = [], placeName }) {
     if (process.env.NODE_ENV === 'test') return
     if (typeof document === 'undefined') return
     clearEventShield()
-    const events = ['click', 'dblclick', 'pointerup', 'mouseup', 'touchend', 'wheel']
+    const events = [
+      'click',
+      'dblclick',
+      'pointerdown',
+      'pointerup',
+      'mousedown',
+      'mouseup',
+      'touchstart',
+      'touchend',
+      'wheel',
+    ]
     const handler = event => {
       event.preventDefault?.()
       event.stopPropagation()
@@ -83,7 +108,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
     events.forEach(eventName => {
       document.addEventListener(eventName, handler, true)
     })
-    const timeoutId = setTimeout(clearEventShield, 350)
+    const timeoutId = setTimeout(clearEventShield, 700)
     eventShieldRef.current = { events, handler, timeoutId }
   }, [clearEventShield])
 
@@ -118,8 +143,10 @@ export default function ReviewGallery({ photos = [], placeName }) {
   }, [isOpen])
 
   const openAt = useCallback(
-    index => {
+    (index, opener = null) => {
       if (!normalizedPhotos.length) return
+      openerRef.current = opener && typeof opener.focus === 'function' ? opener : document.activeElement
+      dispatchLightboxEvent(REVIEW_LIGHTBOX_OPEN_EVENT)
       setActiveIndex(index)
       setIsOpen(true)
     },
@@ -129,9 +156,39 @@ export default function ReviewGallery({ photos = [], placeName }) {
   const close = useCallback(() => {
     blockUnderlyingMapEvents()
     setIsOpen(false)
+    dispatchLightboxEvent(REVIEW_LIGHTBOX_CLOSE_EVENT)
   }, [blockUnderlyingMapEvents])
 
   useEffect(() => clearEventShield, [clearEventShield])
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const frame = requestAnimationFrame(() => {
+      closeButtonRef.current?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen || !activePhoto) {
+      setImageState('idle')
+      return
+    }
+    setImageState('loading')
+  }, [activePhoto, isOpen])
+
+  useEffect(() => {
+    if (isOpen) return undefined
+    const opener = openerRef.current
+    openerRef.current = null
+    if (!opener || typeof opener.focus !== 'function') return undefined
+    const frame = requestAnimationFrame(() => {
+      if (typeof document === 'undefined' || document.body?.contains(opener)) {
+        opener.focus()
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isOpen])
 
   const showPrev = useCallback(() => {
     setActiveIndex(prev => (prev - 1 + normalizedPhotos.length) % normalizedPhotos.length)
@@ -144,9 +201,6 @@ export default function ReviewGallery({ photos = [], placeName }) {
   if (!normalizedPhotos.length) {
     return null
   }
-
-  const activePhoto = normalizedPhotos[activeIndex]
-  const hasMultiplePhotos = normalizedPhotos.length > 1
 
   const captionText = placeName
     ? `${placeName} detail ${activeIndex + 1} of ${normalizedPhotos.length}`
@@ -194,6 +248,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
         <div className="review-lightbox__header">
           <div className="review-lightbox__caption">{captionText}</div>
           <button
+            ref={closeButtonRef}
             type="button"
             className="review-lightbox__icon-button"
             onClick={event => {
@@ -209,11 +264,21 @@ export default function ReviewGallery({ photos = [], placeName }) {
           </button>
         </div>
         <div className="review-lightbox__image-frame">
+          {imageState === 'loading' ? (
+            <div className="review-lightbox__status" role="status">Loading photo…</div>
+          ) : null}
+          {imageState === 'error' ? (
+            <div className="review-lightbox__status review-lightbox__status--error" role="alert">
+              Photo failed to load
+            </div>
+          ) : null}
           <img
-            className={`review-lightbox__image${hasMultiplePhotos ? ' review-lightbox__image--with-controls' : ''}`}
+            className={`review-lightbox__image${hasMultiplePhotos ? ' review-lightbox__image--with-controls' : ''}${imageState === 'loaded' ? ' review-lightbox__image--loaded' : ''}`}
             src={activePhoto.largeSrc}
             alt={captionText}
             loading="eager"
+            onLoad={() => setImageState('loaded')}
+            onError={() => setImageState('error')}
           />
           {hasMultiplePhotos && (
             <>
@@ -251,6 +316,31 @@ export default function ReviewGallery({ photos = [], placeName }) {
         {hasMultiplePhotos && (
           <div className="review-lightbox__controls">
             <span>{activeIndex + 1} / {normalizedPhotos.length}</span>
+            <div className="review-lightbox__thumbs" aria-label="Photo thumbnails">
+              {normalizedPhotos.map((photo, index) => (
+                <button
+                  key={photo.id}
+                  type="button"
+                  className={`review-lightbox__thumb${index === activeIndex ? ' review-lightbox__thumb--active' : ''}`}
+                  onClick={event => {
+                    stopMapEvent(event)
+                    setActiveIndex(index)
+                  }}
+                  onMouseDown={stopMapEvent}
+                  onPointerDown={stopMapEvent}
+                  onTouchStart={stopMapEvent}
+                  aria-label={`Show photo ${index + 1}`}
+                  aria-current={index === activeIndex ? 'true' : undefined}
+                >
+                  <img
+                    className="review-lightbox__thumb-image"
+                    src={photo.smallSrc}
+                    alt=""
+                    loading="lazy"
+                  />
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -260,14 +350,17 @@ export default function ReviewGallery({ photos = [], placeName }) {
   return (
     <>
       <div className="review-gallery">
-        {normalizedPhotos.map((photo, index) => (
+        {visibleInlinePhotos.map((photo, index) => {
+          const isLastVisible = index === visibleInlinePhotos.length - 1
+          const hiddenCount = isLastVisible ? hiddenInlineCount : 0
+          return (
           <button
             key={photo.id}
             type="button"
-            className="review-gallery__thumb"
+            className={`review-gallery__thumb${hiddenCount ? ' review-gallery__thumb--more' : ''}`}
             onClick={event => {
               stopMapEvent(event)
-              openAt(index)
+              openAt(index, event.currentTarget)
             }}
             onDoubleClick={stopMapEvent}
             onMouseDown={stopMapEvent}
@@ -276,7 +369,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
             onPointerUp={stopMapEvent}
             onTouchStart={stopMapEvent}
             onTouchEnd={stopMapEvent}
-            aria-label={`Open photo ${index + 1}${placeName ? ` for ${placeName}` : ''}`}
+            aria-label={`Open photo ${index + 1}${placeName ? ` for ${placeName}` : ''} (${index + 1} of ${normalizedPhotos.length})${hiddenCount ? `, ${hiddenCount} more photos` : ''}`}
           >
             <img
               data-testid="review-gallery-thumbnail"
@@ -285,8 +378,12 @@ export default function ReviewGallery({ photos = [], placeName }) {
               alt=""
               loading="lazy"
             />
+            {hiddenCount ? (
+              <span className="review-gallery__more-count" aria-hidden="true">+{hiddenCount}</span>
+            ) : null}
           </button>
-        ))}
+          )
+        })}
       </div>
 
       {lightbox && typeof document !== 'undefined' ? createPortal(lightbox, document.body) : lightbox}

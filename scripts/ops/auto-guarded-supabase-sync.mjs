@@ -19,6 +19,7 @@ function parseArgs(argv) {
     maxBatches: process.env.APIZZA_SYNC_MAX_BATCHES || '1',
     checkpoint: process.env.APIZZA_SYNC_CHECKPOINT || 'scripts/.supabase-sync-checkpoint.json',
     sample: process.env.APIZZA_SYNC_SAMPLE || '10',
+    insertMissingReviewedNew: process.env.APIZZA_SYNC_INSERT_MISSING_REVIEWED_NEW === 'true',
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -28,6 +29,7 @@ function parseArgs(argv) {
     else if (arg === '--max-batches') out.maxBatches = argv[++i];
     else if (arg === '--checkpoint') out.checkpoint = argv[++i];
     else if (arg === '--sample') out.sample = argv[++i];
+    else if (arg === '--insert-missing-reviewed-new') out.insertMissingReviewedNew = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/auto-guarded-supabase-sync.mjs [options]
 
@@ -88,6 +90,36 @@ if (!acquireLock()) {
 
 let exitCode = 1;
 try {
+  const confidenceRepair = spawnSync(process.execPath, [
+    'scripts/ops/repair-missing-classification-confidence.mjs',
+    '--hours', options.hours,
+    '--limit', '5000',
+    '--apply',
+    '--json',
+  ], {
+    cwd: process.cwd(),
+    stdio: 'inherit',
+    env: process.env,
+    timeout: 120000,
+  });
+  if (confidenceRepair.error) throw confidenceRepair.error;
+  if (confidenceRepair.status !== 0) {
+    throw new Error(`classification confidence repair failed with status ${confidenceRepair.status ?? 1}`);
+  }
+
+  const reconciliation = spawnSync(process.execPath, [
+    'scripts/ops/reconcile-reviewed-new-supabase.mjs',
+    '25',
+  ], {
+    cwd: process.cwd(),
+    stdio: 'inherit',
+    env: process.env,
+    timeout: 1200000,
+  });
+  if (reconciliation.error) throw reconciliation.error;
+  if (reconciliation.status !== 0) {
+    throw new Error(`reviewed-new reconciliation failed with status ${reconciliation.status ?? 1}`);
+  }
   const result = spawnSync(process.execPath, [
     'scripts/ops/guarded-supabase-sync.mjs',
     '--hours', options.hours,
@@ -96,6 +128,7 @@ try {
     '--checkpoint', options.checkpoint,
     '--sample', options.sample,
     '--apply',
+    ...(options.insertMissingReviewedNew ? ['--insert-missing-reviewed-new'] : []),
   ], {
     cwd: process.cwd(),
     stdio: 'inherit',

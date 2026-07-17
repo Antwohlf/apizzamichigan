@@ -145,6 +145,36 @@ describe('remoteSearchTerms', () => {
       'ann',
     ])
   })
+
+  test('expands compact chain names for remote lookup', () => {
+    expect(remoteSearchTerms('pizzahut detroit')).toEqual([
+      'pizzahut detroit',
+      'pizza hut detroit',
+      'hut detroit',
+      'pizza hut',
+      'pizzahut',
+      'detroit',
+      'hut',
+    ])
+
+    expect(remoteSearchTerms('papamurphys lansing')).toEqual([
+      'papamurphys lansing',
+      'papa murphys lansing',
+      'papa murphy lansing',
+      'papamurphy lansing',
+      'papa murphys',
+      'papamurphys',
+      'papa murphy',
+      'papamurphy',
+      'murphys',
+    ])
+  })
+
+  test('expands price and reviewed intent for remote lookup', () => {
+    expect(remoteSearchTerms('cheap')).toEqual(['cheap', '$'])
+    expect(remoteSearchTerms('favorites')).toEqual(['favorites', 'favorite', 'golden'])
+    expect(remoteSearchTerms('reviewed')).toEqual(['reviewed', 'visited', 'golden'])
+  })
 })
 
 describe('state-aware search helpers', () => {
@@ -155,8 +185,18 @@ describe('state-aware search helpers', () => {
   })
 
   test('keeps only searchable name terms for state-scoped remote lookup', () => {
-    expect(stateScopedNameTerms('Pizza Hut Michigan')).toEqual(['hut'])
-    expect(stateScopedNameTerms("Buddy's Pizza MI")).toEqual(['buddy'])
+    expect(stateScopedNameTerms('Pizza Hut Michigan')).toEqual(['pizza hut', 'hut'])
+    expect(stateScopedNameTerms("Buddy's Pizza MI")).toEqual(['buddy pizza', 'buddy'])
+  })
+
+  test('keeps multi-word brand phrases while removing state aliases', () => {
+    expect(stateScopedNameTerms('Papa Johns Michigan')).toEqual([
+      'papa johns',
+      'papa john',
+      'johns',
+      'papa',
+      'john',
+    ])
   })
 })
 
@@ -282,6 +322,114 @@ describe('placeSearchRank', () => {
     expect(placeSearchRank(place, query, terms)).toBe(5)
     expect(placeSearchRank(place, query, terms))
       .toBeLessThan(placeSearchRank(generic, query, terms))
+  })
+
+  test('uses source brand/operator fields for chain search relevance', () => {
+    const query = 'pizza hut detroit'
+    const terms = ['pizza', 'hut', 'detroit']
+    const sourceBrandedPlace = {
+      name: 'Express',
+      brand: 'Pizza Hut',
+      operator: 'Pizza Hut',
+      address: '123 Woodward Ave',
+      city: 'Detroit',
+      state: 'MI',
+    }
+    const genericRegionalMatch = {
+      name: 'Detroit Pizza Company',
+      address: '123 Hut Street',
+      city: 'Detroit',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(sourceBrandedPlace, query, terms)).toBe(5)
+    expect(placeSearchRank(sourceBrandedPlace, query, terms))
+      .toBeLessThan(placeSearchRank(genericRegionalMatch, query, terms))
+  })
+
+  test('matches brand-only text for source-enriched rows', () => {
+    const sourceBrandedPlace = {
+      name: 'Express',
+      brand: 'Pizza Hut',
+      operator: 'Pizza Hut',
+      address: '123 Main St',
+      city: 'Lansing',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(sourceBrandedPlace, 'pizza hut')).toBeLessThan(4)
+  })
+
+  test('ranks compact chain aliases above incidental text matches', () => {
+    const query = 'papamurphys lansing'
+    const terms = ['papamurphys', 'lansing']
+    const sourceBrandedPlace = {
+      name: "Papa Murphy's",
+      brand: "Papa Murphy's",
+      operator: "Papa Murphy's",
+      address: '123 Main St',
+      city: 'Lansing',
+      state: 'MI',
+    }
+    const incidentalMatch = {
+      name: 'Murphy Pizza',
+      address: '123 Papa St',
+      city: 'Lansing',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(sourceBrandedPlace, query, terms)).toBe(4.5)
+    expect(placeSearchRank(sourceBrandedPlace, query, terms))
+      .toBeLessThan(placeSearchRank(incidentalMatch, query, terms))
+  })
+
+  test('matches natural-language price searches with location terms', () => {
+    const query = 'cheap detroit'
+    const terms = ['cheap', 'detroit']
+    const cheapPlace = {
+      name: 'Slice Counter',
+      price_range: '$',
+      city: 'Detroit',
+      state: 'MI',
+    }
+    const expensivePlace = {
+      name: 'Chef Pizza',
+      price_range: '$$$',
+      city: 'Detroit',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(cheapPlace, query, terms)).toBeLessThan(9)
+    expect(placeSearchRank(expensivePlace, query, terms)).toBe(99)
+  })
+
+  test('matches reviewed and favorite intent without requiring the word in the name', () => {
+    const reviewedQuery = 'reviewed ann arbor'
+    const favoriteQuery = 'favorites'
+    const reviewedPlace = {
+      name: 'Neighborhood Slice',
+      status: 'visited',
+      rating: 8.4,
+      city: 'Ann Arbor',
+      state: 'MI',
+    }
+    const favoritePlace = {
+      name: 'Destination Pizza',
+      status: 'golden',
+      rating: 10,
+      city: 'Detroit',
+      state: 'MI',
+    }
+    const unvisitedPlace = {
+      name: 'New Pizza',
+      status: 'unvisited',
+      city: 'Ann Arbor',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(reviewedPlace, reviewedQuery, ['reviewed', 'ann', 'arbor'])).toBeLessThan(9)
+    expect(placeSearchRank(unvisitedPlace, reviewedQuery, ['reviewed', 'ann', 'arbor'])).toBe(99)
+    expect(placeSearchRank(favoritePlace, favoriteQuery, ['favorites'])).toBeLessThan(9)
   })
 })
 

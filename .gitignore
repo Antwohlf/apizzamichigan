@@ -7,6 +7,8 @@
 
 # testing
 /coverage
+__pycache__/
+*.py[cod]
 
 # production
 /build
@@ -29,6 +31,12 @@
 /scripts/.*-progress.json
 /scripts/.status_hourly.json
 /scripts/.supabase-sync-checkpoint*.json
+/scripts/.source-pipeline-state.json
+/scripts/.fsq-venv/
+/scripts/.fsq-portal-init.sql
+/data/source-samples/.hf-fsq-cache/
+/data/source-samples/fsq-os-places-*.json
+/data/source-inputs/
 
 # OpenClaw / cron / watchdog local artifacts
 /logs/
