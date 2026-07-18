@@ -24,6 +24,7 @@ const WINDOW_HOURS = parsePositiveInt(process.env.CLASSIFIER_HEALTH_WINDOW_HOURS
 const MAX_ROWS = parsePositiveInt(process.env.CLASSIFIER_HEALTH_MAX_ROWS, 5)
 const EXPECTED_CLASSIFIER_PROCESSES = parsePositiveInt(process.env.CLASSIFIER_WORKER_COUNT, 2)
 const EXPECTED_SCRAPER_PROCESSES = parsePositiveInt(process.env.SCRAPER_PROCESS_COUNT, 1)
+const IDLE_WARNING_MINIMUM = parsePositiveInt(process.env.CLASSIFIER_IDLE_WARNING_MINIMUM, 10)
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10)
@@ -129,18 +130,43 @@ function processReport() {
 }
 
 function tunnelReport() {
+  const expectedService = 'com.apizzamichigan.laptop-ollama-tunnel'
   const result = spawnSync('lsof', ['-nP', '-iTCP:11435', '-sTCP:LISTEN'], { encoding: 'utf8' })
   if (result.status !== 0 && !result.stdout?.trim()) {
-    return { ok: false, port: 11435, error: result.stderr?.trim() || 'listener check failed' }
+    return {
+      ok: false,
+      port: 11435,
+      ownership: 'remote-laptop',
+      expectedService,
+      inspection: 'The laptop launchd owner is not inspectable from the iMac; verify the forwarded listener instead.',
+      recovery: 'laptop launchd KeepAlive should restart the reverse SSH tunnel',
+      error: result.stderr?.trim() || 'listener check failed',
+    }
   }
   const lines = (result.stdout || '').split('\n').map(line => line.trim()).filter(Boolean)
   return {
     ok: lines.length > 1,
     port: 11435,
     ownership: 'remote-laptop',
+    expectedService,
     controlPlane: 'laptop launchd is intentionally not inspectable from the iMac',
+    inspectable: false,
+    inspection: 'The laptop launchd owner is not inspectable from the iMac; the forwarded listener is authoritative.',
+    recovery: 'laptop launchd KeepAlive should restart the reverse SSH tunnel',
     listeners: lines.slice(1),
     error: lines.length > 1 ? null : 'no listener on 127.0.0.1:11435'
+  }
+}
+
+function remoteTunnelControlReport() {
+  return {
+    ok: true,
+    skipped: true,
+    remoteOwned: true,
+    service: 'com.apizzamichigan.laptop-ollama-tunnel',
+    controlPlane: 'laptop launchd is intentionally not inspectable from the iMac',
+    inspection: 'The forwarded listener on 127.0.0.1:11435 is authoritative from the iMac.',
+    recovery: 'laptop launchd KeepAlive should restart the reverse SSH tunnel'
   }
 }
 
@@ -342,7 +368,7 @@ function classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgre
   if (git.head !== git.originMain) warnings.push(`HEAD (${git.head}) differs from origin/main (${git.originMain})`)
 
   if (!launchd.skipped && !launchd.ok) issues.push(`launchd service is not running: ${launchd.error || launchd.state}`)
-  if (!tunnelLaunchd.skipped && !tunnelLaunchd.ok && !tunnel.ok) {
+  if (!tunnelLaunchd.skipped && tunnelLaunchd.ok === false && !tunnel.ok) {
     issues.push(`laptop Ollama tunnel is unavailable: ${tunnelLaunchd.error || tunnelLaunchd.state}`)
   }
   if (!processes.ok) warnings.push(`process scan failed: ${processes.error}`)
@@ -360,11 +386,13 @@ function classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgre
     if (!queue.worker) issues.push(`worker row ${WORKER_ID} is missing`)
     else if (queue.worker.minutes_since_heartbeat > STALE_MINUTES) issues.push(`worker heartbeat is stale: ${queue.worker.minutes_since_heartbeat}m`)
     if (queue.workers && queue.workers.length < EXPECTED_CLASSIFIER_PROCESSES) issues.push(`expected ${EXPECTED_CLASSIFIER_PROCESSES} classify worker rows, found ${queue.workers.length}`)
-    if (queue.recent.completed === 0 && queue.totals.pending > 0) warnings.push(`no classify completions in last ${WINDOW_HOURS}h`)
+    if (queue.recent.completed === 0 && queue.totals.pending > IDLE_WARNING_MINIMUM) {
+      warnings.push(`no classify completions in last ${WINDOW_HOURS}h while ${queue.totals.pending} jobs remain pending`)
+    }
   }
 
   if (!postgres.ok) issues.push(`Postgres unavailable: ${postgres.error}`)
-  else if (postgres.summary.enriched_in_window === 0 && queue.ok && queue.totals.pending > 0) {
+  else if (postgres.summary.enriched_in_window === 0 && queue.ok && queue.totals.pending > IDLE_WARNING_MINIMUM) {
     warnings.push(`no Postgres enrichment writes in last ${WINDOW_HOURS}h`)
   }
 
@@ -397,7 +425,10 @@ async function main() {
   const generatedAt = new Date().toISOString()
   const git = gitReport(root)
   const launchd = launchdReport()
-  const tunnelLaunchd = launchdReport('com.apizzamichigan.laptop-ollama-tunnel')
+  // The tunnel is owned by launchd on the laptop, not this iMac. Calling
+  // launchctl here produces a false failure even when the forwarded listener
+  // is healthy, so the listener remains the authoritative remote check.
+  const tunnelLaunchd = remoteTunnelControlReport()
   const processes = processReport()
   const tunnel = tunnelReport()
   const queue = queueReport(root)
@@ -437,7 +468,7 @@ async function main() {
     console.log(`- Postgres: unavailable (${postgres.error})`)
   }
   console.log(`- Ollama: ${ollama.ok ? `ok (${ollama.models.join(', ') || 'no models'})` : `failed (${ollama.error})`}`)
-  console.log(`- Ollama tunnel control: ${tunnel.ok ? 'healthy remote listener' : tunnelLaunchd.ok ? `running (${tunnelLaunchd.service})` : `unavailable (${tunnelLaunchd.error || tunnelLaunchd.state})`}`)
+  console.log(`- Ollama tunnel control: ${tunnel.ok ? `healthy remote listener; recovery=${tunnel.recovery}` : tunnelLaunchd.ok ? `running (${tunnelLaunchd.service})` : `unavailable (${tunnelLaunchd.error || tunnelLaunchd.state}); expected=${tunnel.expectedService || 'unknown'}`}`)
   console.log('')
 
   console.log('## Issues')

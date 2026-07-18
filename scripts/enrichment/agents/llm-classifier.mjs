@@ -525,10 +525,10 @@ class LlmClassifier {
         } catch (error) {
           // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
           if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
-            console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+              console.error(`[${new Date().toISOString()}] [${this.workerId}] Database contention (${error.code}), backing off...`)
             await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
           } else {
-            console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+            console.error(`[${new Date().toISOString()}] [${this.workerId}] Unexpected error in main loop:`, error)
             await new Promise(r => setTimeout(r, 5000))
           }
         }

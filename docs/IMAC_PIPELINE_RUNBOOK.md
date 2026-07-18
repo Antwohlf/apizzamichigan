@@ -129,10 +129,21 @@ authoritative connectivity check and a missing local tunnel service is shown
 as a warning, because the reverse tunnel is intentionally owned by the laptop.
 The report must show `baseUrl=http://127.0.0.1:11435`.
 
+The read-only alert report also warns when the source-review backlog exceeds
+`PIPELINE_REVIEW_BACKLOG_WARNING_LIMIT` (default `5000`). This is a workload
+warning, not a pipeline failure; it is intended to prompt bounded review
+batches before the queue becomes operationally unmanageable.
+
 The source pipeline is the US-first production entry point for OSM, FSQ OS
 Places, All the Places, Overture, Wikidata, and official-website enrichment.
 It uses the existing provenance/review tables and keeps machine-local cursors
 and downloaded inputs out of Git. Manual invocations are dry-run by default:
+
+Apply-mode runs also promote at most the configured contact-field limit from
+eligible source evidence into blank local canonical `website_url` and `phone`
+fields. The promotion rechecks freshness, confidence, source priority, and
+match method, and does not publish to Supabase. The limit is
+`config/source-pipeline.json` -> `limits.contact_promotions_per_run`.
 
 Each regional OSM export has a resumable manifest. The exporter refuses to
 reuse a manifest when the requested bounding box or tile step differs from the
@@ -141,13 +152,48 @@ mixing tiles into another region's checkpoint. When a manifest is suspect,
 preserve it for audit and start a clean export with a new output and manifest
 path; do not overwrite the existing artifact.
 
+The deterministic menu parser is a separate slowlane. It may be installed from
+`infra/local/launchd/com.apizzamichigan.menu-parser.plist.template` after the
+classifier and scraper health checks pass. It is capped at 100 jobs per
+2-minute interval, does not use Ollama, and does not sync to Supabase. Each
+run remains capped at 100 jobs so the deterministic slowlane cannot monopolize
+the local database.
+
+To prioritize places that already have a discovered menu URL but have never
+been parsed, preview and then apply a bounded backfill:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/populate-menu-parse-from-db.mjs --state MI --limit 100'
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/populate-menu-parse-from-db.mjs --state MI --limit 100 --apply'
+```
+
+The helper only queues rows with `menu_url` and a null
+`menu_last_parsed_at`; it does not modify canonical fields or Supabase.
+
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/run-source-pipeline.mjs --dry-run --max-work-units 2 --json'
 ```
 
-The launchd template is the explicit apply path. It caps heavy work at two
-units per hour, strict new-place creation at five per run and 25 per day, and
-website scraping at 25 bounded jobs per run.
+For a bounded operator recovery, add `--force` to bypass source cadence while
+retaining the normal work-unit and new-place limits. Launchd does not use this
+flag, so scheduled runs remain cadence-controlled.
+
+The launchd template is the explicit apply path. It caps heavy work at four
+units per hour, strict new-place creation at 50 per run and 250 per day, and
+website scraping at 75 bounded jobs per run. OSM itself runs on an hourly
+cadence and processes eight serial tiles per MI/CA cycle; NY and TX are capped
+at four serial tiles per cycle because their Overpass requests are less
+reliable. The runner never starts concurrent OSM workers, and each regional
+manifest remains resumable if a tile times out.
+
+The template also sets bounded OSM timeouts: 90 seconds for the Overpass query,
+120 seconds for an HTTP request, and 180 seconds for a tile subprocess. A slow
+provider therefore fails over or checkpoints instead of holding the hourly
+source-pipeline job indefinitely. Successful tiles remain usable when a run
+ends partially.
+The parent OSM stage is allowed 20 minutes to process its bounded tile batch;
+the `OSM_PIPELINE_TIMEOUT_MS` override is available for a deliberately larger
+operator-run batch.
 
 ```bash
 ssh example-host 'cd /srv/apizzamichigan && mkdir -p /tmp/apizzamichigan && cp infra/local/launchd/com.apizzamichigan.source-pipeline.plist.template ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist && plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist && launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.source-pipeline.plist && launchctl enable "gui/$(id -u)/com.apizzamichigan.source-pipeline" && launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.source-pipeline"'
@@ -207,6 +253,24 @@ reads `scripts/.source-pipeline-state.json`: a source run older than
 source failures are reported as warnings so the scheduler can continue other
 sources.
 
+The alert gate also checks every `processing` queue job, not only classifier
+jobs. `PIPELINE_STALE_PROCESSING_MINUTES` defaults to 120; an aged scrape or
+menu job is reported as actionable with its job ID and worker assignment so an
+operator can verify the heartbeat before requeueing it.
+
+Retryable scrape recovery can be narrowed to a source prefix, which is
+important because legacy OSM jobs currently dominate the historical failure
+population:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && \
+  node scripts/ops/requeue-scrape-failures.mjs \
+    --category transient --source fsq_os_places --limit 100 --json'
+```
+
+Add `--apply` only after reviewing the dry-run selection. OSM, blocked, dead
+link, and unknown failures should not be bulk-retried by default.
+
 Before installing or updating launchd services, run the checked-in configuration
 contract check. It validates templates and entrypoints without reading local
 credentials or contacting runtime services:
@@ -220,6 +284,10 @@ The iMac health report therefore treats a live listener on `127.0.0.1:11435`
 and a successful Ollama `/api/tags` response as the authoritative tunnel check.
 The iMac cannot inspect the laptop's launchd domain over the reverse tunnel, so
 that remote service's absence from `launchctl print` is not itself a warning.
+The JSON health report identifies the expected service as
+`com.apizzamichigan.laptop-ollama-tunnel` and records that its `KeepAlive`
+launchd policy is the recovery mechanism. A live listener proves connectivity,
+but does not prove the laptop launchd job is currently installed.
 
 ### Classifier queue reconciler
 
@@ -249,6 +317,13 @@ eligible. The scheduled job may insert a missing canonical row only when
 and review tables. The sync policy in `scripts/lib/supabase-sync-policy.mjs`
 defines that boundary, and both readiness/status reports print it before any
 operator uses the results.
+
+An expected `WARN` with `missingSupabaseRows > 0` is not a failed sync service:
+it means the selected batch contains local canonical rows that are absent from
+Supabase and therefore cannot use the ordinary update-only path. Do not weaken
+the broad policy to clear that warning. Route each approved reviewed-new row
+through the exact-ID command below; rows without `reviewed_new_import` proof
+remain intentionally blocked until reviewed.
 
 Verify the sync boundary before changing sync scripts or running a manual sync:
 

@@ -200,8 +200,14 @@ async function main() {
   ], { json: true });
   console.log(`state=${readiness.state}, would_update=${readiness.totals.wouldUpdate}, missing=${readiness.totals.missingSupabaseRows}, protected_conflicts=${readiness.totals.protectedFieldConflicts}`);
   const allowsReviewedNewInserts = options.insertMissingReviewedNew;
-  assertState('readiness', readiness.state, allowsReviewedNewInserts ? ['OK', 'WARN'] : ['OK']);
-  if (readiness.totals.missingSupabaseRows > 0 && !allowsReviewedNewInserts) {
+  const missingRowsOnlyWarning = readiness.state === 'WARN'
+    && readiness.totals.missingSupabaseRows > 0
+    && readiness.totals.protectedFieldConflicts === 0;
+  assertState('readiness', readiness.state, allowsReviewedNewInserts || missingRowsOnlyWarning ? ['OK', 'WARN'] : ['OK']);
+  if (missingRowsOnlyWarning && !allowsReviewedNewInserts) {
+    console.log('Readiness warning is limited to local rows not yet present in Supabase; existing rows will sync and missing rows will be skipped for a later reviewed insert or retry.');
+  }
+  if (readiness.totals.missingSupabaseRows > 0 && !allowsReviewedNewInserts && !missingRowsOnlyWarning) {
     throw new Error('readiness gate failed: missing Supabase rows');
   }
   if (readiness.totals.protectedFieldConflicts > 0) {

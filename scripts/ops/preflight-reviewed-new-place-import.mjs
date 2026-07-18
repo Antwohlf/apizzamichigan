@@ -9,7 +9,7 @@
 
 import pg from 'pg';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+import { basename, resolve } from 'path';
 
 const ENTITY_TABLES = {
   pizza: 'pizza_places',
@@ -83,6 +83,9 @@ function parseArgs(argv) {
     throw new Error('Invalid --ready-limit');
   }
   if (!Number.isFinite(args.nearbyRadiusM) || args.nearbyRadiusM <= 0) throw new Error('Invalid --nearby-radius-m');
+  // Queue rows persist the report basename. Accept both the basename emitted
+  // by operator handoffs and a repository-relative/absolute report path.
+  if (args.reportFile) args.reportFile = basename(args.reportFile);
   return args;
 }
 

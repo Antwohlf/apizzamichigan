@@ -61,6 +61,20 @@ The adapter accepts GeoJSON, JSON arrays, JSON objects with `rows` or `places`,
 NDJSON / JSONL, and CSV. It compares source records to the local canonical table
 by coordinates and normalized name.
 
+### Geographic scope
+
+Source review imports enforce the active geographic scope from
+`config/source-pipeline.json` by default. The current production ingestion
+scope is the United States regions listed there: Michigan, New York,
+California, and Texas. Rows outside those bounding boxes are reported as
+`outOfScopeRowsExcluded` and are not compared, queued for review, or written
+to `place_sources`.
+
+An intentional global or nonstandard import must opt out explicitly with
+`--allow-out-of-scope` and use a separately reviewed input. Existing canonical
+rows outside the current ingestion scope are legacy data and are not removed
+by this gate; scope enforcement applies to new source input.
+
 Default mode is dry-run. To persist strong matches as source evidence:
 
 ```bash
@@ -108,6 +122,18 @@ Export a spreadsheet-friendly review queue with blank decision columns:
 node scripts/ops/source-review-export.mjs \
   --kind all \
   --output reports/source-review-queue.csv
+```
+
+Exports can be bounded to an individual source, chain/report artifact, and
+source region for focused review batches:
+
+```bash
+node scripts/ops/source-review-export.mjs \
+  --source all_the_places \
+  --report-file bc_pizza-review.json \
+  --state MI \
+  --kind likely_new \
+  --output reports/source-review-bc-pizza-mi.csv
 ```
 
 For a durable local review queue, create the local table and import generated
@@ -321,6 +347,19 @@ Remove `--dry-run` only after the preview shows the expected inserts. This mode
 still syncs only `pizza_places`; `place_sources` and `source_review_queue` stay
 local-only.
 
+For the recurring reviewed-new backlog, use the reconciliation helper. It is
+read-only by default and prints the exact missing IDs; `--apply` is required to
+publish the bounded batch it found:
+
+```bash
+node scripts/ops/reconcile-reviewed-new-supabase.mjs --limit 25
+node scripts/ops/reconcile-reviewed-new-supabase.mjs --limit 25 --apply
+```
+
+The helper only considers local rows with reviewed-new provenance or an
+`imported_new` review decision, and only rows that already have classification
+output. It never publishes unreviewed source candidates or provenance tables.
+
 The matcher prefetches canonical rows by source-coordinate tiles and uses an
 in-memory coordinate grid. Large source files should still be run one source
 family at a time, but they no longer need one Postgres query per source row or
@@ -336,6 +375,46 @@ node scripts/ops/verify-source-matching-prefetch.mjs
 node scripts/ops/verify-fsq-sample-workflow.mjs
 ```
 
+### Verified FSQ open-release path
+
+The iMac has a working bounded export path through the gated Hugging Face
+Parquet release. It uses `HF_TOKEN` from the machine-local environment, keeps
+the downloaded shard cache and sample output ignored, and never writes a
+canonical row directly:
+
+```bash
+scripts/.fsq-venv/bin/python scripts/ops/export-fsq-hf-parquet-sample.py \
+  --dataset foursquare/fsq-os-places \
+  --config places \
+  --split train \
+  --query pizza \
+  --country US \
+  --limit 100 \
+  --max-files 1 \
+  --output data/source-samples/fsq-os-places-pizza-sample.json \
+  --entity pizza \
+  --review-output reports/source-review/fsq-os-places-review.json
+
+node scripts/ops/source-input-sample-report.mjs \
+  --source fsq_os_places \
+  --input data/source-samples/fsq-os-places-pizza-sample.json \
+  --entity pizza \
+  --max-distance-m 100 \
+  --limit 5000 \
+  --sample 25 \
+  --review-output reports/source-review/fsq-os-places-review.json
+```
+
+The July 18, 2026 bounded run inspected 100 US rows: 88 active pizza-ish
+candidates, 53 existing-place matches, 5 ambiguous candidates, and 30 likely
+new candidates. The report used one canonical prefetch query across five tiles
+and remained read-only. The resulting review artifact was imported into the
+durable local review queue; duplicate rows were ignored by the queue upsert.
+
+This proves the FSQ source-input and review-queue path. It does not authorize
+automatic canonical creation or Supabase sync. Those remain gated by review,
+duplicate preflight, local enrichment, and the guarded sync policy.
+
 `verify-fsq-sample-workflow.mjs` uses a tiny local fixture and does not require
 FSQ credentials. It proves the preflight can consume an exported FSQ-like sample
 and produce the `fsq_os_places` adapter command. A real FSQ run still requires
@@ -345,6 +424,14 @@ Hugging Face token for `export-fsq-hf-parquet-sample.py` or
 Portal connection snippet. Prefer the Parquet exporter on the iMac when
 `scripts/.fsq-venv/bin/python` is present; it does not depend on the Hugging
 Face Dataset Viewer search index being current.
+
+The production source scheduler uses this Parquet route for bounded regional
+units. On July 18, 2026, the iMac completed an applied `fsq_os_places` unit for
+NY with no adapter errors; it persisted only source-review artifacts and kept
+canonical creation, enrichment, and Supabase sync behind their existing gates.
+The Dataset Viewer JavaScript endpoint is a diagnostic/sample path only because
+its index may return loading or transient errors even when authenticated
+Parquet access is healthy.
 
 ## Source Input Matrix
 
@@ -480,6 +567,11 @@ fields, or sync Supabase. Accepted rows must still pass
 `--report-file` and `--state` for bounded source/region batches; without them,
 the tool intentionally works the global queue order.
 
+Candidate acceptance defaults to the region keys in
+`config/source-pipeline.json` (currently MI, NY, CA, and TX). This prevents a
+nationwide source feed from silently expanding production geographic scope.
+Use `--allow-out-of-scope` only for a separately reviewed expansion batch.
+
 For the full reviewed-new handoff path, use the batch runner. Default mode is
 read-only and previews the accept/import set:
 
@@ -510,6 +602,12 @@ node scripts/ops/process-reviewed-new-batch.mjs \
 
 The runner calls the existing guarded tools rather than duplicating their
 database rules. It does not sync `place_sources` or `source_review_queue`.
+
+Foreground scraping is limited to 25 jobs by default. Larger batches still
+enqueue their scrape jobs, but defer execution to the managed launchd scraper.
+Override `REVIEW_BATCH_FOREGROUND_SCRAPE_LIMIT` only for a deliberate
+diagnostic run; this prevents long foreground wrappers from competing with the
+production scraper.
 
 ## Canonical Field Promotion Policy
 

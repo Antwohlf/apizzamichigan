@@ -3,20 +3,32 @@
  * Requeue a batch of previously failed scrape jobs that are likely transient.
  *
  * Default behavior:
+ * - dry-run; use --apply to mutate the queue
  * - LIMIT 100
  * - include: network/transient errors + timeouts + HTTP 5xx
  * - exclude: HTTP 403 + obvious permanents (404/410)
  * - resets attempts to 0 so they get a fair re-try under new scrape params
  *
  * Usage:
- *   node scripts/enrichment/requeue-scrape-failures.mjs [--limit 100]
+ *   node scripts/enrichment/requeue-scrape-failures.mjs [--limit 100] [--apply]
  */
 
 import { getQueue } from './queue.mjs'
 
 const args = process.argv.slice(2)
+if (args.includes('--help')) {
+  console.log(`Usage: node scripts/enrichment/requeue-scrape-failures.mjs [options]
+
+Options:
+  --limit <n>   Maximum transient failures to inspect/requeue (default 100, max 5000)
+  --apply       Requeue the selected jobs; default is a read-only preview
+  --help        Show this help without opening the queue database
+`)
+  process.exit(0)
+}
 const limitIdx = args.indexOf('--limit')
 const limit = Math.max(1, Math.min(5000, Number.parseInt(limitIdx >= 0 ? args[limitIdx + 1] : '100', 10) || 100))
+const apply = args.includes('--apply')
 
 const q = getQueue()
 
@@ -71,9 +83,10 @@ const requeueTx = q.db.transaction((rows) => {
   }
 })
 
-requeueTx(transientCandidates)
+if (apply) requeueTx(transientCandidates)
 
-console.log(`requeued scrape jobs: ${transientCandidates.length} (limit=${limit}, scanned=${candidates.length})`)
+console.log(`${apply ? 'requeued' : 'would requeue'} scrape jobs: ${transientCandidates.length} (limit=${limit}, scanned=${candidates.length})`)
+if (!apply) console.log('dry-run: pass --apply to mutate the queue')
 console.log('breakdown (original last_error):')
 for (const [reason, n] of [...byReason.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25)) {
   console.log(`- ${n}\t${reason}`)

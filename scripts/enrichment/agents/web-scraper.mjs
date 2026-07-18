@@ -40,13 +40,15 @@ const REQUEUE_PENDING_MAX = Number.parseInt(process.env.SCRAPE_REQUEUE_PENDING_M
 // Where to record "can't scrape" cases so we can revisit later.
 // Keep it simple: append-only JSONL file in /tmp/openclaw by default.
 const CANT_SCRAPE_LOG = process.env.SCRAPE_CANT_SCRAPE_LOG || '/tmp/openclaw/scrape-cant-scrape.jsonl'
+const logPrefix = workerId => `[${new Date().toISOString()}] [${workerId}]`
 
 function isCantScrapeErrorMessage(msg) {
   if (!msg) return false
   // Treat these as permanent/expected failures for now.
   return (
     /^HTTP (403|404|410|520|521|523|525|526|530)$/.test(msg) ||
-    msg.startsWith('Non-HTML content:')
+    msg.startsWith('Non-HTML content:') ||
+    /(?:getaddrinfo|dns).*ENOTFOUND|\bENOTFOUND\b/i.test(msg)
   )
 }
 
@@ -168,7 +170,7 @@ class WebScraper {
       }
     })
 
-    tx(candidates)
+    this.queue.withBusyRetry(() => tx.immediate(candidates))
     this.lastRequeueAt = now
     console.log(`[${this.workerId}] Requeued ${candidates.length} failed scrape jobs (batch)`)
     return { requeued: candidates.length, cleaned }
@@ -638,10 +640,10 @@ class WebScraper {
         } catch (error) {
           // Handle transient SQLite errors (SQLITE_BUSY, SQLITE_LOCKED) gracefully
           if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
-            console.error(`[${this.workerId}] Database contention (${error.code}), backing off...`)
+              console.error(`${logPrefix(this.workerId)} Database contention (${error.code}), backing off...`)
             await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000)) // 10-15s backoff
           } else {
-            console.error(`[${this.workerId}] Unexpected error in main loop:`, error)
+            console.error(`${logPrefix(this.workerId)} Unexpected error in main loop:`, error)
             await new Promise(r => setTimeout(r, 5000))
           }
         }

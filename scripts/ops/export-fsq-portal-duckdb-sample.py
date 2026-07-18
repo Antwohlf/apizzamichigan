@@ -70,12 +70,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query", default="pizza", help="Case-insensitive text filter.")
     parser.add_argument(
         "--places-table",
-        default=os.environ.get("FSQ_PLACES_TABLE", "places"),
+        default=os.environ.get("FSQ_PLACES_TABLE", "open_h3.places"),
         help="DuckDB-visible FSQ places table name after init SQL.",
     )
     parser.add_argument(
         "--categories-table",
-        default=os.environ.get("FSQ_CATEGORIES_TABLE", "categories"),
+        default=os.environ.get("FSQ_CATEGORIES_TABLE", "open_h3.categories"),
         help="DuckDB-visible FSQ categories table name after init SQL.",
     )
     parser.add_argument("--run-report", action="store_true")

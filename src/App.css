@@ -344,6 +344,38 @@ body {
     height: 540px;
   }
 }
+
+@media (max-width: 640px) {
+  .app-layout {
+    display: flex;
+  }
+
+  .app-layout > .main-content {
+    order: 1;
+  }
+
+  .app-layout > .sidebar-wrapper:first-child {
+    order: 2;
+  }
+
+  .app-layout > .sidebar-wrapper:last-child {
+    order: 3;
+  }
+
+  .main-content {
+    padding: 0 0.75rem 1rem;
+  }
+
+  .app-heading {
+    margin-top: 1rem;
+    font-size: 2.35rem;
+  }
+
+  .map-or-directory {
+    height: min(70vh, 540px);
+    min-height: 420px;
+  }
+}
 .admin-shell {
   min-height: 100vh;
   display: flex;

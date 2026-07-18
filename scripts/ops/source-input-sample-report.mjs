@@ -145,6 +145,8 @@ function parseArgs(argv) {
     gridCellDegrees: 0.02,
     prefetchTileDegrees: 1,
     prefetchBatchSize: 100,
+    scopeConfig: 'config/source-pipeline.json',
+    allowOutOfScope: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -162,6 +164,8 @@ function parseArgs(argv) {
     else if (arg === '--grid-cell-degrees') out.gridCellDegrees = parseFloat(argv[++i]);
     else if (arg === '--prefetch-tile-degrees') out.prefetchTileDegrees = parseFloat(argv[++i]);
     else if (arg === '--prefetch-batch-size') out.prefetchBatchSize = parseInt(argv[++i], 10);
+    else if (arg === '--scope-config') out.scopeConfig = argv[++i];
+    else if (arg === '--allow-out-of-scope') out.allowOutOfScope = true;
     else if (arg === '--list-sources') {
       for (const [key, config] of Object.entries(SOURCE_CONFIGS)) {
         console.log(`${key}\t${config.label}`);
@@ -206,6 +210,8 @@ Options:
                             Tile size for batched canonical prefetch (default 1)
   --prefetch-batch-size <n> Number of tiles per canonical prefetch query
                             (default 100)
+  --scope-config <file>     Geographic scope config (default config/source-pipeline.json)
+  --allow-out-of-scope      Intentionally compare/import records outside that scope
   --list-sources            Print supported source adapters
 
 Default mode is dry-run. With --apply, this writes source evidence only to
@@ -445,6 +451,23 @@ function normalizeSourceRow(row, sourceKey) {
       ['closed', 'permanently closed', 'permanently_closed', 'inactive', 'out of business'].some(term => closedValue.includes(term))
     ) || flags.some(flag => ['closed', 'delete', 'doesnt exist'].includes(flag)),
   };
+}
+
+function loadScopeConfig(path) {
+  const absPath = resolve(process.cwd(), path);
+  if (!existsSync(absPath)) return { region_scope: 'unconfigured', regions: [] };
+  const parsed = JSON.parse(readFileSync(absPath, 'utf8'));
+  return { region_scope: parsed.region_scope || 'unconfigured', regions: Array.isArray(parsed.regions) ? parsed.regions : [] };
+}
+
+function isWithinScope(candidate, scope) {
+  if (!scope.regions.length || scope.region_scope === 'global') return true;
+  return scope.regions.some(region => {
+    const [south, west, north, east] = region.bbox || [];
+    return [south, west, north, east].every(Number.isFinite)
+      && candidate.lat >= south && candidate.lat <= north
+      && candidate.lng >= west && candidate.lng <= east;
+  });
 }
 
 function isPizzaCandidate(candidate) {
@@ -824,10 +847,12 @@ async function main() {
   const args = parseArgs(process.argv);
   const config = SOURCE_CONFIGS[args.source];
   const tableName = ENTITY_TABLES[args.entity];
+  const scope = loadScopeConfig(args.scopeConfig);
   const rows = readRecords(args.input, args.limit);
   const normalized = rows.map(row => normalizeSourceRow(row, args.source));
   const active = normalized.filter(candidate => candidate.name && candidate.lat !== null && candidate.lng !== null && !candidate.is_closed);
-  const candidates = args.includeNonPizza ? active : active.filter(isPizzaCandidate);
+  const inScope = args.allowOutOfScope ? active : active.filter(candidate => isWithinScope(candidate, scope));
+  const candidates = args.includeNonPizza ? inScope : inScope.filter(isPizzaCandidate);
 
   const client = new pg.Client(dbConfig());
   await client.connect();
@@ -909,6 +934,7 @@ async function main() {
   const counts = {
     inputRowsInspected: rows.length,
     usableActiveRows: active.length,
+    outOfScopeRowsExcluded: active.length - inScope.length,
     candidatesCompared: candidates.length,
     canonicalRowsPrefetched,
     canonicalPrefetchTiles: prefetchTileCount,
@@ -939,6 +965,7 @@ async function main() {
   console.log(table(['metric', 'count'], [
     { metric: 'input rows inspected', count: counts.inputRowsInspected },
     { metric: 'rows with usable name/coordinates and active status', count: counts.usableActiveRows },
+    { metric: 'active rows excluded by geographic scope', count: counts.outOfScopeRowsExcluded },
     { metric: args.includeNonPizza ? 'active candidates compared' : 'pizza-ish active candidates', count: counts.candidatesCompared },
     { metric: 'canonical rows prefetched', count: counts.canonicalRowsPrefetched },
     { metric: 'canonical prefetch tiles', count: counts.canonicalPrefetchTiles },

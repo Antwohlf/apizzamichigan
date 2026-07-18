@@ -86,3 +86,28 @@ Operate:
 launchctl print "gui/$(id -u)/com.apizzamichigan.source-pipeline"
 tail -f /tmp/apizzamichigan/source-pipeline.log
 ```
+
+## Menu Parser Slowlane
+
+The deterministic menu parser is deliberately scheduled separately from the
+classifiers and scraper. It runs at most 100 jobs every 2 minutes, uses no
+Ollama, and writes only local Postgres menu fields plus queue state.
+
+Install after confirming the classifier and scraper are healthy:
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.menu-parser.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.menu-parser.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.menu-parser.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.menu-parser.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.menu-parser"
+launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.menu-parser"
+```
+
+Operate:
+
+```bash
+launchctl print "gui/$(id -u)/com.apizzamichigan.menu-parser"
+tail -f /tmp/apizzamichigan/menu-parser.log
+```

@@ -288,6 +288,7 @@ export function PlacesLayer({
     if (!map || typeof window === 'undefined') return undefined
 
     let restoreTimer = null
+    let lateRestoreTimer = null
 
     const handleLightboxOpen = () => {
       lightboxViewportRef.current = captureMapViewport(map)
@@ -299,14 +300,26 @@ export function PlacesLayer({
       if (restoreTimer) {
         clearTimeout(restoreTimer)
       }
-      restoreTimer = setTimeout(() => {
+      if (lateRestoreTimer) {
+        clearTimeout(lateRestoreTimer)
+      }
+      const restore = () => {
         restoreMapViewport(map, lightboxRestoreViewport({
           capturedViewport: viewport,
           activePlace: activePlaceRef.current,
         }))
-        lightboxViewportRef.current = null
+      }
+      restoreTimer = setTimeout(() => {
+        restore()
         restoreTimer = null
       }, 0)
+      // Popup state and region loading can trigger a later Leaflet view reset.
+      // Re-apply the captured place viewport after those updates settle.
+      lateRestoreTimer = setTimeout(() => {
+        restore()
+        lightboxViewportRef.current = null
+        lateRestoreTimer = null
+      }, 180)
     }
 
     window.addEventListener(REVIEW_LIGHTBOX_OPEN_EVENT, handleLightboxOpen)
@@ -315,6 +328,9 @@ export function PlacesLayer({
     return () => {
       if (restoreTimer) {
         clearTimeout(restoreTimer)
+      }
+      if (lateRestoreTimer) {
+        clearTimeout(lateRestoreTimer)
       }
       window.removeEventListener(REVIEW_LIGHTBOX_OPEN_EVENT, handleLightboxOpen)
       window.removeEventListener(REVIEW_LIGHTBOX_CLOSE_EVENT, handleLightboxClose)
@@ -449,8 +465,7 @@ export function PlacesLayer({
     activePlaceRef.current = activePlace
     const placeId = String(activePlace.id)
     const target = { id: placeId, lat: activePlace.lat, lng: activePlace.lng, type: site }
-    const hrefParam = `${site}:${placeId}`
-    const href = site === 'taco' ? `/tacos?poi=${hrefParam}` : `/?poi=${hrefParam}`
+    const href = site === 'taco' ? `/tacos/places/${encodeURIComponent(placeId)}` : `/places/${encodeURIComponent(placeId)}`
     setSelectedPlace({
       id: activePlace.id ?? activePlace.place_id ?? null,
       name: activePlace.name ?? null,
@@ -490,8 +505,8 @@ export function PlacesLayer({
 
   const buildHref = useCallback(
     placeId => {
-      const hrefParam = `${site}:${placeId}`
-      return site === 'taco' ? `/tacos?poi=${hrefParam}` : `/?poi=${hrefParam}`
+      const encodedId = encodeURIComponent(placeId)
+      return site === 'taco' ? `/tacos/places/${encodedId}` : `/places/${encodedId}`
     },
     [site]
   )

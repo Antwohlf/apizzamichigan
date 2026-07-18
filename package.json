@@ -31,6 +31,7 @@
     "start": "react-scripts start",
     "build": "npm run generate-stats && react-scripts build",
     "generate-stats": "node scripts/generate-dashboard-stats.mjs",
+    "readiness": "node scripts/ops/project-readiness-report.mjs",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "test": "react-scripts test",
     "typecheck": "tsc --noEmit",

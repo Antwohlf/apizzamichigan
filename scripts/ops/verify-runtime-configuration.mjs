@@ -20,6 +20,8 @@ const REQUIRED_SCRIPTS = [
   'scripts/ops/verify-canonical-contract.mjs',
   'scripts/enrichment/agents/llm-classifier.mjs',
   'scripts/enrichment/agents/web-scraper.mjs',
+  'scripts/enrichment/slowlane/menu-parse-worker.mjs',
+  'scripts/ops/process-reviewed-new-batch.mjs',
 ];
 
 function assert(condition, message) {
@@ -54,6 +56,31 @@ function main() {
     assert(text.includes('<key>KeepAlive</key>') || text.includes('<key>StartInterval</key>'), `${name} needs KeepAlive or StartInterval`);
     assert(!/(FSQ_PLACES_TOKEN|HF_TOKEN|SUPABASE_SERVICE_ROLE|PGPASSWORD)\s*=/.test(text), `${name} contains a credential assignment`);
   }
+
+  const menuParser = read('infra/local/launchd/com.apizzamichigan.menu-parser.plist.template');
+  assert(menuParser.includes('menu-parse-worker.mjs --max-jobs 100'), 'menu parser must remain bounded at 100 jobs');
+  assert(menuParser.includes('<integer>120</integer>'), 'menu parser should run every 120 seconds');
+  assert(menuParser.includes('<false/>'), 'menu parser must not run immediately at login');
+  assert(!menuParser.includes('OLLAMA_'), 'menu parser must not depend on Ollama');
+
+  const classifier = read('infra/local/launchd/com.apizzamichigan.classifier.plist.template');
+  const classifierTwo = read('infra/local/launchd/com.apizzamichigan.classifier-2.plist.template');
+  for (const [name, text, workerId] of [
+    ['classifier', classifier, 'launchd-classify'],
+    ['classifier-2', classifierTwo, 'launchd-classify-2'],
+  ]) {
+    assert(text.includes('llm-classifier.mjs'), `${name} must run the LLM classifier`);
+    assert(text.includes(`--worker-id ${workerId}`), `${name} must declare worker id ${workerId}`);
+    assert(text.includes('<key>KeepAlive</key>'), `${name} must be self-healing with KeepAlive`);
+    assert(text.includes('<string>llama3.2:latest</string>'), `${name} must use the approved local model`);
+    assert(text.includes('<string>http://127.0.0.1:11435</string>'), `${name} must use the forwarded Ollama endpoint`);
+  }
+
+  const tunnel = read('infra/local/launchd/com.apizzamichigan.laptop-ollama-tunnel.plist.template');
+  assert(tunnel.includes('<key>KeepAlive</key>'), 'laptop Ollama tunnel must be self-healing with KeepAlive');
+  assert(tunnel.includes('ExitOnForwardFailure=yes'), 'laptop Ollama tunnel must fail fast when forwarding is unavailable');
+  assert(tunnel.includes('ServerAliveInterval=30'), 'laptop Ollama tunnel must send SSH keepalives');
+  assert(tunnel.includes('127.0.0.1:11435:127.0.0.1:11434'), 'laptop Ollama tunnel endpoint must remain stable');
 
   const gitignore = read('.gitignore');
   assert(gitignore.split('\n').some(line => line.trim() === '.env'), '.gitignore must protect .env');

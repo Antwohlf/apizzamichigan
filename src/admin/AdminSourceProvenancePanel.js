@@ -367,6 +367,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const [queueError, setQueueError] = useState('')
   const [queueMessage, setQueueMessage] = useState('')
   const [actionState, setActionState] = useState({})
+  const [decisionHistory, setDecisionHistory] = useState({})
   const [decisionDrafts, setDecisionDrafts] = useState({})
   const [selectedReviewIds, setSelectedReviewIds] = useState({})
   const [importPreflight, setImportPreflight] = useState(null)
@@ -587,6 +588,65 @@ export default function AdminSourceProvenancePanel({ entity }) {
       }
     } catch (err) {
       setQueueError(err?.message || 'Failed to update review row.')
+    } finally {
+      setActionState(prev => {
+        const next = { ...prev }
+        delete next[row.id]
+        return next
+      })
+    }
+  }
+
+  const loadDecisionHistory = async row => {
+    const id = String(row?.id || '')
+    if (!id) return
+    if (decisionHistory[id]) {
+      setDecisionHistory(prev => ({ ...prev, [id]: { ...prev[id], open: !prev[id].open } }))
+      return
+    }
+    setDecisionHistory(prev => ({ ...prev, [id]: { loading: true, open: true, rows: [] } }))
+    try {
+      const res = await fetch(`/api/admin/source-review-queue/${id}/history`, { credentials: 'include' })
+      const payload = await res.json()
+      if (!res.ok) throw new Error(payload?.error || 'Failed to load decision history.')
+      setDecisionHistory(prev => ({ ...prev, [id]: { loading: false, open: true, rows: payload?.data || [] } }))
+    } catch (err) {
+      setDecisionHistory(prev => ({ ...prev, [id]: { loading: false, open: true, rows: [], error: err?.message || 'Failed to load decision history.' } }))
+    }
+  }
+
+  const reopenDecision = async row => {
+    if (!row || row.status === 'pending' || row.status === 'linked') return
+    const confirmed = window.confirm(
+      `Reopen "${row.source_name || row.source_id}" for review?\n\nThis clears the current decision, returns the row to pending, and preserves the decision history. Linked rows must be handled through a separate unlink review.`
+    )
+    if (!confirmed) return
+
+    setActionState(prev => ({ ...prev, [row.id]: 'reopen' }))
+    setQueueError('')
+    setQueueMessage('')
+    try {
+      const res = await fetch(`/api/admin/source-review-queue/${row.id}/reopen`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      })
+      const payload = await res.json()
+      if (!res.ok) throw new Error(payload?.error || 'Failed to reopen review row.')
+      const updated = payload?.data
+      if (updated) {
+        setQueueRows(prev => queueStatus === 'pending'
+          ? prev.map(item => item.id === updated.id ? updated : item)
+          : prev.filter(item => item.id !== updated.id)
+        )
+        if (queueStatus !== 'pending') setQueueTotal(prev => Math.max(0, prev - 1))
+        setQueueMessage(`Reopened "${updated.source_name || updated.source_id}" for review.`)
+        setDecisionHistory(prev => ({ ...prev, [String(row.id)]: undefined }))
+        setImportPreflightRefreshKey(value => value + 1)
+      }
+    } catch (err) {
+      setQueueError(err?.message || 'Failed to reopen review row.')
     } finally {
       setActionState(prev => {
         const next = { ...prev }
@@ -1924,6 +1984,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           setQueueReadiness('')
                           setQueueScope('')
                           setQueueReportFile('')
+                          setQueueState('')
                         }}
                         style={{ border: '1px solid #475569', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.55rem 0.75rem', fontWeight: 800, cursor: 'pointer' }}
                       >
@@ -2085,6 +2146,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       const decisionLines = decisionCanonicalContextLines(row)
                       const lifecycle = reviewLifecycleCopy(row)
                       const checklist = reviewDecisionChecklist(row)
+                      const history = decisionHistory[String(row.id)]
                       return (
                         <article key={row.id} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: 10, padding: '0.9rem', background: '#101418' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
@@ -2126,6 +2188,40 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           </div>
                           <p style={{ margin: '0.7rem 0 0', color: '#94a3b8', fontSize: '0.84rem' }}>{recommendation.detail}</p>
                           <p style={{ margin: '0.35rem 0 0', color: lifecycle.tone, fontSize: '0.84rem' }}>{lifecycle.detail}</p>
+                          <div style={{ marginTop: '0.65rem' }}>
+                            <button
+                              type="button"
+                              onClick={() => loadDecisionHistory(row)}
+                              disabled={history?.loading}
+                              style={{ border: '1px solid rgba(148, 163, 184, 0.35)', borderRadius: 8, background: 'transparent', color: '#cbd5e1', padding: '0.35rem 0.55rem', fontWeight: 800, cursor: history?.loading ? 'wait' : 'pointer' }}
+                            >
+                              {history?.loading ? 'Loading history…' : history?.open ? 'Hide decision history' : 'Decision history'}
+                            </button>
+                            {row.status !== 'pending' && row.status !== 'linked' ? (
+                              <button
+                                type="button"
+                                onClick={() => reopenDecision(row)}
+                                disabled={busy}
+                                style={{ marginLeft: '0.4rem', border: '1px solid #fbbf24', borderRadius: 8, background: 'transparent', color: '#fbbf24', padding: '0.35rem 0.55rem', fontWeight: 800, cursor: busy ? 'wait' : 'pointer' }}
+                              >
+                                Reopen
+                              </button>
+                            ) : null}
+                            {history?.open ? (
+                              <div style={{ marginTop: '0.5rem', border: '1px solid rgba(148, 163, 184, 0.14)', borderRadius: 8, padding: '0.55rem', background: 'rgba(15, 23, 42, 0.35)', color: '#cbd5e1', fontSize: '0.8rem' }}>
+                                {history.error ? <div style={{ color: '#fca5a5' }}>{history.error}</div> : null}
+                                {!history.error && !history.loading && history.rows.length === 0 ? <div>No prior decisions recorded.</div> : null}
+                                {history.rows.map(entry => (
+                                  <div key={entry.id} style={{ padding: '0.35rem 0', borderBottom: '1px solid rgba(148, 163, 184, 0.1)' }}>
+                                    <strong style={{ color: '#f8fafc' }}>{entry.action}</strong>
+                                    {' · '}{entry.previous_status || 'pending'} → {entry.status}
+                                    {entry.canonical_place_id ? ` · canonical ${entry.canonical_place_id}` : ''}
+                                    <div style={{ color: '#94a3b8' }}>{formatDateTime(entry.created_at)}{entry.reviewer_notes ? ` · ${entry.reviewer_notes}` : ''}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
                           {checklist.length ? (
                             <div style={{ marginTop: '0.65rem', border: '1px solid rgba(148, 163, 184, 0.14)', borderRadius: 8, padding: '0.65rem', background: 'rgba(15, 23, 42, 0.4)' }}>
                               <strong style={{ color: '#f8fafc', fontSize: '0.82rem' }}>Decision checklist</strong>

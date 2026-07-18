@@ -36,6 +36,7 @@ function parseArgs(argv) {
     nearbyRadiusM: 150,
     prefetchTileDegrees: 1,
     prefetchBatchSize: 100,
+    allowOutOfScope: false,
     json: false,
   };
 
@@ -49,6 +50,7 @@ function parseArgs(argv) {
     else if (arg === '--nearby-radius-m') args.nearbyRadiusM = Number.parseFloat(argv[++i]);
     else if (arg === '--prefetch-tile-degrees') args.prefetchTileDegrees = Number.parseFloat(argv[++i]);
     else if (arg === '--prefetch-batch-size') args.prefetchBatchSize = Number.parseInt(argv[++i], 10);
+    else if (arg === '--allow-out-of-scope') args.allowOutOfScope = true;
     else if (arg === '--json') args.json = true;
     else if (arg === '--help') {
       printHelp();
@@ -82,6 +84,7 @@ Options:
   --nearby-radius-m <n>       Live duplicate-review radius (default 150)
   --prefetch-tile-degrees <n> Tile size for live canonical prefetch (default 1)
   --prefetch-batch-size <n>   Number of tiles per prefetch query (default 100)
+  --allow-out-of-scope        Include rows outside configured source regions
   --db-state-fixture <file>   Use JSON fixture rows instead of Postgres
   --json                      Emit JSON instead of Markdown
 
@@ -125,6 +128,15 @@ function dbConfig() {
 
 function normalizeReportFile(value) {
   return value || '(missing)';
+}
+
+function configuredRegions() {
+  const path = resolve(process.cwd(), 'config/source-pipeline.json');
+  if (!existsSync(path)) return [];
+  const config = JSON.parse(readFileSync(path, 'utf8'));
+  return [...new Set((config.regions || [])
+    .map(region => String(region?.key || '').trim().toUpperCase())
+    .filter(Boolean))];
 }
 
 function readinessFor(row, nearbyRadiusM = 150) {
@@ -315,7 +327,14 @@ async function annotateLiveNearby(client, rows, args) {
   const pendingCandidateRows = rows.filter(row => (
     row.status === 'pending'
     && row.review_kind === 'likely_new'
-    && readinessFor(row, args.nearbyRadiusM) === 'candidate_ready'
+    // Do not trust nearest_distance_m here. It is a snapshot from the source
+    // report and can be stale after new canonical rows are imported. Every
+    // pending row with usable coordinates must be checked against the live
+    // canonical grid so the backlog ranking cannot advertise false candidates.
+    && Boolean((row.source_name || row.source_data?.name || '').trim())
+    && Boolean(String(row.source_id || '').trim())
+    && sourceCoordinate(row, ['lat', 'latitude']) !== null
+    && sourceCoordinate(row, ['lng', 'lon', 'longitude']) !== null
   ));
   const payloads = pendingCandidateRows.map(candidatePayload);
   const canonicalPrefetch = await loadCanonicalPlaces(client, ENTITY_TABLES[args.entity], payloads, args);
@@ -396,7 +415,9 @@ async function loadGroupedRows(args) {
       WHERE entity_type = $1
         AND source = $2
         AND review_kind = 'likely_new'
-    `, [args.entity, args.source]);
+        ${args.allowOutOfScope ? '' : `
+        AND UPPER(COALESCE(source_data->>'region', source_data->>'state', source_data->>'country', '')) = ANY($3::text[])`}
+    `, args.allowOutOfScope ? [args.entity, args.source] : [args.entity, args.source, configuredRegions()]);
     const liveStats = await annotateLiveNearby(client, result.rows, args);
     return { rows: aggregateLiveRows(result.rows, args), liveStats };
   } finally {
@@ -548,6 +569,7 @@ async function main() {
     source: args.source,
     min_signals: args.minSignals,
     nearby_radius_m: args.nearbyRadiusM,
+    scope: args.allowOutOfScope ? 'all' : configuredRegions(),
     live_stats: liveStats,
     totals,
     report_rows: trimmedRows,

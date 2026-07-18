@@ -27,9 +27,33 @@ Run the read-only report before promotion or sync:
 node scripts/ops/source-freshness-report.mjs
 ```
 
+By default, freshness is scoped to the active regions in
+`config/source-pipeline.json` (currently MI, NY, CA, and TX for pizza). Use
+`--states MI,NY` or `SOURCE_FRESHNESS_STATES=MI,NY` for a narrower operational
+check. This prevents historical evidence outside the active geographic scope
+from masking the freshness of the production input pipeline.
+
 Stale evidence remains available for audit but is not eligible to refresh
 contact fields. Source evidence cannot promote classifier or editorial fields,
 and lower-priority evidence must not overwrite newer higher-priority evidence.
+
+The report's `eligible_rows` count is the operational intersection of each
+source's configured freshness window and minimum match confidence. Its
+confidence-band counts are diagnostic only; they do not authorize promotion.
+The promotion CLI applies the same freshness, source-priority, match-method,
+and confidence rules again at query time, so a report cannot become a stale
+authorization to mutate canonical data.
+
+The canonical contract verifier also checks the configuration boundary itself:
+every source enabled in `config/source-pipeline.json` must have a matching
+policy entry with a valid priority, freshness window, confidence threshold,
+role, and declared capabilities. It also rejects policy entries that are not
+configured in the pipeline and rejects promotion orders that do not follow
+descending source priority. Run this before changing source configuration:
+
+```bash
+node scripts/ops/verify-canonical-contract.mjs
+```
 
 ## Current Table Count
 

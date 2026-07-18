@@ -2387,6 +2387,76 @@ app.get('/api/admin/source-review-queue/:id/history', requireAdminAuth, async (r
   }
 })
 
+app.patch('/api/admin/source-review-queue/:id/reopen', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  const reviewerNotes = typeof req.body?.reviewerNotes === 'string'
+    ? req.body.reviewerNotes.trim().slice(0, 1000)
+    : null
+
+  if (!id) return res.status(400).json({ error: 'Invalid source review queue id.' })
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      if (!(await sourceReviewQueueExists(client))) {
+        const error = new Error('source_review_queue is not configured.')
+        error.status = 503
+        throw error
+      }
+
+      const current = await client.query(`
+        SELECT *
+        FROM source_review_queue
+        WHERE id = $1
+      `, [id])
+      const row = current.rows[0]
+      if (!row) {
+        const error = new Error('Source review queue row not found.')
+        error.status = 404
+        throw error
+      }
+      if (row.status === 'pending') {
+        const error = new Error('Source review row is already pending.')
+        error.status = 400
+        throw error
+      }
+      if (row.status === 'linked') {
+        const error = new Error('Linked source rows require a separate unlink review so provenance is not removed accidentally.')
+        error.status = 400
+        throw error
+      }
+
+      const result = await client.query(`
+        UPDATE source_review_queue
+        SET
+          status = 'pending',
+          decision = NULL,
+          canonical_place_id = NULL,
+          reviewer_notes = COALESCE(NULLIF($2, ''), reviewer_notes),
+          reviewed_at = NULL,
+          reviewed_by = 'admin:reopened',
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `, [id, reviewerNotes])
+
+      await recordSourceReviewDecision(client, row, {
+        review_kind: row.review_kind,
+        status: 'pending',
+        decision: null,
+        canonical_place_id: null,
+        reviewer_notes: reviewerNotes,
+        reviewed_by: 'admin:reopened',
+      }, 'reopen')
+
+      return { data: result.rows[0] }
+    })
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review reopen error', error)
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to reopen source review row.' })
+  }
+})
+
 app.patch('/api/admin/source-review-queue/:id', requireAdminAuth, async (req, res) => {
   const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
   const status = (req.body?.status || '').toString()

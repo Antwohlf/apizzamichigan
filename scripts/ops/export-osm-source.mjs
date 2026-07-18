@@ -19,25 +19,26 @@ const query = `[out:json][timeout:${overpassTimeoutSeconds}];(nwr["amenity"="res
 const endpoints = (process.env.OVERPASS_ENDPOINTS
   ? process.env.OVERPASS_ENDPOINTS.split(',')
   : [
+      // This endpoint is currently the most responsive from the iMac. Keep
+      // the others as failover options because provider availability changes.
+      'https://overpass-api.de/api/interpreter',
       'https://overpass.kumi.systems/api/interpreter',
       'https://overpass.private.coffee/api/interpreter',
-      'https://overpass-api.de/api/interpreter',
     ]).map(value => value.trim()).filter(Boolean);
 let payload;
 const failures = [];
 for (const endpoint of endpoints) {
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetchWithHardTimeout(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'APizzaMichigan/1.0 source-pipeline' },
       body: new URLSearchParams({ data: query }),
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
+    }, requestTimeoutMs);
     if (!response.ok) {
       failures.push(`${endpoint}: ${response.status} ${response.statusText}`);
       continue;
     }
-    payload = await response.json();
+    payload = await withHardTimeout(() => response.json(), requestTimeoutMs);
     break;
   } catch (error) {
     failures.push(`${endpoint}: ${error.message}`);
@@ -71,4 +72,31 @@ console.log(JSON.stringify({ source: 'osm', rows: rows.length, output }));
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function fetchWithHardTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  return withHardTimeout(
+    () => fetch(url, { ...options, signal: controller.signal }),
+    timeoutMs,
+    () => controller.abort(),
+  );
+}
+
+async function withHardTimeout(operation, timeoutMs, onTimeout = () => {}) {
+  let timer;
+  try {
+    const operationResult = Promise.resolve().then(operation);
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        onTimeout();
+        const error = new Error(`Overpass operation timed out after ${timeoutMs}ms`);
+        error.code = 'ETIMEDOUT';
+        reject(error);
+      }, timeoutMs);
+    });
+    return await Promise.race([operationResult, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

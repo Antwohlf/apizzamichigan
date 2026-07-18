@@ -12,6 +12,7 @@ import { SiteTitle } from './header/SiteTitle'
 import { StatsPanel } from './sidebar/StatsPanel'
 import { MapPopupProvider, useMapPopup } from './map/useMapPopup'
 import DataDashboard from './pages/DataDashboard'
+import PlaceDetailPage from './pages/PlaceDetailPage'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
 import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
@@ -1142,9 +1143,10 @@ function SiteContainer({ themeKey }) {
       }
     }
 
-    loadSearchPlaces()
+    const debounceTimer = window.setTimeout(loadSearchPlaces, 250)
     return () => {
       isMounted = false
+      window.clearTimeout(debounceTimer)
     }
   }, [searchQuery, themeKey, isPizza, normalizePlaceData])
 
@@ -1509,6 +1511,14 @@ function ThemedRoute({ themeKey }) {
   )
 }
 
+function PlaceDetailRoute({ themeKey }) {
+  return (
+    <ThemeProvider themeKey={themeKey}>
+      <PlaceDetailPage themeKey={themeKey} />
+    </ThemeProvider>
+  )
+}
+
 export default function App() {
   return (
     <SelectedPlaceProvider>
@@ -1517,6 +1527,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<ThemedRoute themeKey={ThemeKeys.PIZZA} />} />
             <Route path="/tacos" element={<ThemedRoute themeKey={ThemeKeys.TACO} />} />
+            <Route path="/places/:id" element={<PlaceDetailRoute themeKey={ThemeKeys.PIZZA} />} />
+            <Route path="/tacos/places/:id" element={<PlaceDetailRoute themeKey={ThemeKeys.TACO} />} />
             <Route path="/data" element={<DataDashboard />} />
             <Route path="/admin/submit" element={<AdminSubmit />} />
             <Route path="/admin/reviews" element={<AdminReviewsPage />} />

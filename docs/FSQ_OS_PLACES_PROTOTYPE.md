@@ -359,12 +359,17 @@ issue, not just a DuckDB display issue:
 - Older public S3 Parquet release paths tested from the iMac were no longer
   readable as a fallback sample source.
 - The checked-in preflight now has a separate `validate_portal_tables` checklist
-  step. It stays blocked until `SELECT * FROM places LIMIT 0` works after
+  step. It stays blocked until `SELECT * FROM open_h3.places LIMIT 0` works after
   running `scripts/.fsq-portal-init.sql`.
 
 The preflight command exposes these same steps as `portal_setup_steps` in JSON
 and prints them in text mode, so the admin panel and generated handoff can show
 the current missing prerequisite instead of relying on memory.
+
+The checked-in Portal setup attaches the Iceberg catalog as `open_h3`, so the
+Portal exporter validates `open_h3.places` and `open_h3.categories` by default.
+If a Portal connection snippet exposes different aliases, override them with
+`FSQ_PLACES_TABLE` and `FSQ_CATEGORIES_TABLE`.
 
 Create the ignored Python tooling environment on the iMac. This is the same
 command emitted by `portal_setup_command`:
