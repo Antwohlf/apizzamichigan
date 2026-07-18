@@ -9,7 +9,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 
 const args = parseArgs(process.argv.slice(2))
@@ -21,6 +21,8 @@ const maxTiles = positiveInt(args['max-tiles'], Number.MAX_SAFE_INTEGER)
 const delayMs = nonNegativeInt(args['delay-ms'], 1500)
 const tileTimeoutMs = positiveInt(process.env.OSM_TILE_TIMEOUT_MS, 240000)
 const retryCooldownMs = positiveInt(process.env.OSM_RETRY_COOLDOWN_MS, 60 * 60 * 1000)
+const subtileConcurrency = positiveInt(process.env.OSM_SUBTILE_CONCURRENCY, 2)
+const maxRuntimeMs = positiveInt(process.env.OSM_EXPORT_MAX_RUNTIME_MS, 15 * 60 * 1000)
 const retryFailed = args['retry-failed'] === true || args['retry-failed'] === 'true'
 if (![south, west, north, east].every(Number.isFinite) || !output) {
   throw new Error('Usage: export-osm-tiles.mjs --bbox south,west,north,east --output file [--step 0.5] [--manifest file]')
@@ -48,7 +50,9 @@ for (const tile of Object.values(manifest.tiles)) {
 
 let processed = 0
 let deferred = 0
+const startedAt = Date.now()
 for (const tile of tiles) {
+  if (Date.now() - startedAt >= maxRuntimeMs) break
   const key = tileKey(tile)
   const prior = manifest.tiles[key]
   if (prior?.status === 'success' && args.resume !== 'false') continue
@@ -61,10 +65,22 @@ for (const tile of tiles) {
 
   const tileOutput = `${output}.${key}.json`
   try {
-    const result = runTile(tile, tileOutput, child, tileTimeoutMs, 0, prior?.subtiles)
+    const result = await runTile(tile, tileOutput, child, tileTimeoutMs, 0, prior?.subtiles)
     const rows = result.rows
     for (const row of rows) rowsById.set(row.id, row)
-    manifest.tiles[key] = { ...tile, status: 'success', rows, output: tileOutput, stdout: result.stdout, retry_count: 0, next_retry_at: null, completed_at: new Date().toISOString() }
+    manifest.tiles[key] = {
+      ...tile,
+      status: result.status || 'success',
+      rows,
+      output: tileOutput,
+      stdout: result.stdout,
+      retry_count: result.status === 'partial' ? Number(prior?.retry_count || 0) + 1 : 0,
+      next_retry_at: result.status === 'partial'
+        ? new Date(Date.now() + retryCooldownMs).toISOString()
+        : null,
+      ...(result.subtiles ? { subtiles: result.subtiles } : {}),
+      completed_at: new Date().toISOString()
+    }
   } catch (error) {
     const retryCount = Number(prior?.retry_count || 0) + 1
     const cooldown = Math.min(retryCooldownMs * (2 ** Math.max(0, retryCount - 1)), 6 * 60 * 60 * 1000)
@@ -139,16 +155,12 @@ function buildTiles(s, w, n, e, size) {
   return result
 }
 
-function runTile(tile, tileOutput, child, timeoutMs, depth = 0, resumeSubtiles = null) {
+async function runTile(tile, tileOutput, child, timeoutMs, depth = 0, resumeSubtiles = null) {
   if (depth === 0 && Array.isArray(resumeSubtiles) && resumeSubtiles.length) {
     return runSubtiles(resumeSubtiles, child, timeoutMs, tileOutput, depth)
   }
   try {
-    const stdout = execFileSync(process.execPath, [child, '--bbox', tile.bbox.join(','), '--output', tileOutput], {
-      encoding: 'utf8',
-      timeout: timeoutMs,
-      stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
+    const stdout = await runChild([child, '--bbox', tile.bbox.join(','), '--output', tileOutput], timeoutMs)
     return { rows: JSON.parse(readFileSync(tileOutput, 'utf8')), stdout }
   } catch (error) {
     // One split level is enough to reduce query size without allowing a
@@ -164,40 +176,135 @@ function runTile(tile, tileOutput, child, timeoutMs, depth = 0, resumeSubtiles =
   }
 }
 
-function runSubtiles(subtiles, child, timeoutMs, parentOutput, depth) {
+async function runSubtiles(subtiles, child, timeoutMs, parentOutput, depth) {
     const results = []
     const descriptors = []
-    for (const [index, subtile] of subtiles.entries()) {
+    const processSubtile = async (subtile, index) => {
       const subOutput = `${parentOutput}.sub${depth + 1}-${index}.json`
       if (subtile.status === 'success') {
-        results.push({ rows: subtile.rows || [], stdout: subtile.stdout || '' })
-        descriptors.push(subtile)
-        continue
+        return {
+          result: { rows: subtile.rows || [], stdout: subtile.stdout || '' },
+          descriptor: subtile,
+        }
       }
       try {
-        const result = runTile(subtile, subOutput, child, timeoutMs, depth)
-        results.push(result)
-        descriptors.push({ ...subtile, status: 'success', rows: result.rows, output: subOutput, stdout: result.stdout })
+        const result = await runTile(subtile, subOutput, child, timeoutMs, depth)
+        return {
+          result,
+          descriptor: {
+            ...subtile,
+            status: result.status || 'success',
+            rows: result.rows,
+            output: subOutput,
+            stdout: result.stdout,
+            ...(result.subtiles ? { subtiles: result.subtiles } : {}),
+          },
+        }
       } catch (error) {
-        descriptors.push({
-          ...subtile,
-          status: 'failed',
-          rows: [],
-          error: String(error.stderr || error.message || error).trim().slice(-2000),
-        })
+        return {
+          result: null,
+          descriptor: {
+            ...subtile,
+            status: 'failed',
+            rows: [],
+            error: String(error.stderr || error.message || error).trim().slice(-2000),
+          },
+        }
+      }
+    }
+
+    for (let start = 0; start < subtiles.length; start += subtileConcurrency) {
+      const batch = subtiles.slice(start, start + subtileConcurrency)
+      const batchResults = await Promise.all(batch.map((subtile, offset) => processSubtile(subtile, start + offset)))
+      for (const item of batchResults) {
+        if (item.result) results.push(item.result)
+        descriptors.push(item.descriptor)
       }
     }
     const failed = descriptors.filter(subtile => subtile.status !== 'success')
     if (failed.length) {
-      const error = new Error(`adaptive OSM tile recovery failed for ${failed.length} subtiles`)
-      error.subtiles = descriptors
-      throw error
-    }
+    // Preserve successful subtiles even when one or more siblings fail. The
+    // next run resumes only the failed subtiles instead of discarding useful
+    // source rows already fetched during this attempt.
     return {
+      status: 'partial',
       rows: [...new Map(results.flatMap(result => result.rows).map(row => [row.id, row])).values()],
       stdout: results.map(result => result.stdout).filter(Boolean).join('\n'),
       subtiles: descriptors,
     }
+  }
+  return {
+      status: 'success',
+      rows: [...new Map(results.flatMap(result => result.rows).map(row => [row.id, row])).values()],
+      stdout: results.map(result => result.stdout).filter(Boolean).join('\n'),
+      subtiles: descriptors,
+    }
+}
+
+function runChild(childArgs, timeoutMs) {
+  return new Promise((resolveChild, rejectChild) => {
+    const child = spawn(process.execPath, childArgs, {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    let settled = false
+    const rejectTimeout = () => {
+      if (settled) return
+      settled = true
+      const error = new Error(`OSM child timed out after ${timeoutMs}ms`)
+      error.code = 'ETIMEDOUT'
+      error.stderr = stderr
+      rejectChild(error)
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      killChildProcess(child)
+      // A descendant can inherit these pipes and prevent `close` from
+      // arriving even after the process group has been signalled. Reject now
+      // so the tile splitter/checkpoint loop can proceed deterministically.
+      child.stdout.destroy()
+      child.stderr.destroy()
+      rejectTimeout()
+    }, timeoutMs)
+    child.stdout.on('data', chunk => { stdout += chunk })
+    child.stderr.on('data', chunk => { stderr += chunk })
+    child.once('error', error => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      rejectChild(error)
+    })
+    child.once('close', code => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (timedOut) {
+        const error = new Error(`OSM child timed out after ${timeoutMs}ms`)
+        error.code = 'ETIMEDOUT'
+        error.stderr = stderr
+        rejectChild(error)
+      } else if (code !== 0) {
+        const error = new Error(`OSM child exited with code ${code}: ${stderr.trim().slice(-2000)}`)
+        error.stderr = stderr
+        rejectChild(error)
+      } else {
+        resolveChild(stdout.trim())
+      }
+    })
+  })
+}
+
+function killChildProcess(child) {
+  if (!child?.pid) return
+  // Detached process groups are not consistently addressable through
+  // process.kill(-pid) on macOS. Use the system kill utility as a fallback so
+  // a hung Overpass child cannot keep the scheduler occupied indefinitely.
+  try { process.kill(-child.pid, 'SIGKILL') } catch {}
+  try { child.kill('SIGKILL') } catch {}
+  try { spawnSync('/bin/kill', ['-KILL', String(child.pid)], { stdio: 'ignore' }) } catch {}
 }
 
 function isTimeout(error) {

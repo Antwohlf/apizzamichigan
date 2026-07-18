@@ -9,17 +9,19 @@ const CONFIG_PATH = resolve(ROOT, 'config/source-pipeline.json');
 const STATE_PATH = resolve(ROOT, 'scripts/.source-pipeline-state.json');
 const LOCK_PATH = '/tmp/apizzamichigan/source-pipeline.lock';
 const NODE = process.execPath;
+const OSM_PIPELINE_TIMEOUT_MS = Number.parseInt(process.env.OSM_PIPELINE_TIMEOUT_MS || '', 10) || 1200000;
 
 function args(argv) {
-  const out = { apply: false, source: 'all', maxWorkUnits: 2, maxNewPlaces: 5, json: false };
+  const out = { apply: false, source: 'all', maxWorkUnits: 2, maxNewPlaces: 5, json: false, force: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--apply') out.apply = true;
     else if (argv[i] === '--dry-run') out.apply = false;
     else if (argv[i] === '--source') out.source = argv[++i];
     else if (argv[i] === '--max-work-units') out.maxWorkUnits = Number(argv[++i]);
     else if (argv[i] === '--max-new-places') out.maxNewPlaces = Number(argv[++i]);
+    else if (argv[i] === '--force') out.force = true;
     else if (argv[i] === '--json') out.json = true;
-    else if (argv[i] === '--help') { console.log('Usage: node scripts/ops/run-source-pipeline.mjs [--dry-run|--apply] [--source key|all] [--max-work-units n] [--max-new-places n] [--json]'); process.exit(0); }
+    else if (argv[i] === '--help') { console.log('Usage: node scripts/ops/run-source-pipeline.mjs [--dry-run|--apply] [--source key|all] [--max-work-units n] [--max-new-places n] [--force] [--json]'); process.exit(0); }
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   if (!Number.isInteger(out.maxWorkUnits) || out.maxWorkUnits < 1) throw new Error('Invalid --max-work-units');
@@ -30,10 +32,28 @@ function args(argv) {
 function loadJson(path, fallback) { return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback; }
 function saveJson(path, value) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`); }
 function run(command, commandArgs, { timeout = 120000, env = process.env } = {}) {
-  const result = spawnSync(command, commandArgs, { cwd: ROOT, encoding: 'utf8', env, timeout, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Keep every adapter in its own process group. Node's spawnSync timeout
+  // stops the direct child, but it does not reliably reap descendants such
+  // as exporters, Python helpers, or HTTP clients.
+  const result = spawnSync(command, commandArgs, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env,
+    timeout,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error?.code === 'ETIMEDOUT' || result.signal === 'SIGTERM') {
+    killProcessGroup(result.pid);
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${commandArgs.join(' ')} failed: ${String(result.stderr || result.stdout).trim().slice(-3000)}`);
   return String(result.stdout || '').trim();
+}
+function killProcessGroup(pid) {
+  if (!pid) return;
+  try { process.kill(-Number(pid), 'SIGTERM'); } catch {}
+  try { process.kill(-Number(pid), 'SIGKILL'); } catch {}
 }
 function acquireLock() {
   mkdirSync(dirname(LOCK_PATH), { recursive: true });
@@ -59,6 +79,19 @@ function due(entry, now) { return !entry?.last_success || (now - Date.parse(entr
 function stampReport(source, region, output) {
   const report = resolve(ROOT, 'reports/source-review', `${source}-${region}-review.json`);
   return { input: output, report, reportFile: basename(report) };
+}
+function osmManifestPath(regionalOutput, bbox, step) {
+  const current = `${regionalOutput}.manifest.json`;
+  if (!existsSync(current)) return current;
+  try {
+    const manifest = loadJson(current, null);
+    const matchesBbox = Array.isArray(manifest?.bbox)
+      && manifest.bbox.length === bbox.length
+      && manifest.bbox.every((value, index) => Number(value) === Number(bbox[index]));
+    if (matchesBbox && Number(manifest.step) === Number(step)) return current;
+  } catch {}
+  const suffix = String(step).replace('.', 'p');
+  return `${regionalOutput.replace(/\.json$/, '')}.step-${suffix}.json.manifest.json`;
 }
 function assertSourceCapabilities(source, sourceConfig, required) {
   const capabilities = sourceConfig?.capabilities || [];
@@ -88,19 +121,29 @@ function runAdapter(source, region, output, config, state) {
     // tiled runner resumes completed Overpass tiles instead of re-querying a
     // whole region or losing progress when one endpoint fails.
     const regionalOutput = resolve(ROOT, 'reports/osm', `${region.key.toLowerCase()}-pizza.json`);
-    const manifest = `${regionalOutput}.manifest.json`;
+    const step = Number(config.sources.osm.tile_step || 0.5);
+    const defaultTilesPerRun = Number(config.sources.osm.tiles_per_run || 1);
+    const tilesPerRunByRegion = config.sources.osm.tiles_per_run_by_region || {};
+    const tilesPerRun = Number(tilesPerRunByRegion[region.key] || defaultTilesPerRun);
+    const tileTimeout = Number((config.sources.osm.tile_timeout_ms_by_region || {})[region.key] || config.sources.osm.tile_timeout_ms || 180000);
+    const requestTimeout = Number((config.sources.osm.overpass_request_timeout_ms_by_region || {})[region.key] || config.sources.osm.overpass_request_timeout_ms || 90000);
+    const queryTimeout = Number((config.sources.osm.overpass_query_timeout_seconds_by_region || {})[region.key] || config.sources.osm.overpass_query_timeout_seconds || 90);
+    const manifest = osmManifestPath(regionalOutput, region.bbox, step);
     mkdirSync(dirname(regionalOutput), { recursive: true });
     run(NODE, [
       'scripts/ops/export-osm-tiles.mjs',
       '--bbox', region.bbox.join(','),
-      '--step', String(config.sources.osm.tile_step || 0.5),
-      '--max-tiles', String(config.sources.osm.tiles_per_run || 1),
+      '--step', String(step),
+      '--max-tiles', String(tilesPerRun),
       '--output', regionalOutput,
       '--manifest', manifest,
-    ], { timeout: 900000 });
+    ], { timeout: OSM_PIPELINE_TIMEOUT_MS, env: { ...process.env, OSM_TILE_TIMEOUT_MS: String(tileTimeout), OVERPASS_REQUEST_TIMEOUT_MS: String(requestTimeout), OVERPASS_QUERY_TIMEOUT_SECONDS: String(queryTimeout) } });
     writeFileSync(output, readFileSync(regionalOutput));
   } else if (source === 'overture_places') {
-    run(resolve(ROOT, 'scripts/.fsq-venv/bin/python'), ['scripts/ops/export-overture-source.py', '--bbox', region.bbox.join(','), '--output', output, '--limit', String(config.limits.candidate_rows_per_source)], { timeout: 1200000 });
+    const overtureOutput = resolve(ROOT, 'data/source-inputs', `overture_places-${region.key}.json`);
+    const overtureManifest = `${overtureOutput}.manifest.json`;
+    run(resolve(ROOT, 'scripts/.fsq-venv/bin/python'), ['scripts/ops/export-overture-tiles.py', '--bbox', region.bbox.join(','), '--step', String(config.sources.overture_places.tile_step || 1), '--max-tiles', String(config.sources.overture_places.tiles_per_run || 1), '--output', overtureOutput, '--manifest', overtureManifest, '--limit', String(config.limits.candidate_rows_per_source)], { timeout: 1200000 });
+    writeFileSync(output, readFileSync(overtureOutput));
   } else if (source === 'wikidata') {
     run(NODE, ['scripts/ops/export-wikidata-source.mjs', '--output', output, '--limit', String(config.sources.wikidata.rows_per_run || 50)], { timeout: 240000 });
   } else if (source === 'fsq_os_places') {
@@ -143,6 +186,19 @@ function runWebsiteDrain(config, apply) {
   return output.slice(-1000);
 }
 
+function promoteContactFields(config, apply) {
+  if (!apply) return 'dry-run';
+  const maxUpdates = Number(config.limits.contact_promotions_per_run || 50);
+  const output = run(NODE, [
+    'scripts/ops/promote-source-contact-fields.mjs',
+    '--entity', config.entity,
+    '--fields', 'website_url,phone',
+    '--max-updates', String(maxUpdates),
+    '--apply',
+  ], { timeout: 180000 });
+  return output.slice(-2000);
+}
+
 const options = args(process.argv);
 const config = loadJson(CONFIG_PATH, null);
 if (!config) throw new Error(`Missing ${CONFIG_PATH}`);
@@ -150,11 +206,22 @@ if (!acquireLock()) { console.log('source pipeline already running; exiting'); p
 const now = Date.now();
 const state = loadJson(STATE_PATH, { sources: {}, region_index: 0, last_run: null });
 const selected = options.source === 'all' ? Object.keys(config.sources) : options.source.split(',').map(value => value.trim());
-const report = { started_at: new Date(now).toISOString(), mode: options.apply ? 'apply' : 'dry-run', work_units: [], errors: [] };
+const report = { started_at: new Date(now).toISOString(), mode: options.apply ? 'apply' : 'dry-run', work_units: [], skipped: [], errors: [] };
 let workUnits = 0;
 try {
   for (const source of selected) {
-    if (workUnits >= options.maxWorkUnits || !config.sources[source]?.enabled || !due({ ...config.sources[source], ...state.sources[source] }, now)) continue;
+    if (workUnits >= options.maxWorkUnits) {
+      report.skipped.push({ source, reason: 'max_work_units_reached' });
+      continue;
+    }
+    if (!config.sources[source]?.enabled) {
+      report.skipped.push({ source, reason: 'disabled' });
+      continue;
+    }
+    if (!options.force && !due({ ...config.sources[source], ...state.sources[source] }, now)) {
+      report.skipped.push({ source, reason: 'cadence_not_due' });
+      continue;
+    }
     const sourceState = state.sources[source] || {};
     // Each source owns its geographic cursor. A failed OSM tile or an
     // intentionally slower source must not advance the region schedule for
@@ -168,7 +235,10 @@ try {
       sourceState.last_error = `${sourceState.last_error || 'source failure'}\nRotated to next region before retry after ${rotationThreshold} consecutive failures; prior region remains resumable.`;
       state.sources[source] = sourceState;
     }
-    const region = config.regions[sourceState.region_index % config.regions.length];
+    const regionIndex = Number.isInteger(Number(sourceState.region_index))
+      ? Number(sourceState.region_index)
+      : 0;
+    const region = config.regions[regionIndex % config.regions.length];
     try {
       const sourceConfig = config.sources[source];
       if (!sourceConfig?.capabilities?.includes('enrich_evidence')) {
@@ -232,6 +302,12 @@ try {
         state.sources[source].last_error = `${message.slice(-4500)}\nRotated to next region after ${failures} consecutive failures; prior region remains resumable.`;
       }
     }
+  }
+  // Do not run downstream contact promotion on a no-op scheduler tick. A
+  // cadence-gated or failed source should not cause unrelated evidence to be
+  // promoted merely because the pipeline was invoked with --apply.
+  if (options.apply && workUnits > 0) {
+    report.contact_promotion = promoteContactFields(config, options.apply);
   }
   // Keep the legacy aggregate cursor for older status tooling, but derive
   // actual work selection from each source's cursor above.

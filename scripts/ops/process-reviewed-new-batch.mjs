@@ -11,6 +11,7 @@ import pg from 'pg';
 import Database from 'better-sqlite3';
 
 const NODE = process.execPath;
+const FOREGROUND_SCRAPE_LIMIT = Number.parseInt(process.env.REVIEW_BATCH_FOREGROUND_SCRAPE_LIMIT || '25', 10);
 
 function parseArgs(argv) {
   const args = {
@@ -302,6 +303,8 @@ async function main() {
 
   if (args.runScrape && addedScrapeJobs === 0) {
     console.log('No scrape jobs were added; skipping foreground scraper and classify wait.');
+  } else if (args.runScrape && addedScrapeJobs > FOREGROUND_SCRAPE_LIMIT) {
+    console.log(`Foreground scrape deferred for ${addedScrapeJobs} jobs; managed scraper owns batches above ${FOREGROUND_SCRAPE_LIMIT}.`);
   } else if (args.runScrape) {
     printStep('Run Scrape');
     console.log(runNode([

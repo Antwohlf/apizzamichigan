@@ -242,6 +242,8 @@ function portalExportCommand(args) {
     'scripts/.fsq-venv/bin/python',
     'scripts/ops/export-fsq-portal-duckdb-sample.py',
     '--init-sql-file', 'scripts/.fsq-portal-init.sql',
+    '--places-table', process.env.FSQ_PLACES_TABLE || 'open_h3.places',
+    '--categories-table', process.env.FSQ_CATEGORIES_TABLE || 'open_h3.categories',
     '--query', args.query,
     '--limit', String(args.exportLength * args.exportPages),
     '--output', args.input || args.output,
@@ -273,6 +275,8 @@ function validatePortalExportPath({ hasPortalToken, portalPythonDuckdbPresent, p
     const raw = execFileSync('scripts/.fsq-venv/bin/python', [
       'scripts/ops/export-fsq-portal-duckdb-sample.py',
       '--init-sql-file', 'scripts/.fsq-portal-init.sql',
+      '--places-table', process.env.FSQ_PLACES_TABLE || 'open_h3.places',
+      '--categories-table', process.env.FSQ_CATEGORIES_TABLE || 'open_h3.categories',
       '--validate-only',
       '--json',
     ], {

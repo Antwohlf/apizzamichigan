@@ -15,15 +15,23 @@
 import Database from 'better-sqlite3'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, mkdirSync as makeDirectory, rmSync, statSync, writeFileSync } from 'fs'
 import { calculatePriority } from './priority.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_DB_PATH = join(__dirname, '../.job-queue.db')
+const SQLITE_BUSY_RETRIES = 8
+const SQLITE_BUSY_RETRY_MS = 100
+const QUEUE_LOCK_STALE_MS = 120000
+
+function isSqliteBusy(error) {
+  return error?.code === 'SQLITE_BUSY' || error?.code === 'SQLITE_BUSY_SNAPSHOT'
+}
 
 export class JobQueue {
   constructor(dbPath = DEFAULT_DB_PATH) {
     this.dbPath = dbPath
+    this.writeLockPath = `${dbPath}.writer-lock`
     this.db = null
   }
 
@@ -105,6 +113,39 @@ export class JobQueue {
     }
   }
 
+  // BUSY_SNAPSHOT cannot be resolved inside the failed transaction. Retry the
+  // whole write transaction so it gets a fresh read snapshot.
+  withBusyRetry(operation) {
+    for (let attempt = 0; ; attempt++) {
+      let lockAcquired = false
+      try {
+        for (;;) {
+          try {
+            makeDirectory(this.writeLockPath)
+            writeFileSync(`${this.writeLockPath}/owner`, `${process.pid}\n`, 'utf8')
+            lockAcquired = true
+            break
+          } catch (error) {
+            if (error?.code !== 'EEXIST') throw error
+            try {
+              const age = Date.now() - statSync(this.writeLockPath).mtimeMs
+              if (age > QUEUE_LOCK_STALE_MS) rmSync(this.writeLockPath, { recursive: true, force: true })
+            } catch {
+              // Another writer may have released the lock between stat and cleanup.
+            }
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, SQLITE_BUSY_RETRY_MS)
+          }
+        }
+        return operation()
+      } catch (error) {
+        if (!isSqliteBusy(error) || attempt >= SQLITE_BUSY_RETRIES) throw error
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, SQLITE_BUSY_RETRY_MS * (attempt + 1))
+      } finally {
+        if (lockAcquired) rmSync(this.writeLockPath, { recursive: true, force: true })
+      }
+    }
+  }
+
   // =========================================================
   // JOB OPERATIONS
   // =========================================================
@@ -145,17 +186,25 @@ export class JobQueue {
       return added
     })
 
-    return insertMany(jobs)
+    return this.withBusyRetry(() => insertMany.immediate(jobs))
   }
 
   /**
    * Atomically claim the next available job
    */
   claim(jobType, workerId) {
-    const claim = this.db.transaction(() => {
-      // Find next available job
-      const job = this.db.prepare(`
-        SELECT id, osm_id, place_type, data, attempts
+    // Select and claim in one SQLite write statement. A read-then-update
+    // transaction can retain a stale WAL snapshot while another worker
+    // commits, producing SQLITE_BUSY_SNAPSHOT even with BEGIN IMMEDIATE.
+    const job = this.withBusyRetry(() => this.db.prepare(`
+      UPDATE jobs
+      SET
+        status = 'processing',
+        worker_id = ?,
+        started_at = datetime('now'),
+        attempts = attempts + 1
+      WHERE id = (
+        SELECT id
         FROM jobs
         WHERE job_type = ?
           AND status = 'pending'
@@ -165,21 +214,15 @@ export class JobQueue {
           priority DESC,
           created_at
         LIMIT 1
-      `).get(jobType)
+      )
+      RETURNING id, osm_id, place_type, data, attempts
+    `).get(workerId, jobType))
 
-      if (!job) return null
+    if (!job) return null
 
-      // Claim it atomically
-      this.db.prepare(`
-        UPDATE jobs
-        SET status = 'processing',
-            worker_id = ?,
-            started_at = datetime('now'),
-            attempts = attempts + 1
-        WHERE id = ?
-      `).run(workerId, job.id)
-
-      // Update worker state
+    this.withBusyRetry(() => {
+      // Worker metadata is ancillary to the job claim. Keep it as a separate
+      // short write so the critical claim cannot be held by worker bookkeeping.
       this.db.prepare(`
         UPDATE workers
         SET status = 'working',
@@ -187,17 +230,15 @@ export class JobQueue {
             last_heartbeat = datetime('now')
         WHERE worker_id = ?
       `).run(job.id, workerId)
-
-      return {
-        id: job.id,
-        osmId: job.osm_id,
-        placeType: job.place_type,
-        data: job.data ? JSON.parse(job.data) : null,
-        attempts: job.attempts + 1
-      }
     })
 
-    return claim()
+    return {
+      id: job.id,
+      osmId: job.osm_id,
+      placeType: job.place_type,
+      data: job.data ? JSON.parse(job.data) : null,
+      attempts: job.attempts
+    }
   }
 
   /**
@@ -227,7 +268,7 @@ export class JobQueue {
       }
     })
 
-    complete()
+    this.withBusyRetry(() => complete.immediate())
   }
 
   /**
@@ -264,7 +305,7 @@ export class JobQueue {
       }
     })
 
-    fail()
+    this.withBusyRetry(() => fail.immediate())
   }
 
   /**
@@ -305,7 +346,7 @@ export class JobQueue {
       }
     })
 
-    retry()
+    this.withBusyRetry(() => retry.immediate())
   }
 
   /**
@@ -365,7 +406,7 @@ export class JobQueue {
       return candidates.length
     })
 
-    return recover()
+    return this.withBusyRetry(() => recover.immediate())
   }
 
   getStaleProcessingJobs(timeoutMinutes = 10, jobType = null) {
@@ -431,7 +472,7 @@ export class JobQueue {
       this.db.prepare('DELETE FROM workers WHERE worker_id = ?').run(workerId)
     })
 
-    unregister()
+    this.withBusyRetry(() => unregister.immediate())
   }
 
   /**

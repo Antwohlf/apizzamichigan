@@ -19,8 +19,13 @@ const scrapeAheadMinimum = positiveInt(process.env.PIPELINE_SCRAPE_AHEAD_MINIMUM
 const duplicateWarningLimit = positiveInt(process.env.PIPELINE_DUPLICATE_WARNING_LIMIT, 0)
 const staleSourceWarningLimit = positiveInt(process.env.PIPELINE_STALE_SOURCE_WARNING_LIMIT, 1000)
 const scrapeExhaustedWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_EXHAUSTED_WARNING_LIMIT, 500)
+const scrapeBlockedWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_BLOCKED_WARNING_LIMIT, 100)
+const scrapeDeadLinkWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_DEAD_LINK_WARNING_LIMIT, 100)
+const scrapeUnknownWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_UNKNOWN_WARNING_LIMIT, 100)
 const canonicalDuplicateRateLimit = Math.max(0, Number.parseFloat(process.env.PIPELINE_CANONICAL_DUPLICATE_RATE_LIMIT || '1'))
 const sourcePipelineStaleMinutes = positiveInt(process.env.PIPELINE_SOURCE_STALE_MINUTES, 180)
+const reviewBacklogWarningLimit = positiveInt(process.env.PIPELINE_REVIEW_BACKLOG_WARNING_LIMIT, 5000)
+const staleProcessingMinutes = positiveInt(process.env.PIPELINE_STALE_PROCESSING_MINUTES, 120)
 
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10)
@@ -56,6 +61,7 @@ function sourcePipelineReport() {
 function main() {
   const alerts = []
   const warnings = []
+  const actions = []
   const classifier = child('classifier-health-report.mjs')
   const scrapeFailures = child('scrape-failure-report.mjs')
   const identity = child('identity-quality-report.mjs')
@@ -63,6 +69,7 @@ function main() {
   const sourceQuality = child('source-quality-report.mjs')
   const sourcePipeline = sourcePipelineReport()
   let queue = null
+  let staleProcessingJobs = []
 
   if (!existsSync(dbPath)) alerts.push(`queue DB missing: ${dbPath}`)
   else {
@@ -72,6 +79,15 @@ function main() {
         SELECT job_type || ':' || status AS key, COUNT(*) AS count
         FROM jobs GROUP BY job_type, status
       `).all().map(row => [row.key, Number(row.count)]))
+      staleProcessingJobs = db.prepare(`
+        SELECT id, job_type, osm_id, worker_id, started_at,
+          ROUND((julianday('now') - julianday(started_at)) * 1440, 1) AS minutes_processing
+        FROM jobs
+        WHERE status = 'processing'
+          AND started_at IS NOT NULL
+          AND started_at < datetime('now', ?)
+        ORDER BY started_at
+      `).all(`-${staleProcessingMinutes} minutes`)
     } catch (error) {
       alerts.push(`queue read failed: ${error.message}`)
     } finally {
@@ -110,6 +126,12 @@ function main() {
   if (duplicateRate > canonicalDuplicateRateLimit) {
     alerts.push(`canonical likely-duplicate rate exceeds limit: ${duplicateRate}% > ${canonicalDuplicateRateLimit}%`)
   }
+  const pendingReviewRows = (sourceQuality.review_queue || [])
+    .filter(row => row.status === 'pending')
+    .reduce((total, row) => total + Number(row.rows || 0), 0)
+  if (pendingReviewRows > reviewBacklogWarningLimit) {
+    warnings.push(`source-review backlog is ${pendingReviewRows} rows > ${reviewBacklogWarningLimit}`)
+  }
   if (!sourcePipeline.ok) alerts.push(sourcePipeline.error)
   else {
     if (sourcePipeline.ageMinutes == null || sourcePipeline.ageMinutes > sourcePipelineStaleMinutes) {
@@ -120,11 +142,27 @@ function main() {
     }
   }
 
-  const unknown = scrapeFailures.summary?.unknown ?? null
+  const scrapeRecent = scrapeFailures.summary?.recent_categories || scrapeFailures.summary?.categories || {}
+  const unknown = scrapeRecent.unknown ?? null
   if (unknown != null && unknown > unknownFailureLimit) alerts.push(`unknown scrape failures exceed limit: ${unknown} > ${unknownFailureLimit}`)
-  const exhausted = scrapeFailures.summary?.transientAtMaxAttempts ?? null
+  const blocked = scrapeRecent.blocked ?? null
+  if (blocked != null && blocked > scrapeBlockedWarningLimit) {
+    warnings.push(`blocked scrape failures: ${blocked} > ${scrapeBlockedWarningLimit}`)
+    actions.push('Review robots/403 failures by host; do not bulk-retry blocked URLs.')
+  }
+  const deadLink = scrapeRecent.dead_link ?? null
+  if (deadLink != null && deadLink > scrapeDeadLinkWarningLimit) {
+    warnings.push(`dead-link scrape failures: ${deadLink} > ${scrapeDeadLinkWarningLimit}`)
+    actions.push('Run the dead-link cleanup/report and refresh source website evidence before retrying.')
+  }
+  if (unknown != null && unknown > scrapeUnknownWarningLimit && unknown <= unknownFailureLimit) {
+    warnings.push(`unknown scrape failures: ${unknown} > ${scrapeUnknownWarningLimit}`)
+    actions.push('Inspect unknown scrape errors by host before changing retry policy.')
+  }
+  const exhausted = scrapeFailures.summary?.recent_categories?.transient ?? 0
   if (exhausted != null && exhausted > scrapeExhaustedWarningLimit) {
     warnings.push(`transient scrape jobs exhausted retry attempts: ${exhausted} > ${scrapeExhaustedWarningLimit}`)
+    actions.push('Run the bounded transient scrape recovery command in dry-run mode, then apply a small batch.')
   }
   if (queue) {
     const pendingScrape = queue['scrape:pending'] || 0
@@ -134,6 +172,10 @@ function main() {
     // idle waiting for website evidence. A smaller scrape backlog is the risk.
     if (pendingScrape < pendingClassify) warnings.push(`scrape backlog is behind classifier demand: scrape=${pendingScrape}, classify=${pendingClassify}`)
     if ((queue['classify:processing'] || 0) > 0 && classifier.queue?.staleProcessingJobs?.length) alerts.push(`stale classifier processing jobs: ${classifier.queue.staleProcessingJobs.length}`)
+    if (staleProcessingJobs.length) {
+      alerts.push(`stale processing jobs across pipeline: ${staleProcessingJobs.length} > ${staleProcessingMinutes} minutes`)
+      actions.push('Inspect the listed job IDs and recover only jobs whose worker heartbeat is stale.')
+    }
   }
 
   const state = alerts.length ? 'FAIL' : warnings.length ? 'WARN' : 'OK'
@@ -142,8 +184,9 @@ function main() {
     state,
     alerts,
     warnings,
-    thresholds: { unknownFailureLimit, scrapeAheadMinimum, duplicateWarningLimit, staleSourceWarningLimit, scrapeExhaustedWarningLimit, canonicalDuplicateRateLimit, sourcePipelineStaleMinutes },
+    thresholds: { unknownFailureLimit, scrapeAheadMinimum, duplicateWarningLimit, staleSourceWarningLimit, scrapeExhaustedWarningLimit, scrapeBlockedWarningLimit, scrapeDeadLinkWarningLimit, scrapeUnknownWarningLimit, canonicalDuplicateRateLimit, sourcePipelineStaleMinutes, reviewBacklogWarningLimit, staleProcessingMinutes },
     queue,
+    staleProcessingJobs,
     classifier: { state: classifier.health?.state || classifier.state || 'FAIL', recent: classifier.queue?.recent || null },
     scrapeFailures: scrapeFailures.summary || null,
     identity: {
@@ -155,7 +198,8 @@ function main() {
     },
     freshness: freshness.sources || null
     ,sourceQuality: sourceQuality.accepted_duplicate_coordinates || null
-    ,sourcePipeline
+    ,sourcePipeline,
+    actions: [...new Set(actions)]
   }
   if (json) console.log(JSON.stringify(report, null, 2))
   else {
@@ -164,6 +208,7 @@ function main() {
     console.log(`warnings=${warnings.length}`)
     for (const item of alerts) console.log(`ALERT: ${item}`)
     for (const item of warnings) console.log(`WARN: ${item}`)
+    for (const item of [...new Set(actions)]) console.log(`ACTION: ${item}`)
   }
   if (state === 'FAIL') process.exitCode = 1
 }

@@ -61,6 +61,11 @@ function displayLocation(place: Place) {
   return place.address
 }
 
+function internalDetailHref(place: Place) {
+  const prefix = place.type === 'taco' ? '/tacos/places' : '/places'
+  return `${prefix}/${encodeURIComponent(place.id)}`
+}
+
 function getRoot(node: HTMLElement) {
   let root = roots.get(node)
   if (!root) {
@@ -155,6 +160,27 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
         ) : null}
       </div>
       <div className="actions">
+        {place.href ? (
+          <a
+            href={place.href}
+            className="popup-link--details"
+            onClick={stopPopupEvent}
+            onMouseDown={stopPopupEvent}
+            onPointerDown={stopPopupEvent}
+          >
+            View place details
+          </a>
+        ) : (
+          <a
+            href={internalDetailHref(place)}
+            className="popup-link--details"
+            onClick={stopPopupEvent}
+            onMouseDown={stopPopupEvent}
+            onPointerDown={stopPopupEvent}
+          >
+            View place details
+          </a>
+        )}
         <a
           target="_blank"
           rel="noopener noreferrer"

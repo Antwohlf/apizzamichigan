@@ -76,6 +76,29 @@ describe('renderExpanded', () => {
     expect(screen.queryByTestId('review-gallery-thumbnail')).not.toBeInTheDocument()
   })
 
+  test('links places without a legacy href to the public detail route', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Routeable Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+        },
+        jest.fn()
+      )
+    })
+
+    expect(screen.getByRole('link', { name: /view place details/i })).toHaveAttribute(
+      'href',
+      '/places/123'
+    )
+  })
+
   test('renders compact status and location details for expanded popups', () => {
     // renderExpanded owns a detached React root outside Testing Library's render helper.
     // eslint-disable-next-line testing-library/no-unnecessary-act
@@ -94,6 +117,7 @@ describe('renderExpanded', () => {
           rating: 8.4,
           city: 'Detroit',
           state: 'MI',
+          href: '/?poi=pizza:123',
         },
         jest.fn()
       )
@@ -103,6 +127,10 @@ describe('renderExpanded', () => {
     expect(screen.getByText('$$')).toBeInTheDocument()
     expect(screen.getByText('Anthony reviewed')).toBeInTheDocument()
     expect(screen.getByText('Detroit, MI')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view place details/i })).toHaveAttribute(
+      'href',
+      '/?poi=pizza:123'
+    )
     expect(screen.getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
       'href',
       expect.stringContaining('google.com/maps/search')

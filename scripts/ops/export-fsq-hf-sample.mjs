@@ -11,6 +11,8 @@ import { resolve } from 'path';
 import { execFileSync } from 'child_process';
 
 const DEFAULT_DATASET = 'foursquare/fsq-os-places';
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.FSQ_REQUEST_TIMEOUT_MS || '', 10) || 30000;
+const DATASET_LOADING_RETRIES = Number.parseInt(process.env.FSQ_LOADING_RETRIES || '', 10) || 3;
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return {};
@@ -100,7 +102,7 @@ function printHelp() {
 Options:
   --dataset <id>      Hugging Face dataset id
                       (default foursquare/fsq-os-places)
-  --config <name>     Dataset Viewer config (default default)
+  --config <name>     Dataset Viewer config (default places)
   --split <name>      Dataset Viewer split (default train)
   --query <text>      Text search query; omit/empty to use /rows
                       (default pizza)
@@ -142,27 +144,45 @@ function normalizeRow(row) {
 }
 
 async function fetchJson(url, token) {
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-    },
-  });
+  for (let attempt = 0; attempt <= DATASET_LOADING_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      });
 
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // Keep the raw text for a useful error below.
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        // Keep the raw text for a useful error below.
+      }
+
+      if (res.ok) return json;
+
+      const message = json?.error || json?.message || text || `${res.status} ${res.statusText}`;
+      const loading = /dataset index is loading|dataset is loading/i.test(message);
+      if (!loading || attempt >= DATASET_LOADING_RETRIES) {
+        throw new Error(`Dataset Viewer request failed: ${message}`);
+      }
+      const backoffMs = Math.min(5000 * (2 ** attempt), 30000);
+      console.error(`Dataset Viewer index is loading; retrying in ${backoffMs}ms (${attempt + 1}/${DATASET_LOADING_RETRIES})`);
+      await new Promise(resolveDelay => setTimeout(resolveDelay, backoffMs));
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`Dataset Viewer request timed out after ${REQUEST_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-
-  if (!res.ok) {
-    const message = json?.error || json?.message || text || `${res.status} ${res.statusText}`;
-    throw new Error(`Dataset Viewer request failed: ${message}`);
-  }
-
-  return json;
 }
 
 async function main() {

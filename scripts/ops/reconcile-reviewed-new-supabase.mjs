@@ -5,7 +5,27 @@ import pg from 'pg';
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
-const limit = Math.min(Math.max(Number(process.argv[2] || 25), 1), 25);
+const options = parseArgs(process.argv.slice(2));
+
+function parseArgs(argv) {
+  const options = { limit: 25, apply: false, json: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--apply') options.apply = true;
+    else if (arg === '--json') options.json = true;
+    else if (arg === '--limit') options.limit = Number(argv[++index]);
+    else if (/^\d+$/.test(arg)) options.limit = Number(arg);
+    else if (arg === '--help') {
+      console.log('Usage: node scripts/ops/reconcile-reviewed-new-supabase.mjs [--limit n] [--apply] [--json]');
+      console.log('Default mode is read-only. --apply is required to insert missing reviewed-new rows.');
+      process.exit(0);
+    } else throw new Error(`Unknown argument: ${arg}`);
+  }
+  if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 250) {
+    throw new Error('--limit must be an integer between 1 and 250');
+  }
+  return options;
+}
 const pgClient = new pg.Client({ host: 'localhost', database: 'pizza_enrichment', user: process.env.PGUSER || process.env.USER });
 await pgClient.connect();
 const { rows } = await pgClient.query(`
@@ -37,8 +57,19 @@ if (!ids.length) { console.log('reviewed-new Supabase reconciliation: no classif
 const { data, error } = await supabase.from('pizza_places').select('id').in('id', ids);
 if (error) throw error;
 const present = new Set((data || []).map(row => Number(row.id)));
-const missing = ids.filter(id => !present.has(Number(id))).slice(0, limit);
-if (!missing.length) { console.log(`reviewed-new Supabase reconciliation: no missing rows among ${ids.length} candidates`); process.exit(0); }
+const missing = ids.filter(id => !present.has(Number(id))).slice(0, options.limit);
+const result = {
+  candidate_count: ids.length,
+  missing_count: missing.length,
+  missing_ids: missing,
+  mode: options.apply ? 'apply' : 'dry-run',
+};
+if (options.json) console.log(JSON.stringify(result));
+else {
+  console.log(`reviewed-new Supabase reconciliation: ${ids.length} classified candidates, ${missing.length} missing`);
+  if (missing.length) console.log(`missing ids: ${missing.join(',')}`);
+}
+if (!missing.length || !options.apply) process.exit(0);
 
 console.log(`reviewed-new Supabase reconciliation: inserting ${missing.length} rows`);
 execFileSync(process.execPath, [

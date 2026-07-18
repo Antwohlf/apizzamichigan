@@ -8,24 +8,28 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((out, value, index,
   return out;
 }, []));
 const output = args.output;
-const limit = Math.min(Number(args.limit || 50), 100);
-if (!output) throw new Error('Usage: export-wikidata-source.mjs --output file [--limit n]');
+// Keep requests below the Wikidata API's practical URL/response ceiling. A
+// larger candidate query can return an empty entity map without an HTTP error.
+const limit = Math.min(Number(args.limit || 25), 25);
+const states = String(args.states || '').split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
+if (!output) throw new Error('Usage: export-wikidata-source.mjs --output file [--limit n<=25]');
 
 const client = new pg.Client({ host: 'localhost', database: 'pizza_enrichment', user: process.env.PGUSER || process.env.USER });
 await client.connect();
 const { rows: places } = await client.query(`
-  SELECT DISTINCT ON (qid) qid, id, name, lat, lng
-  FROM (
-    SELECT id, name, lat, lng, NULLIF(regexp_replace(COALESCE(brand_wikidata, ''), '^https?://www\\.wikidata\\.org/entity/', ''), '') qid FROM pizza_places
+    SELECT DISTINCT ON (qid) qid, id, name, state, lat, lng
+    FROM (
+    SELECT id, name, state, lat, lng, NULLIF(btrim(COALESCE(brand_wikidata, '')), '') qid FROM pizza_places
     UNION ALL
-    SELECT id, name, lat, lng, NULLIF(regexp_replace(COALESCE(operator_wikidata, ''), '^https?://www\\.wikidata\\.org/entity/', ''), '') qid FROM pizza_places
-  ) candidates
-  WHERE qid ~ '^Q[0-9]+$'
+    SELECT id, name, state, lat, lng, NULLIF(btrim(COALESCE(operator_wikidata, '')), '') qid FROM pizza_places
+    ) candidates
+    WHERE btrim(qid) ~ '^Q[0-9]+$'
+      ${states.length ? 'AND UPPER(state) = ANY($2::text[])' : ''}
   ORDER BY qid, id
   LIMIT $1
-`, [limit]);
+`, states.length ? [limit, states] : [limit]);
 await client.end();
-if (!places.length) { writeFileSync(output, '[]\n'); console.log(JSON.stringify({ source: 'wikidata', rows: 0, output })); process.exit(0); }
+if (!places.length) { writeFileSync(output, '[]\n'); console.log(JSON.stringify({ source: 'wikidata', rows: 0, candidates: 0, states: states.length ? states : 'all', output })); process.exit(0); }
 
 const ids = places.map(row => row.qid).join('|');
 const url = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(ids)}&props=claims|labels|sitelinks&languages=en&format=json`;
@@ -41,4 +45,4 @@ const rows = Object.entries(payload.entities || {}).map(([qid, entity]) => {
   return { item: qid, name: label, lat: place.lat, lng: place.lng, official_website: website, category: 'known pizza place', source_url: `https://www.wikidata.org/wiki/${qid}` };
 });
 writeFileSync(output, `${JSON.stringify(rows, null, 2)}\n`);
-console.log(JSON.stringify({ source: 'wikidata', rows: rows.length, output }));
+console.log(JSON.stringify({ source: 'wikidata', rows: rows.length, candidates: places.length, entities: Object.keys(payload.entities || {}).length, states: states.length ? states : 'all', output }));

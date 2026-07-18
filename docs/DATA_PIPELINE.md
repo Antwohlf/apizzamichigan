@@ -25,6 +25,13 @@ The current local-first pipeline is:
    - classification: `scripts/enrichment/agents/llm-classifier.mjs`
 4. Sync approved local enrichment fields back to Supabase with `scripts/sync-local-to-supabase.mjs`.
 
+In apply mode, the scheduled source runner also performs a bounded contact
+promotion step after source work. It fills blank `website_url` and `phone`
+values from fresh, high-confidence `place_sources` evidence, capped by
+`config/source-pipeline.json` -> `limits.contact_promotions_per_run`
+(currently 50). This remains fill-if-blank only and never changes identity,
+editorial, classifier, or Supabase data.
+
 Current production rollout is classifier-first with guarded automated Supabase
 sync. OSM extraction, scraping, and menu parse remain manual/opt-in until their
 source and quality policies are tightened.

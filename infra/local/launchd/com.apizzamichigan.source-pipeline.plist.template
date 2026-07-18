@@ -12,6 +12,19 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/ant/clawd/projects/apizzamichigan</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OVERPASS_QUERY_TIMEOUT_SECONDS</key>
+    <string>90</string>
+    <key>OVERPASS_REQUEST_TIMEOUT_MS</key>
+    <string>120000</string>
+    <key>OSM_TILE_TIMEOUT_MS</key>
+    <string>180000</string>
+    <key>OSM_PIPELINE_TIMEOUT_MS</key>
+    <string>1200000</string>
+    <key>OSM_EXPORT_MAX_RUNTIME_MS</key>
+    <string>900000</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>

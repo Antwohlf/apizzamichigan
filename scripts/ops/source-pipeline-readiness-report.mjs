@@ -102,7 +102,7 @@ function osmStatus(files) {
   const configuredRegions = new Map((pipelineConfig.regions || []).map(region => [region.key, region.bbox]));
   let activeManifestCount = 0;
   assertEvidence(files.osmExporter.includes('OVERPASS_ENDPOINTS'), 'OSM exporter supports endpoint failover', evidence);
-  assertEvidence(files.osmExporter.includes('AbortSignal.timeout'), 'OSM exporter bounds each Overpass request', evidence);
+  assertEvidence(files.osmExporter.includes('fetchWithHardTimeout') && files.osmExporter.includes('controller.abort()'), 'OSM exporter hard-aborts each Overpass request', evidence);
   assertEvidence(files.osmTiles.includes('manifest') && files.osmTiles.includes('rowsById'), 'OSM tiled runner supports checkpoints and deduplication', evidence);
   const configuredManifest = process.env.OSM_TILE_MANIFEST || '';
   const discoveredManifests = configuredManifest
@@ -114,9 +114,11 @@ function osmStatus(files) {
     for (const manifestPath of discoveredManifests) {
       if (!existsSync(manifestPath)) continue;
       const manifest = JSON.parse(read(manifestPath));
-      const regionKey = manifestPath.split('/').pop().replace(/-pizza\.json\.manifest\.json$/, '').toUpperCase();
+      const manifestName = manifestPath.split('/').pop();
+      const regionKey = manifestPath.split('/').pop().replace(/-pizza(?:\.step-[^.]*)?\.json\.manifest\.json$/, '').toUpperCase();
       const expectedBbox = configuredRegions.get(regionKey);
-      if (Number(manifest.step) !== configuredStep || (expectedBbox && JSON.stringify(manifest.bbox) !== JSON.stringify(expectedBbox))) {
+      const isHistoricalStepManifest = manifestName.includes('.step-') && !configuredManifest;
+      if (isHistoricalStepManifest || Number(manifest.step) !== configuredStep || (expectedBbox && JSON.stringify(manifest.bbox) !== JSON.stringify(expectedBbox))) {
         evidence.push(`superseded_tile_manifest=${manifestPath}`);
         continue;
       }
@@ -128,7 +130,20 @@ function osmStatus(files) {
       evidence.push(`tile_statuses=${JSON.stringify(statuses)}`);
       if (!statuses.success) remaining.push(`${manifestPath} has no successful tiles`);
       if (statuses.failed) remaining.push(`${manifestPath}: ${statuses.failed} OSM tiles failed and need retry`);
-      if ((statuses.success || 0) + (statuses.failed || 0) < tileCount) remaining.push(`${manifestPath} is incomplete; unprocessed tiles remain`);
+      if (statuses.partial) {
+        remaining.push(`${manifestPath}: ${statuses.partial} adaptive partial tile(s) need retry or operator review`);
+      }
+      const processedTiles = (statuses.success || 0) + (statuses.partial || 0) + (statuses.failed || 0);
+      const unprocessedTiles = Math.max(tileCount - processedTiles, 0);
+      const osmConfig = pipelineConfig.sources?.osm || {};
+      const tilesPerRun = Number(osmConfig.tiles_per_run_by_region?.[regionKey] || osmConfig.tiles_per_run || 1);
+      const cadenceHours = Number(osmConfig.cadence_hours || 1);
+      const estimatedRuns = tilesPerRun > 0 ? Math.ceil(unprocessedTiles / tilesPerRun) : null;
+      const estimatedHours = estimatedRuns === null ? null : estimatedRuns * cadenceHours;
+      evidence.push(`unprocessed_tiles=${unprocessedTiles}`);
+      evidence.push(`estimated_runs_remaining=${estimatedRuns ?? 'unknown'}`);
+      evidence.push(`estimated_hours_remaining=${estimatedHours ?? 'unknown'}`);
+      if (unprocessedTiles > 0) remaining.push(`${manifestPath} is incomplete; ${unprocessedTiles} unprocessed tiles remain`);
     }
   } else {
     remaining.push('no successful regional OSM tile manifest has been verified');
@@ -137,6 +152,7 @@ function osmStatus(files) {
     remaining.push('no active regional OSM tile manifest matches the configured tile geometry');
   }
   if (!files.osmExporter.includes('OVERPASS_ENDPOINTS')) remaining.push('OSM endpoint failover missing');
+  if (!files.osmExporter.includes('fetchWithHardTimeout') || !files.osmExporter.includes('controller.abort()')) remaining.push('OSM request hard timeout missing');
   if (!files.osmTiles.includes('manifest')) remaining.push('resumable OSM tile runner missing');
   return { item: 'OSM regional refresh', status: remaining.length ? 'partial' : 'ready', evidence, remaining };
 }

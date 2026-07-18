@@ -54,6 +54,7 @@ function parseArgs(argv) {
     nearbyRadiusM: 150,
     prefetchTileDegrees: 1,
     prefetchBatchSize: 100,
+    allowOutOfScope: false,
     apply: false,
     json: false,
   };
@@ -70,6 +71,7 @@ function parseArgs(argv) {
     else if (arg === '--nearby-radius-m') args.nearbyRadiusM = parseFloat(argv[++i]);
     else if (arg === '--prefetch-tile-degrees') args.prefetchTileDegrees = parseFloat(argv[++i]);
     else if (arg === '--prefetch-batch-size') args.prefetchBatchSize = parseInt(argv[++i], 10);
+    else if (arg === '--allow-out-of-scope') args.allowOutOfScope = true;
     else if (arg === '--apply') args.apply = true;
     else if (arg === '--json') args.json = true;
     else if (arg === '--help') {
@@ -115,6 +117,8 @@ Options:
                              (default 1)
   --prefetch-batch-size <n>  Number of tiles per canonical prefetch query
                              (default 100)
+  --allow-out-of-scope       Include rows outside config/source-pipeline.json
+                             region keys (default is configured scope only)
   --apply                    Mark candidates accepted
   --json                     Emit JSON instead of Markdown
 
@@ -179,6 +183,13 @@ async function tableExists(client, tableName) {
   return Boolean(result.rows[0]?.exists);
 }
 
+function configuredRegions() {
+  const path = resolve(process.cwd(), 'config/source-pipeline.json');
+  if (!existsSync(path)) return [];
+  const config = JSON.parse(readFileSync(path, 'utf8'));
+  return [...new Set((config.regions || []).map(region => String(region?.key || '').trim().toUpperCase()).filter(Boolean))];
+}
+
 async function fetchCandidates(client, args) {
   const values = [args.entity, args.minSignals];
   const filters = [
@@ -200,6 +211,12 @@ async function fetchCandidates(client, args) {
   if (args.state) {
     values.push(String(args.state).trim().toUpperCase());
     filters.push(`UPPER(COALESCE(source_data->>'region', source_data->>'state', source_data->>'country', '')) = $${values.length}`);
+  }
+  if (!args.allowOutOfScope) {
+    const regions = configuredRegions();
+    if (!regions.length) throw new Error('Configured source scope is empty; use --allow-out-of-scope only for an intentional override.');
+    values.push(regions);
+    filters.push(`UPPER(COALESCE(source_data->>'region', source_data->>'state', source_data->>'country', '')) = ANY($${values.length}::text[])`);
   }
 
   values.push(args.limit);
@@ -391,6 +408,37 @@ async function loadCanonicalPlaces(client, tableName, payloads, { radiusM, tileD
   return { rows: [...byId.values()], tileCount: tiles.length, queryCount };
 }
 
+async function loadAcceptedSourceCoordinates(client, rows, args) {
+  const located = rows
+    .map(row => ({
+      id: row.id,
+      lat: sourceCoordinate(row, ['lat', 'latitude']),
+      lng: sourceCoordinate(row, ['lng', 'lon', 'longitude']),
+    }))
+    .filter(row => row.lat !== null && row.lng !== null);
+  if (!located.length) return new Map();
+
+  const coordinateValues = [];
+  const coordinateClauses = located.map(row => {
+    coordinateValues.push(row.lat, row.lng);
+    const latParam = 4 + coordinateValues.length - 2;
+    const lngParam = 4 + coordinateValues.length - 1;
+    return `(ABS(COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', ''))::double precision - $${latParam}) < 0.00001 AND ABS(COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', ''))::double precision - $${lngParam}) < 0.00001)`;
+  });
+  const result = await client.query(`
+    SELECT id, source_data
+    FROM source_review_queue
+    WHERE entity_type = $1
+      AND source = $2
+      AND status IN ('accepted', 'linked')
+      AND id <> ALL($3::bigint[])
+      AND (${coordinateClauses.join(' OR ')})
+  `, [args.entity, args.source, located.map(row => row.id), ...coordinateValues]);
+  const duplicateIds = new Map();
+  for (const row of result.rows) duplicateIds.set(String(row.id), row);
+  return duplicateIds;
+}
+
 async function filterImportReadyCandidates(client, rows, args) {
   if (!rows.length) {
     return {
@@ -413,8 +461,12 @@ async function filterImportReadyCandidates(client, rows, args) {
   const canonicalPlaces = canonicalPrefetch.rows;
   const gridCellDegrees = 0.02;
   const placeGrid = buildPlaceGrid(canonicalPlaces, gridCellDegrees);
+  const sourceDuplicates = args.source
+    ? await loadAcceptedSourceCoordinates(client, rows, args)
+    : new Map();
   const candidates = [];
   let skippedNearby = 0;
+  let skippedSourceDuplicate = 0;
 
   rows.forEach((row, index) => {
     const payload = payloads[index];
@@ -431,6 +483,21 @@ async function filterImportReadyCandidates(client, rows, args) {
       row.nearest_distance_m = nearest.distance_m;
       return;
     }
+    if (sourceDuplicates.size) {
+      const duplicate = [...sourceDuplicates.values()].find(existing => {
+        const existingLat = sourceCoordinate(existing, ['lat', 'latitude']);
+        const existingLng = sourceCoordinate(existing, ['lng', 'lon', 'longitude']);
+        return existingLat !== null && existingLng !== null
+          && Math.abs(existingLat - payload.lat) < 0.00001
+          && Math.abs(existingLng - payload.lng) < 0.00001;
+      });
+      if (duplicate) {
+        skippedSourceDuplicate += 1;
+        row.review_readiness = 'source_duplicate_review';
+        row.source_duplicate_review_id = duplicate.id;
+        return;
+      }
+    }
     candidates.push(row);
   });
 
@@ -438,6 +505,7 @@ async function filterImportReadyCandidates(client, rows, args) {
     candidates: candidates.slice(0, args.limit),
     scanned: rows.length,
     skippedNearby,
+    skippedSourceDuplicate,
     canonicalRowsPrefetched: canonicalPlaces.length,
     canonicalPrefetchTiles: canonicalPrefetch.tileCount,
     canonicalPrefetchQueries: canonicalPrefetch.queryCount,
@@ -511,6 +579,7 @@ function outputReport({ args, candidates, applyResult, statusCounts, filterResul
     nearby_radius_m: args.nearbyRadiusM,
     scanned: filterResult.scanned,
     skipped_nearby_canonical: filterResult.skippedNearby,
+    skipped_source_duplicate: filterResult.skippedSourceDuplicate,
     canonical_rows_prefetched: filterResult.canonicalRowsPrefetched,
     canonical_prefetch_tiles: filterResult.canonicalPrefetchTiles,
     canonical_prefetch_queries: filterResult.canonicalPrefetchQueries,
@@ -536,6 +605,7 @@ function outputReport({ args, candidates, applyResult, statusCounts, filterResul
   console.log(`Minimum source signals: ${payload.min_signals}/4`);
   console.log(`Rows scanned before nearby filtering: ${payload.scanned}`);
   console.log(`Nearby-canonical rows skipped: ${payload.skipped_nearby_canonical}`);
+  console.log(`Same-source coordinate duplicates skipped: ${payload.skipped_source_duplicate}`);
   console.log(`Nearby duplicate radius: ${payload.nearby_radius_m}m`);
   console.log(`Canonical rows prefetched: ${payload.canonical_rows_prefetched}`);
   console.log(`Canonical prefetch tiles: ${payload.canonical_prefetch_tiles}`);

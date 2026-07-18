@@ -16,6 +16,9 @@ function parseArgs(argv) {
     inputDir: 'reports/source-review',
     output: null,
     kind: 'all',
+    source: null,
+    reportFile: null,
+    state: null,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -23,6 +26,9 @@ function parseArgs(argv) {
     if (arg === '--input-dir') args.inputDir = argv[++i];
     else if (arg === '--output') args.output = argv[++i];
     else if (arg === '--kind') args.kind = argv[++i];
+    else if (arg === '--source') args.source = argv[++i];
+    else if (arg === '--report-file') args.reportFile = argv[++i];
+    else if (arg === '--state') args.state = String(argv[++i] || '').trim().toUpperCase();
     else if (arg === '--help') {
       printHelp();
       process.exit(0);
@@ -48,6 +54,9 @@ Options:
                              (default reports/source-review-<kind>.csv)
   --kind <all|ambiguous|likely_new>
                              Review rows to export (default all)
+  --source <key>             Limit to one source key
+  --report-file <file>       Limit to one chain/report artifact
+  --state <code>             Limit to source_data.region/state code
 
 Decision columns are intentionally blank: decision, canonical_place_id,
 reviewer_notes.
@@ -90,21 +99,26 @@ function rowFromItem({ report, file, kind, item }) {
   };
 }
 
-function readRows(inputDir, kind) {
+function readRows(inputDir, args) {
+  const { kind, source, reportFile, state } = args;
   const absDir = resolve(process.cwd(), inputDir);
   if (!existsSync(absDir)) return [];
 
   const rows = [];
   for (const file of readdirSync(absDir).filter(name => name.endsWith('-review.json')).sort()) {
+    if (reportFile && file !== reportFile) continue;
     const report = JSON.parse(readFileSync(join(absDir, file), 'utf8'));
+    if (source && report.source !== source) continue;
     if (kind === 'all' || kind === 'ambiguous') {
       for (const item of report.ambiguous || []) {
-        rows.push(rowFromItem({ report, file, kind: 'ambiguous', item }));
+        const row = rowFromItem({ report, file, kind: 'ambiguous', item });
+        if (!state || String(sourceField(item, 'region') || sourceField(item, 'state')).toUpperCase() === state) rows.push(row);
       }
     }
     if (kind === 'all' || kind === 'likely_new') {
       for (const item of report.likely_new || []) {
-        rows.push(rowFromItem({ report, file, kind: 'likely_new', item }));
+        const row = rowFromItem({ report, file, kind: 'likely_new', item });
+        if (!state || String(sourceField(item, 'region') || sourceField(item, 'state')).toUpperCase() === state) rows.push(row);
       }
     }
   }
@@ -113,7 +127,7 @@ function readRows(inputDir, kind) {
 
 function main() {
   const args = parseArgs(process.argv);
-  const rows = readRows(args.inputDir, args.kind);
+  const rows = readRows(args.inputDir, args);
   const headers = [
     'decision',
     'canonical_place_id',

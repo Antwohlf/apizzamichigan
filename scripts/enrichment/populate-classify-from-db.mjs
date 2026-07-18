@@ -81,7 +81,15 @@ async function main() {
   const queue = dryRun ? null : getQueue()
 
   const clauses = [
-    "scrape_method = 'fetch'",
+    `(scrape_method = 'fetch'
+      OR osm_tags IS NOT NULL
+      OR EXISTS (
+        SELECT 1
+        FROM place_sources ps
+        WHERE ps.entity_type = 'pizza'
+          AND ps.place_id = pizza_places.id
+          AND ps.match_confidence >= 0.9
+      ))`,
     '(style IS NULL OR price_range IS NULL)'
   ]
   const params = []
