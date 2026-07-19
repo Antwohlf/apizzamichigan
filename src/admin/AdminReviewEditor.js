@@ -15,7 +15,7 @@ const DROPZONE_BORDER_COLOR = 'var(--app-border, #2b2f31)'
 
 const dropzoneBaseStyles = {
   border: '2px dashed var(--app-border, #2b2f31)',
-  borderRadius: 12,
+  borderRadius: 8,
   padding: '1.5rem',
   textAlign: 'center',
   background: 'rgba(32,34,36,0.4)',
@@ -139,6 +139,12 @@ export default function AdminReviewEditor({
     emitUpload(files)
   }
 
+  const handleDropzoneKeyDown = event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    if (!uploading && remainingSlots > 0) handleBrowseClick()
+  }
+
   const handleCardDragStart = index => event => {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', String(index))
@@ -204,17 +210,18 @@ export default function AdminReviewEditor({
 
   return (
     <section
+      className="admin-photo-editor"
       style={{
         border: '1px solid var(--app-border, #2b2f31)',
-        borderRadius: 16,
-        padding: '1.5rem',
-        background: 'rgba(24,26,27,0.9)',
-        marginBottom: '1.5rem',
+        borderRadius: 8,
+        padding: '1.25rem',
+        background: '#191b1a',
+        marginBottom: '1.25rem',
       }}
     >
       <header style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ margin: 0, color: '#f97316' }}>{review.name || 'Untitled Location'}</h3>
+          <h3 style={{ margin: 0, color: '#f3f4f2', fontSize: '1rem' }}>Review details</h3>
           <p style={{ margin: '0.5rem 0', color: 'var(--app-text-muted, #9ca3af)', maxWidth: '56ch' }}>
             {formatLabel(review.review || review.notes || review.description, 'No review text provided yet.')}
           </p>
@@ -252,24 +259,19 @@ export default function AdminReviewEditor({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
+        onKeyDown={handleDropzoneKeyDown}
         role="button"
         tabIndex={0}
+        aria-label={remainingSlots > 0 ? 'Upload review photos' : 'Photo limit reached'}
+        aria-busy={uploading}
         style={dropzoneStyles}
       >
         <p style={{ margin: '0 0 0.5rem' }}>
           Drag &amp; drop review photos here, or{' '}
           <button
+            className="admin-button admin-button--primary"
             type="button"
             onClick={handleBrowseClick}
-            style={{
-              background: '#f97316',
-              border: 'none',
-              borderRadius: 6,
-              color: '#fff',
-              fontWeight: 600,
-              padding: '0.4rem 0.9rem',
-              cursor: uploading ? 'progress' : 'pointer',
-            }}
             disabled={uploading || remainingSlots === 0}
           >
             Browse
@@ -317,7 +319,7 @@ export default function AdminReviewEditor({
                 onDrop={handleCardDrop(index)}
                 style={{
                   background: 'rgba(17,17,17,0.8)',
-                  borderRadius: 12,
+                  borderRadius: 8,
                   overflow: 'hidden',
                   border: '1px solid rgba(255,255,255,0.08)',
                   position: 'relative',
@@ -344,15 +346,12 @@ export default function AdminReviewEditor({
                 >
                   <small style={{ fontSize: '0.75rem', opacity: 0.9 }}>#{index + 1}</small>
                   <button
+                    className="admin-button admin-button--danger"
                     type="button"
                     onClick={handleDelete(photo)}
                     disabled={deletingId === photo.id || reordering}
                     style={{
-                      border: 'none',
-                      borderRadius: 6,
                       padding: '0.25rem 0.5rem',
-                      background: '#ef4444',
-                      color: '#fff',
                       fontSize: '0.75rem',
                       cursor: deletingId === photo.id ? 'progress' : 'pointer',
                     }}

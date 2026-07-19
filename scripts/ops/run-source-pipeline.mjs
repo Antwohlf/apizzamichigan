@@ -7,6 +7,7 @@ import { basename, dirname, resolve } from 'node:path';
 const ROOT = process.cwd();
 const CONFIG_PATH = resolve(ROOT, 'config/source-pipeline.json');
 const STATE_PATH = resolve(ROOT, 'scripts/.source-pipeline-state.json');
+const LAST_REPORT_PATH = resolve(ROOT, 'scripts/.source-pipeline-last-report.json');
 const LOCK_PATH = '/tmp/apizzamichigan/source-pipeline.lock';
 const NODE = process.execPath;
 const OSM_PIPELINE_TIMEOUT_MS = Number.parseInt(process.env.OSM_PIPELINE_TIMEOUT_MS || '', 10) || 1200000;
@@ -151,7 +152,12 @@ function runAdapter(source, region, output, config, state) {
   } else throw new Error(`No adapter for ${source}`);
   const paths = stampReport(source, region.key, output);
   run(NODE, ['scripts/ops/source-input-sample-report.mjs', '--source', source, '--input', paths.input, '--entity', config.entity, '--max-distance-m', '100', '--limit', String(config.limits.candidate_rows_per_source), '--sample', '10', '--review-output', paths.report, ...(config.apply ? ['--apply'] : [])], { timeout: 600000 });
-  if (config.apply) run(NODE, ['scripts/ops/import-source-review-queue.mjs', '--input-files', paths.report, '--entity', config.entity, '--apply'], { timeout: 180000 });
+  if (config.apply) {
+    run(NODE, ['scripts/ops/import-source-review-queue.mjs', '--input-files', paths.report, '--entity', config.entity, '--apply'], { timeout: 180000 });
+    if (source === 'all_the_places') {
+      run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 });
+    }
+  }
   return paths;
 }
 function runAtp(region, config, state, apply, maxSpiders) {
@@ -259,6 +265,9 @@ try {
         assertSourceCapabilities(source, sourceConfig, ['discover', 'match_existing', 'enrich_evidence']);
         const result = runAtp(region, config, state.sources, options.apply, config.sources[source].spiders_per_run || 3);
         report.work_units.push({ source, region: region.key, spiders: result?.selected || [] });
+        if (options.apply) {
+          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 }).slice(-2000);
+        }
         for (const spider of result?.selected || []) {
           processNew(resolve(ROOT, 'reports/source-review', `${spider}-review.json`), source, config, options.apply, options.maxNewPlaces);
         }
@@ -315,12 +324,18 @@ try {
   state.last_run = new Date().toISOString();
   if (options.apply) saveJson(STATE_PATH, state);
   report.finished_at = new Date().toISOString();
+  // Keep the last scheduler result separate from the cursor state. This gives
+  // launchd and read-only health checks an exact result even when a run made
+  // no progress or one source failed while the others continued.
+  saveJson(LAST_REPORT_PATH, report);
   console.log(options.json ? JSON.stringify(report, null, 2) : `source pipeline ${report.mode}: work_units=${workUnits} errors=${report.errors.length}`);
   // A source-level failure is recorded in state and the JSON report for the
-  // health/alerting layer. Keep the scheduler itself successful so one
-  // transient provider or failed OSM tile cannot take the hourly pipeline out
-  // of service and prevent unrelated sources from running.
+  // health/alerting layer. The other sources still get their work units, but
+  // the overall scheduler result remains non-zero so automation can alert.
   if (report.errors.length && !options.json) {
     console.log(`source pipeline warnings: ${report.errors.map(error => error.source).join(', ')}`);
   }
+  // Preserve partial progress, but make the scheduler result observable as a
+  // failure to launchd, shell callers, and external alerting.
+  if (report.errors.length) process.exitCode = 1;
 } finally { releaseLock(); }

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import AdminReviewsPage from './AdminReviewsPage'
 
@@ -35,20 +35,35 @@ const reviewRows = [
   },
 ]
 
+const response = payload => ({
+  ok: true,
+  json: async () => payload,
+  text: async () => JSON.stringify(payload),
+})
+
 describe('AdminReviewsPage', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/admin/reviews?entity=pizza')
     global.fetch = jest.fn(async url => {
-      if (url === '/api/admin/check') {
-        return {
-          ok: true,
-          json: async () => ({ authorized: true }),
-        }
+      if (url === '/api/admin/check') return response({ authorized: true })
+      if (url === '/api/admin/source-review-summary?entity=pizza') {
+        return response({
+          data: {
+            available: true,
+            queues: {
+              matchExisting: 12,
+              checkDuplicates: 7,
+              approveNew: 24,
+              incomplete: 3,
+              approvedForImport: 5,
+            },
+            linkedPlaces: 1200,
+          },
+        })
       }
-      if (url === '/api/admin/reviews?entity=pizza') {
-        return {
-          ok: true,
-          json: async () => ({ data: reviewRows }),
-        }
+      if (url === '/api/admin/reviews?entity=pizza') return response({ data: reviewRows })
+      if (url === '/api/admin/suggestions?entity=pizza&status=pending') {
+        return response({ data: [{ id: 1, name: 'Suggested Pizza' }] })
       }
       throw new Error(`Unexpected fetch: ${url}`)
     })
@@ -58,44 +73,38 @@ describe('AdminReviewsPage', () => {
     jest.restoreAllMocks()
   })
 
-  test('shows a compact matching-review selector and renders only the selected editor', async () => {
+  test('shows a concise task home with human-readable work queues', async () => {
     render(<AdminReviewsPage />)
 
-    expect(await screen.findByRole('heading', { name: /review photos/i })).toBeInTheDocument()
-    expect(await screen.findByText('3/3')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Admin' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Work to do' })).toBeInTheDocument()
 
-    const matchingReviews = screen.getByLabelText(/matching reviews/i)
-    expect(within(matchingReviews).getByRole('button', { name: /l'industrie pizza/i })).toBeInTheDocument()
-    expect(within(matchingReviews).getByRole('button', { name: /buddy’s pizza/i })).toBeInTheDocument()
-    expect(within(matchingReviews).getByRole('button', { name: /pizza house/i })).toBeInTheDocument()
-
-    expect(screen.getByRole('heading', { level: 3, name: /l'industrie pizza/i })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { level: 3, name: /buddy’s pizza/i })).not.toBeInTheDocument()
-
-    userEvent.click(within(matchingReviews).getByRole('button', { name: /buddy’s pizza/i }))
-
-    expect(await screen.findByRole('heading', { level: 3, name: /buddy’s pizza/i })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { level: 3, name: /l'industrie pizza/i })).not.toBeInTheDocument()
+    const tasks = screen.getByRole('list')
+    expect(within(tasks).getByText('Match source records to existing places')).toBeInTheDocument()
+    expect(within(tasks).getByText('Check possible duplicates')).toBeInTheDocument()
+    expect(within(tasks).getByText('Approve genuinely new places')).toBeInTheDocument()
+    expect(within(tasks).getByText('Import approved places')).toBeInTheDocument()
+    expect(within(tasks).getByText('Review community suggestions')).toBeInTheDocument()
+    expect(within(tasks).getByText('Add missing review photos')).toBeInTheDocument()
+    expect(await within(tasks).findByLabelText('24 remaining')).toBeInTheDocument()
   })
 
-  test('shows the current editing target and supports stepping through filtered reviews', async () => {
+  test('shows a bounded photo result list and only one selected editor', async () => {
+    window.history.replaceState({}, '', '/admin/reviews/photos?entity=pizza')
     render(<AdminReviewsPage />)
 
     expect(await screen.findByRole('heading', { name: /review photos/i })).toBeInTheDocument()
-    expect(await screen.findByText('3/3')).toBeInTheDocument()
+    const matchingReviews = await screen.findByLabelText(/matching reviewed places/i)
+    expect(within(matchingReviews).getByRole('button', { name: /l'industrie pizza/i })).toBeInTheDocument()
+    expect(within(matchingReviews).getByRole('button', { name: /buddy’s pizza/i })).toBeInTheDocument()
 
     const selectedReview = screen.getByLabelText(/selected review/i)
-    expect(within(selectedReview).getByText(/editing 1 of 3 matching reviews/i)).toBeInTheDocument()
     expect(within(selectedReview).getByRole('heading', { name: /l'industrie pizza/i })).toBeInTheDocument()
-    expect(within(selectedReview).getByText(/104 christopher st, ny/i)).toBeInTheDocument()
-    expect(within(selectedReview).getByText(/new york · \$\$ · 1\/10 photos/i)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /buddy’s pizza/i })).not.toBeInTheDocument()
 
-    userEvent.click(within(selectedReview).getByRole('button', { name: /next/i }))
-
-    const nextSelectedReview = await screen.findByLabelText(/selected review/i)
-    expect(within(nextSelectedReview).getByText(/editing 2 of 3 matching reviews/i)).toBeInTheDocument()
-    expect(within(nextSelectedReview).getByRole('heading', { name: /buddy’s pizza/i })).toBeInTheDocument()
-    expect(within(nextSelectedReview).getByText(/17125 conant st, mi/i)).toBeInTheDocument()
-    expect(within(nextSelectedReview).getByText(/detroit · \$\$ · 0\/10 photos/i)).toBeInTheDocument()
+    userEvent.click(within(matchingReviews).getByRole('button', { name: /buddy’s pizza/i }))
+    await waitFor(() => {
+      expect(screen.getByLabelText(/selected review/i)).toHaveTextContent('Buddy’s Pizza')
+    })
   })
 })

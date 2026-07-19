@@ -1,314 +1,266 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { Check, ExternalLink } from 'lucide-react'
 
 const STATUS_OPTIONS = [
-  { id: 'pending', label: 'Pending' },
+  { id: 'pending', label: 'To review' },
   { id: 'approved', label: 'Approved' },
   { id: 'rejected', label: 'Rejected' },
 ]
 
-const STATUS_COLORS = {
-  pending: '#fbbf24',
-  approved: '#34d399',
-  rejected: '#f87171',
+const formatDate = value => {
+  if (!value) return 'Unknown date'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
 }
 
-const formatDateTime = value => {
-  if (!value) return '—'
-  try {
-    return new Date(value).toLocaleString()
-  } catch (err) {
-    return value
-  }
+function RejectDialog({ suggestion, reason, busy, onReasonChange, onCancel, onConfirm }) {
+  if (!suggestion) return null
+  return (
+    <div className="admin-modal" role="presentation">
+      <button className="admin-scrim" type="button" onClick={onCancel} aria-label="Cancel rejection" />
+      <section className="admin-modal__panel" role="dialog" aria-modal="true" aria-labelledby="suggestion-reject-title">
+        <h2 id="suggestion-reject-title">Reject {suggestion.name}?</h2>
+        <p>This removes the suggestion from the active inbox. Add a reason when it will help explain the decision later.</p>
+        <label className="admin-field">
+          <span>Reason (optional)</span>
+          <textarea value={reason} onChange={event => onReasonChange(event.target.value)} autoFocus />
+        </label>
+        <div className="admin-modal__actions">
+          <button className="admin-button admin-button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="admin-button admin-button--danger" type="button" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Rejecting…' : 'Reject suggestion'}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 export default function AdminSuggestionsPanel({ entity }) {
-  const [statusFilter, setStatusFilter] = useState('pending')
+  const [status, setStatus] = useState('pending')
+  const [suggestions, setSuggestions] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [suggestions, setSuggestions] = useState([])
-  const [actionState, setActionState] = useState({})
   const [message, setMessage] = useState('')
-
-  const showActions = statusFilter === 'pending'
+  const [busy, setBusy] = useState(false)
+  const [rejecting, setRejecting] = useState(null)
+  const [rejectReason, setRejectReason] = useState('')
 
   useEffect(() => {
-    setStatusFilter('pending')
+    setStatus('pending')
+    setSelectedId(null)
   }, [entity])
 
-  const headerCopy = useMemo(() => {
-    if (statusFilter === 'approved') {
-      return 'Places that have already been greenlit.'
-    }
-    if (statusFilter === 'rejected') {
-      return 'Suggestions that were turned down (with the reason).'
-    }
-    return 'Incoming suggestions that still need review.'
-  }, [statusFilter])
-
-  const fetchSuggestions = useMemo(
-    () => async () => {
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
       setLoading(true)
       setError('')
       setMessage('')
       try {
-        const params = new URLSearchParams({ status: statusFilter })
-        if (entity) {
-          params.set('entity', entity)
-        }
-        const res = await fetch(`/api/admin/suggestions?${params.toString()}`, {
-          credentials: 'include',
-        })
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || 'Failed to load suggestions.')
-        }
-        const payload = await res.json()
-        if (!Array.isArray(payload?.data)) {
-          throw new Error('Unexpected response from server')
-        }
-        setSuggestions(payload.data)
+        const response = await fetch(`/api/admin/suggestions?entity=${entity}&status=${status}`, { credentials: 'include' })
+        if (!response.ok) throw new Error(await response.text() || 'Failed to load suggestions.')
+        const payload = await response.json()
+        if (!cancelled) setSuggestions(Array.isArray(payload?.data) ? payload.data : [])
       } catch (err) {
-        console.error('[admin] fetch suggestions error', err)
-        setError(err?.message || 'Unable to load suggestions right now.')
-        setSuggestions([])
+        if (!cancelled) {
+          setSuggestions([])
+          setError(err?.message || 'Failed to load suggestions.')
+        }
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
-    },
-    [entity, statusFilter]
-  )
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [entity, status])
 
   useEffect(() => {
-    fetchSuggestions()
-  }, [fetchSuggestions])
+    if (!suggestions.length) {
+      setSelectedId(null)
+    } else if (!suggestions.some(item => item.id === selectedId)) {
+      setSelectedId(suggestions[0].id)
+    }
+  }, [selectedId, suggestions])
 
-  const updateAfterAction = updated => {
-    setSuggestions(prev => {
-      if (!Array.isArray(prev)) return []
-      if (updated.status !== statusFilter) {
-        return prev.filter(item => item.id !== updated.id)
-      }
-      return prev.map(item => (item.id === updated.id ? updated : item))
-    })
+  const selectedIndex = useMemo(
+    () => suggestions.findIndex(item => item.id === selectedId),
+    [selectedId, suggestions]
+  )
+  const selected = selectedIndex >= 0 ? suggestions[selectedIndex] : null
+  const visibleSuggestions = suggestions.slice(Math.max(0, selectedIndex - 3), Math.max(8, selectedIndex + 5)).slice(0, 8)
+
+  const removeSelected = updated => {
+    setSuggestions(current => current.filter(item => item.id !== updated.id))
+    setSelectedId(null)
   }
 
-  const handleApprove = async suggestion => {
-    setActionState(prev => ({ ...prev, [suggestion.id]: 'approving' }))
+  const approve = async () => {
+    if (!selected || busy) return
+    setBusy(true)
     setError('')
-    setMessage('')
     try {
-      const res = await fetch(`/api/admin/suggestions/${suggestion.id}/approve`, {
+      const response = await fetch(`/api/admin/suggestions/${selected.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Approval failed.')
-      }
-      const payload = await res.json()
-      if (payload?.data) {
-        updateAfterAction(payload.data)
-        setMessage(`Approved "${payload.data.name}" and created a location record.`)
-      }
+      if (!response.ok) throw new Error(await response.text() || 'Approval failed.')
+      const payload = await response.json()
+      if (payload?.data) removeSelected(payload.data)
+      setMessage(`Approved ${selected.name}.`)
     } catch (err) {
-      console.error('[admin] approve suggestion error', err)
-      setError(err?.message || 'Unable to approve this suggestion.')
+      setError(err?.message || 'Approval failed.')
     } finally {
-      setActionState(prev => {
-        const next = { ...prev }
-        delete next[suggestion.id]
-        return next
-      })
+      setBusy(false)
     }
   }
 
-  const handleReject = async suggestion => {
-    if (typeof window === 'undefined') {
-      return
-    }
-    const reason = window.prompt('Why are you rejecting this suggestion?', '')
-    if (reason === null) return
-
-    setActionState(prev => ({ ...prev, [suggestion.id]: 'rejecting' }))
+  const reject = async () => {
+    if (!rejecting || busy) return
+    setBusy(true)
     setError('')
-    setMessage('')
     try {
-      const res = await fetch(`/api/admin/suggestions/${suggestion.id}/reject`, {
+      const response = await fetch(`/api/admin/suggestions/${rejecting.id}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify({ reason: rejectReason.trim() }),
       })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text || 'Rejection failed.')
-      }
-      const payload = await res.json()
-      if (payload?.data) {
-        updateAfterAction(payload.data)
-        setMessage(`Rejected "${payload.data.name}".`)
-      }
+      if (!response.ok) throw new Error(await response.text() || 'Rejection failed.')
+      const payload = await response.json()
+      if (payload?.data) removeSelected(payload.data)
+      setMessage(`Rejected ${rejecting.name}.`)
+      setRejecting(null)
+      setRejectReason('')
     } catch (err) {
-      console.error('[admin] reject suggestion error', err)
-      setError(err?.message || 'Unable to reject this suggestion.')
+      setError(err?.message || 'Rejection failed.')
     } finally {
-      setActionState(prev => {
-        const next = { ...prev }
-        delete next[suggestion.id]
-        return next
-      })
+      setBusy(false)
     }
   }
 
   return (
-    <div
-      style={{
-        border: '1px solid rgba(148, 163, 184, 0.25)',
-        borderRadius: 16,
-        background: '#161b20',
-        padding: '1.75rem',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
-        <div>
-          <h2 style={{ margin: 0, color: '#f97316' }}>Suggestions</h2>
-          <p style={{ margin: '0.35rem 0 0', color: '#94a3b8', fontSize: '0.95rem' }}>{headerCopy}</p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {STATUS_OPTIONS.map(option => {
-            const active = statusFilter === option.id
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setStatusFilter(option.id)}
-                style={{
-                  padding: '0.4rem 0.9rem',
-                  borderRadius: 999,
-                  border: active ? '1px solid #f97316' : '1px solid #374151',
-                  background: active ? '#f97316' : 'transparent',
-                  color: active ? '#fff' : '#cbd5f5',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                {option.label}
-              </button>
-            )
-          })}
-        </div>
+    <div className="admin-content">
+      <div className="admin-queue-tabs" role="tablist" aria-label="Suggestion status">
+        {STATUS_OPTIONS.map(option => (
+          <button
+            className={`admin-queue-tab${status === option.id ? ' is-active' : ''}`}
+            type="button"
+            role="tab"
+            aria-selected={status === option.id}
+            key={option.id}
+            onClick={() => {
+              setStatus(option.id)
+              setSelectedId(null)
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
 
-      {message && <p style={{ marginTop: '1rem', color: '#34d399' }}>{message}</p>}
-      {error && <p style={{ marginTop: '1rem', color: '#f87171' }}>{error}</p>}
-      {loading && <p style={{ marginTop: '1rem', color: '#fbbf24' }}>Loading suggestions…</p>}
-
-      {!loading && !error && suggestions.length === 0 && (
-        <p style={{ marginTop: '1.25rem', color: '#94a3b8' }}>No suggestions in this bucket right now.</p>
-      )}
-
-      {!loading && !error && suggestions.length > 0 && (
-        <div style={{ marginTop: '1.5rem', overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '720px' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', color: '#cbd5f5', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                <th style={{ paddingBottom: '0.75rem' }}>Name</th>
-                <th style={{ paddingBottom: '0.75rem' }}>Address</th>
-                <th style={{ paddingBottom: '0.75rem' }}>Submitted</th>
-                <th style={{ paddingBottom: '0.75rem' }}>Recommendation</th>
-                <th style={{ paddingBottom: '0.75rem' }}>Status</th>
-                <th style={{ paddingBottom: '0.75rem', textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {suggestions.map(suggestion => {
-                const pendingAction = actionState[suggestion.id]
-                const statusColor = STATUS_COLORS[suggestion.status] || '#e2e8f0'
-                return (
-                  <tr key={suggestion.id} style={{ borderTop: '1px solid rgba(148, 163, 184, 0.15)' }}>
-                    <td style={{ padding: '0.75rem 0.5rem', verticalAlign: 'top' }}>
-                      <div style={{ fontWeight: 600, color: '#f8fafc' }}>{suggestion.name}</div>
-                      {suggestion.user_name && (
-                        <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>By {suggestion.user_name}</div>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 0.5rem', verticalAlign: 'top', color: '#cbd5f5' }}>
-                      {suggestion.formatted_address || suggestion.location_text || '—'}
-                    </td>
-                    <td style={{ padding: '0.75rem 0.5rem', verticalAlign: 'top', color: '#94a3b8' }}>
-                      {formatDateTime(suggestion.created_at)}
-                    </td>
-                    <td style={{ padding: '0.75rem 0.5rem', verticalAlign: 'top', color: '#f1f5f9' }}>
-                      {suggestion.recommendation || '—'}
-                    </td>
-                    <td style={{ padding: '0.75rem 0.5rem', verticalAlign: 'top' }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '0.25rem 0.5rem',
-                          borderRadius: 999,
-                          background: `${statusColor}22`,
-                          color: statusColor,
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {suggestion.status}
-                      </span>
-                      {suggestion.status === 'rejected' && suggestion.rejection_reason && (
-                        <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#f87171' }}>
-                          {suggestion.rejection_reason}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right', verticalAlign: 'top' }}>
-                      {showActions ? (
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          <button
-                            type="button"
-                            onClick={() => handleApprove(suggestion)}
-                            disabled={Boolean(pendingAction)}
-                            style={{
-                              padding: '0.4rem 0.8rem',
-                              borderRadius: 6,
-                              border: '1px solid #34d399',
-                              background: pendingAction === 'approving' ? 'rgba(52, 211, 153, 0.2)' : 'transparent',
-                              color: '#34d399',
-                              fontWeight: 600,
-                              cursor: pendingAction ? 'progress' : 'pointer',
-                            }}
-                          >
-                            {pendingAction === 'approving' ? 'Approving…' : 'Approve'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleReject(suggestion)}
-                            disabled={Boolean(pendingAction)}
-                            style={{
-                              padding: '0.4rem 0.8rem',
-                              borderRadius: 6,
-                              border: '1px solid #f87171',
-                              background: pendingAction === 'rejecting' ? 'rgba(248, 113, 113, 0.2)' : 'transparent',
-                              color: '#f87171',
-                              fontWeight: 600,
-                              cursor: pendingAction ? 'progress' : 'pointer',
-                            }}
-                          >
-                            {pendingAction === 'rejecting' ? 'Rejecting…' : 'Reject'}
-                          </button>
-                        </div>
-                      ) : (
-                        <span style={{ color: '#64748b', fontSize: '0.8rem' }}>No actions available</span>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+      {message ? <div className="admin-alert admin-alert--success" role="status">{message}</div> : null}
+      {error ? <div className="admin-alert admin-alert--error" role="alert">{error}</div> : null}
+      {loading ? <div className="admin-alert" role="status">Loading suggestions…</div> : null}
+      {!loading && !error && !selected ? (
+        <div className="admin-empty">
+          <Check size={24} aria-hidden="true" />
+          <p>No suggestions in this view.</p>
         </div>
-      )}
+      ) : null}
+
+      {!loading && selected ? (
+        <div className="admin-split">
+          <aside aria-label="Suggestions">
+            <div className="admin-result-list">
+              {visibleSuggestions.map(item => (
+                <button
+                  className={`admin-result-item${item.id === selected.id ? ' is-active' : ''}`}
+                  type="button"
+                  key={item.id}
+                  onClick={() => setSelectedId(item.id)}
+                  aria-pressed={item.id === selected.id}
+                >
+                  <strong>{item.name}</strong>
+                  <span>{item.formatted_address || item.location_text || 'No address'}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section>
+            <div className="admin-selected-header">
+              <div>
+                <div className="admin-progress">{selectedIndex + 1} of {suggestions.length} · Submitted {formatDate(selected.created_at)}</div>
+                <h2>{selected.name}</h2>
+                <p>{selected.formatted_address || selected.location_text || 'No address provided'}</p>
+              </div>
+              <span className="admin-status-badge">{selected.status}</span>
+            </div>
+
+            <dl className="admin-data-list">
+              <ComparisonRow label="Submitted by" value={selected.user_name || 'Anonymous'} />
+              <ComparisonRow label="What to order" value={selected.recommendation} />
+              <ComparisonRow label="Notes" value={selected.notes || selected.description} />
+              {selected.rejection_reason ? <ComparisonRow label="Rejection reason" value={selected.rejection_reason} /> : null}
+            </dl>
+
+            {selected.google_maps_url || selected.url ? (
+              <div className="admin-external-links">
+                <a href={selected.google_maps_url || selected.url} target="_blank" rel="noreferrer">
+                  Open place <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              </div>
+            ) : null}
+
+            {status === 'pending' ? (
+              <div className="admin-decision-bar">
+                <div className="admin-decision-bar__primary">
+                  <button className="admin-button admin-button--primary" type="button" onClick={approve} disabled={busy}>Approve</button>
+                </div>
+                <div className="admin-decision-bar__secondary">
+                  <button
+                    className="admin-button admin-button--danger"
+                    type="button"
+                    onClick={() => {
+                      setRejecting(selected)
+                      setRejectReason('')
+                    }}
+                    disabled={busy}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      <RejectDialog
+        suggestion={rejecting}
+        reason={rejectReason}
+        busy={busy}
+        onReasonChange={setRejectReason}
+        onCancel={() => {
+          setRejecting(null)
+          setRejectReason('')
+        }}
+        onConfirm={reject}
+      />
+    </div>
+  )
+}
+
+function ComparisonRow({ label, value }) {
+  return (
+    <div className="admin-data-row">
+      <dt>{label}</dt>
+      <dd>{value || 'Not provided'}</dd>
     </div>
   )
 }

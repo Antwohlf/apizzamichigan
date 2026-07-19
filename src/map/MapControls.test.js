@@ -164,6 +164,10 @@ describe('MapControls search results', () => {
     })).toBe('Suggestion')
   })
 
+  test('labels historical lifecycle records distinctly', () => {
+    expect(searchResultBadge({ lifecycleStatus: 'closed', status: 'visited', rating: 8 })).toBe('Historical')
+  })
+
   test('renders result badges beside each search result', () => {
     render(
       <MapControls

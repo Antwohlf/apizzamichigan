@@ -25,6 +25,7 @@ const MAX_REVIEW_PHOTO_BYTES = 8 * 1024 * 1024
 const SOURCE_REVIEW_DIR = process.env.SOURCE_REVIEW_DIR || 'reports/source-review'
 const SOURCE_REVIEW_QUEUE_CSV = process.env.SOURCE_REVIEW_QUEUE_CSV || 'reports/source-review-queue.csv'
 let reviewPhotosTableAvailable = true
+let sourceReviewDecisionHistorySchemaReady = false
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
 const SUPABASE_URL =
@@ -84,6 +85,23 @@ const sourceReviewSignalCountSql = `(
   ) THEN 1 ELSE 0 END
 )`
 
+// This is only a review-ordering hint. It never auto-links a source row or
+// promotes source fields into the canonical place record.
+const sourceReviewEvidenceCountSql = `(
+  CASE WHEN nearest_distance_m IS NOT NULL AND nearest_distance_m <= 10 THEN 1 ELSE 0 END +
+  CASE WHEN nearest_name_score IS NOT NULL AND nearest_name_score >= 0.98 THEN 1 ELSE 0 END +
+  CASE WHEN (
+    length(right(regexp_replace(coalesce(NULLIF(source_data->>'phone', ''), NULLIF(source_data->>'contact:phone', ''), ''), '[^0-9]', '', 'g'), 10)) = 10
+    AND right(regexp_replace(coalesce(NULLIF(source_data->>'phone', ''), NULLIF(source_data->>'contact:phone', ''), ''), '[^0-9]', '', 'g'), 10)
+      = right(regexp_replace(coalesce(nearest.phone, ''), '[^0-9]', '', 'g'), 10)
+  ) THEN 1 ELSE 0 END +
+  CASE WHEN (
+    COALESCE(NULLIF(source_data->>'website', ''), NULLIF(source_data->>'contact:website', '')) IS NOT NULL
+    AND regexp_replace(regexp_replace(lower(COALESCE(NULLIF(source_data->>'website', ''), NULLIF(source_data->>'contact:website', ''))), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')
+      = regexp_replace(regexp_replace(lower(coalesce(nearest.website_url, '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')
+  ) THEN 1 ELSE 0 END
+)`
+
 const sourceReviewReadinessSql = `(
   CASE
     WHEN review_kind <> 'likely_new' THEN 'link_review'
@@ -117,7 +135,14 @@ const sourceReviewReadinessSql = `(
     ELSE 'candidate_ready'
   END
 )`
-const sourceReviewReadinessSqlForAlias = sourceReviewReadinessSql.replaceAll('source_review_queue.', 'srq.')
+const sourceReviewReadinessSqlForAlias = sourceReviewReadinessSql
+  .replaceAll('source_review_queue.', 'srq.')
+  .replace(/(?<![\w.])review_kind\b/g, 'srq.review_kind')
+  .replace(/(?<![\w.])source_name\b/g, 'srq.source_name')
+  .replace(/(?<![\w.])source_data\b/g, 'srq.source_data')
+  .replace(/(?<![\w.])source_id\b/g, 'srq.source_id')
+  .replace(/(?<![\w.])nearest_distance_m\b/g, 'srq.nearest_distance_m')
+  .replace(/(?<![\w.])status\b/g, 'srq.status')
 
 function readSourceReviewReports(entity, inputDir = SOURCE_REVIEW_DIR) {
   const absDir = resolve(process.cwd(), inputDir)
@@ -614,42 +639,55 @@ async function sourceReviewQueueExists(client) {
     ) AS exists
   `)
   if (!result.rows[0]?.exists) return false
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS source_review_decision_history (
-      id BIGSERIAL PRIMARY KEY,
-      review_queue_id BIGINT NOT NULL,
-      entity_type TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      previous_review_kind TEXT,
-      previous_status TEXT,
-      previous_decision TEXT,
-      previous_canonical_place_id BIGINT,
-      review_kind TEXT NOT NULL,
-      status TEXT NOT NULL,
-      decision TEXT,
-      canonical_place_id BIGINT,
-      action TEXT NOT NULL,
-      reviewer_notes TEXT,
-      reviewed_by TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `)
+  if (!sourceReviewDecisionHistorySchemaReady) {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS source_review_decision_history (
+        id BIGSERIAL PRIMARY KEY,
+        review_queue_id BIGINT NOT NULL,
+        entity_type TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        previous_review_kind TEXT,
+        previous_status TEXT,
+        previous_decision TEXT,
+        previous_canonical_place_id BIGINT,
+        review_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        decision TEXT,
+        canonical_place_id BIGINT,
+        action TEXT NOT NULL,
+        reviewer_notes TEXT,
+        reviewed_by TEXT,
+        canonical_before JSONB,
+        canonical_after JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
+    await client.query(`
+      ALTER TABLE source_review_decision_history
+        ADD COLUMN IF NOT EXISTS canonical_before JSONB,
+        ADD COLUMN IF NOT EXISTS canonical_after JSONB
+    `)
+    sourceReviewDecisionHistorySchemaReady = true
+  }
   return true
 }
 
-async function recordSourceReviewDecision(client, row, next, action) {
+async function recordSourceReviewDecision(client, row, next, action, { canonicalBefore = null, canonicalAfter = null } = {}) {
   await client.query(`
     INSERT INTO source_review_decision_history (
       review_queue_id, entity_type, source, source_id,
       previous_review_kind, previous_status, previous_decision, previous_canonical_place_id,
-      review_kind, status, decision, canonical_place_id, action, reviewer_notes, reviewed_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      review_kind, status, decision, canonical_place_id, action, reviewer_notes, reviewed_by,
+      canonical_before, canonical_after
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb)
   `, [
     row.id, row.entity_type, row.source, row.source_id,
     row.review_kind || null, row.status || null, row.decision || null, row.canonical_place_id || null,
     next.review_kind || row.review_kind, next.status, next.decision || null,
     next.canonical_place_id || null, action, next.reviewer_notes || null, next.reviewed_by || 'admin',
+    canonicalBefore == null ? null : JSON.stringify(canonicalBefore),
+    canonicalAfter == null ? null : JSON.stringify(canonicalAfter),
   ])
 }
 
@@ -1377,6 +1415,104 @@ async function upsertReviewedPlaceSource(client, row, canonicalPlaceId, reviewer
   ])
 }
 
+const sourceReviewText = value => String(value || '').trim()
+const sourceReviewComparableText = value => sourceReviewText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+
+const sourceReviewPlaceSnapshot = place => ({
+  id: place.id,
+  name: place.name,
+  lat: place.lat == null ? null : Number(place.lat),
+  lng: place.lng == null ? null : Number(place.lng),
+  address: place.address || null,
+  state: place.state || null,
+  status: place.status || null,
+  website_url: place.website_url || null,
+  phone: place.phone || null,
+  address_source: place.address_source || null,
+  style: place.style || null,
+  price_range: place.price_range || null,
+  style_confidence: place.style_confidence || null,
+  enrichment_status: place.enrichment_status || null,
+  last_enriched_at: place.last_enriched_at || null,
+  scrape_method: place.scrape_method || null,
+  scrape_notes: place.scrape_notes || null,
+})
+
+const sourceReviewCanUpdateExistingPlace = (row, place) => {
+  const exactOsmIdentity = row.source === 'osm'
+    && sourceReviewText(row.source_id)
+    && sourceReviewText(row.source_id) === sourceReviewText(place.google_place_id)
+  const sourceNameChanged = sourceReviewComparableText(canonicalSourceReviewName(row))
+    && sourceReviewComparableText(canonicalSourceReviewName(row)) !== sourceReviewComparableText(place.name)
+  const hasPersonalReview = place.status !== 'unvisited'
+    || place.rating != null
+    || Boolean(sourceReviewText(place.notes))
+
+  return Boolean(
+    row.status === 'pending'
+    && row.review_kind === 'ambiguous'
+    && exactOsmIdentity
+    && sourceNameChanged
+    && !hasPersonalReview
+  )
+}
+
+function refreshedSourceData(row, canonicalPlaceId, reviewerNotes, canonicalBefore) {
+  return {
+    ...(row.source_data || {}),
+    review: {
+      queue_id: row.id,
+      review_kind: row.review_kind,
+      decision: 'updated_existing',
+      reviewed_by: 'admin',
+      reviewer_notes: reviewerNotes || null,
+      linked_place_id: canonicalPlaceId,
+      identity_match: 'exact_osm_id',
+      canonical_before: canonicalBefore,
+    },
+  }
+}
+
+async function upsertRefreshedPlaceSource(client, row, canonicalPlaceId, reviewerNotes, canonicalBefore) {
+  if (!(await placeSourcesExists(client))) {
+    const error = new Error('place_sources is not configured; cannot record this place update.')
+    error.status = 503
+    throw error
+  }
+
+  const metadata = SOURCE_REVIEW_SOURCE_METADATA[row.source] || {
+    license: 'source-specific',
+    attribution: row.source,
+  }
+
+  await client.query(`
+    INSERT INTO place_sources (
+      entity_type, place_id, source, source_id, source_url, license, attribution,
+      data, match_confidence, match_method, retrieved_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 1, 'reviewed_identity_refresh', NOW())
+    ON CONFLICT (entity_type, source, source_id) DO UPDATE SET
+      place_id = EXCLUDED.place_id,
+      source_url = EXCLUDED.source_url,
+      license = EXCLUDED.license,
+      attribution = EXCLUDED.attribution,
+      data = EXCLUDED.data,
+      match_confidence = EXCLUDED.match_confidence,
+      match_method = EXCLUDED.match_method,
+      retrieved_at = EXCLUDED.retrieved_at,
+      updated_at = NOW()
+  `, [
+    row.entity_type,
+    canonicalPlaceId,
+    row.source,
+    row.source_id,
+    row.source_url,
+    metadata.license,
+    metadata.attribution,
+    JSON.stringify(refreshedSourceData(row, canonicalPlaceId, reviewerNotes, canonicalBefore)),
+  ])
+}
+
 const getStorageClient = () => {
   if (!serviceClient?.storage) {
     throw new Error('Supabase storage client unavailable')
@@ -1838,6 +1974,149 @@ app.get('/api/admin/source-provenance', requireAdminAuth, async (req, res) => {
   }
 })
 
+app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) => {
+  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      const tableCheck = await client.query(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('place_sources', 'source_review_queue')
+      `)
+      const tables = new Set(tableCheck.rows.map(row => row.table_name))
+      if (!tables.has('source_review_queue')) {
+        return {
+          available: false,
+          reason: 'Source review queue is not configured.',
+          entity,
+          generatedAt: new Date().toISOString(),
+          queues: {
+            matchExisting: 0,
+            checkDuplicates: 0,
+            approveNew: 0,
+            incomplete: 0,
+            approvedForImport: 0,
+            lifecycle: 0,
+          },
+          lifecycle: { replacements: 0, staleEvidence: 0 },
+          sourceRows: 0,
+          linkedPlaces: 0,
+          latestSourceUpdate: null,
+        }
+      }
+
+      const [queueResult, sourceResult, lifecycleResult] = await Promise.all([
+        client.query(`
+          SELECT
+            review_kind,
+            status,
+            ${sourceReviewReadinessSql} AS readiness,
+            COUNT(*)::int AS rows
+          FROM source_review_queue
+          WHERE entity_type = $1
+          GROUP BY review_kind, status, readiness
+        `, [entity]),
+        tables.has('place_sources')
+          ? client.query(`
+              SELECT
+                COUNT(*)::int AS source_rows,
+                COUNT(DISTINCT place_id)::int AS linked_places,
+                MAX(updated_at) AS latest_source_update
+              FROM place_sources
+              WHERE entity_type = $1
+            `, [entity])
+          : Promise.resolve({ rows: [{ source_rows: 0, linked_places: 0, latest_source_update: null }] }),
+        client.query(`
+          SELECT COUNT(*) FILTER (
+            WHERE srq.source_id = p.google_place_id
+              AND lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))
+                <> lower(regexp_replace(coalesce(p.name, ''), '[^a-z0-9]+', ' ', 'g'))
+          )::int AS replacements,
+          ${tables.has('place_sources') ? `(
+            SELECT COUNT(*)::int
+            FROM place_sources ps
+            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} stale_place ON stale_place.id = ps.place_id
+            WHERE ps.entity_type = $1
+              AND ps.retrieved_at < NOW() - make_interval(days => CASE ps.source
+                WHEN 'osm' THEN 30
+                WHEN 'official_website' THEN 30
+                WHEN 'all_the_places' THEN 90
+                WHEN 'fsq_os_places' THEN 180
+                WHEN 'overture_places' THEN 365
+                WHEN 'wikidata' THEN 365
+                ELSE 180 END)
+              AND lower(coalesce(stale_place.status, '')) NOT LIKE 'closed%'
+          )` : '0'}::int AS stale_evidence
+          FROM source_review_queue srq
+          JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = srq.nearest_place_id
+          WHERE srq.entity_type = $1
+            AND srq.status = 'pending'
+            AND srq.review_kind = 'ambiguous'
+            AND srq.source = 'osm'
+        `, [entity]),
+      ])
+
+      const countQueue = (reviewKind, status, readiness = null) => queueResult.rows
+        .filter(row =>
+          row.review_kind === reviewKind
+          && row.status === status
+          && (readiness == null || row.readiness === readiness)
+        )
+        .reduce((sum, row) => sum + normalizeCount(row.rows), 0)
+      const sourceTotals = sourceResult.rows[0] || {}
+      const lifecycleTotals = lifecycleResult.rows[0] || {}
+      const lifecycle = {
+        replacements: normalizeCount(lifecycleTotals.replacements),
+        staleEvidence: tables.has('place_sources') ? normalizeCount(lifecycleTotals.stale_evidence) : 0,
+      }
+
+      return {
+        available: true,
+        entity,
+        generatedAt: new Date().toISOString(),
+        queues: {
+          matchExisting: countQueue('ambiguous', 'pending', 'link_review'),
+          checkDuplicates: countQueue('likely_new', 'pending', 'nearby_canonical_review'),
+          approveNew: countQueue('likely_new', 'pending', 'candidate_ready'),
+          incomplete: countQueue('likely_new', 'pending', 'missing_required_data'),
+          approvedForImport: countQueue('likely_new', 'accepted'),
+          lifecycle: lifecycle.replacements,
+        },
+        lifecycle,
+        sourceRows: normalizeCount(sourceTotals.source_rows),
+        linkedPlaces: normalizeCount(sourceTotals.linked_places),
+        latestSourceUpdate: sourceTotals.latest_source_update || null,
+      }
+    })
+
+    return res.json({ data: payload })
+  } catch (error) {
+    console.error('[admin] source review summary error', error)
+    return res.status(503).json({
+      error: error?.message || 'Failed to load source review summary.',
+      data: {
+        available: false,
+        entity,
+        generatedAt: new Date().toISOString(),
+        queues: {
+          matchExisting: 0,
+          checkDuplicates: 0,
+          approveNew: 0,
+          incomplete: 0,
+          approvedForImport: 0,
+          lifecycle: 0,
+        },
+        lifecycle: { replacements: 0, staleEvidence: 0 },
+        sourceRows: 0,
+        linkedPlaces: 0,
+        latestSourceUpdate: null,
+      },
+    })
+  }
+})
+
 app.get('/api/admin/source-review-queue/import-preflight', requireAdminAuth, async (req, res) => {
   const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
   const source = (req.query?.source || '').toString().trim().slice(0, 80)
@@ -2040,6 +2319,8 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
           nearest.lat AS nearest_lat,
           nearest.lng AS nearest_lng,
           nearest.status AS nearest_status,
+          nearest.rating AS nearest_rating,
+          nearest.notes AS nearest_notes,
           nearest.website_url AS nearest_website_url,
           nearest.phone AS nearest_phone,
           decision_place.name AS decision_canonical_name,
@@ -2052,6 +2333,7 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
           decision_place.website_url AS decision_canonical_website_url,
           decision_place.phone AS decision_canonical_phone,
           ${sourceReviewSignalCountSql}::int AS source_signal_count,
+          ${sourceReviewEvidenceCountSql}::int AS review_evidence_count,
           ${sourceReviewReadinessSqlForAlias} AS review_readiness,
           srq.review_reason,
           srq.status,
@@ -2078,7 +2360,9 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
             ELSE 3
           END,
           CASE WHEN srq.review_kind = 'likely_new' THEN ${sourceReviewSignalCountSql} END DESC,
+          CASE WHEN srq.review_kind = 'ambiguous' THEN ${sourceReviewEvidenceCountSql} END DESC,
           CASE WHEN srq.review_kind = 'likely_new' THEN srq.nearest_distance_m END DESC NULLS LAST,
+          CASE WHEN srq.review_kind = 'ambiguous' THEN srq.nearest_distance_m END ASC NULLS LAST,
           srq.source_name NULLS LAST,
           srq.id
         LIMIT $${values.length - 1}
@@ -2387,6 +2671,35 @@ app.get('/api/admin/source-review-queue/:id/history', requireAdminAuth, async (r
   }
 })
 
+app.get('/api/admin/source-review-queue/:id/ai-assessment', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  if (!id) return res.status(400).json({ error: 'Invalid source review queue id.' })
+  try {
+    const payload = await withLocalPostgres(async client => {
+      const table = await client.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'source_review_ai_assessments'
+        ) AS exists
+      `)
+      if (!table.rows[0]?.exists) return { available: false, data: null }
+      const result = await client.query(`
+        SELECT review_queue_id, entity_type, model, decision, confidence, reason,
+          supporting_evidence, needs_human_review, decision_origin, created_at
+        FROM source_review_ai_assessments
+        WHERE review_queue_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `, [id])
+      return { available: true, data: result.rows[0] || null }
+    })
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review AI assessment error', error)
+    return res.status(503).json({ error: error?.message || 'AI assessment is unavailable.' })
+  }
+})
+
 app.patch('/api/admin/source-review-queue/:id/reopen', requireAdminAuth, async (req, res) => {
   const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
   const reviewerNotes = typeof req.body?.reviewerNotes === 'string'
@@ -2454,6 +2767,158 @@ app.patch('/api/admin/source-review-queue/:id/reopen', requireAdminAuth, async (
   } catch (error) {
     console.error('[admin] source review reopen error', error)
     return res.status(error.status || 500).json({ error: error.message || 'Failed to reopen source review row.' })
+  }
+})
+
+app.patch('/api/admin/source-review-queue/:id/update-existing', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  const reviewerNotes = typeof req.body?.reviewerNotes === 'string'
+    ? req.body.reviewerNotes.trim().slice(0, 1000)
+    : null
+
+  if (!id) return res.status(400).json({ error: 'Invalid source review queue id.' })
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      if (!(await sourceReviewQueueExists(client))) {
+        const error = new Error('source_review_queue is not configured.')
+        error.status = 503
+        throw error
+      }
+
+      await client.query('BEGIN')
+      try {
+        const current = await client.query(`
+          SELECT *
+          FROM source_review_queue
+          WHERE id = $1
+          FOR UPDATE
+        `, [id])
+        const row = current.rows[0]
+        if (!row) {
+          const error = new Error('Source review queue row not found.')
+          error.status = 404
+          throw error
+        }
+
+        const tableName = SOURCE_REVIEW_ENTITY_TABLES[row.entity_type]
+        if (!tableName || !row.nearest_place_id) {
+          const error = new Error('This source record does not have an existing place that can be updated.')
+          error.status = 400
+          throw error
+        }
+
+        const canonicalResult = await client.query(`
+          SELECT
+            id, name, lat, lng, address, state, status, rating, notes,
+            website_url, phone, address_source,
+            style, price_range, style_confidence,
+            enrichment_status, last_enriched_at, scrape_method, scrape_notes,
+            google_place_id
+          FROM ${tableName}
+          WHERE id = $1
+          FOR UPDATE
+        `, [row.nearest_place_id])
+        const canonical = canonicalResult.rows[0]
+        if (!canonical) {
+          const error = new Error('The existing map record is no longer available.')
+          error.status = 404
+          throw error
+        }
+        if (!sourceReviewCanUpdateExistingPlace(row, canonical)) {
+          const error = new Error('Only an unreviewed place with the exact same OpenStreetMap ID can be updated in place. Keep historical or personally reviewed places separate.')
+          error.status = 409
+          throw error
+        }
+
+        const source = sourceReviewCandidatePayload(row)
+        if (!sourceReviewText(source.name)) {
+          const error = new Error('The source record has no usable name to apply.')
+          error.status = 400
+          throw error
+        }
+
+        const canonicalBefore = sourceReviewPlaceSnapshot(canonical)
+        const update = await client.query(`
+          UPDATE ${tableName}
+          SET
+            name = $2,
+            lat = COALESCE($3, lat),
+            lng = COALESCE($4, lng),
+            address = COALESCE(NULLIF($5, ''), address),
+            website_url = COALESCE(NULLIF($6, ''), website_url),
+            phone = COALESCE(NULLIF($7, ''), phone),
+            address_source = CASE WHEN NULLIF($5, '') IS NOT NULL THEN 'osm' ELSE address_source END,
+            style = NULL,
+            price_range = NULL,
+            style_confidence = NULL,
+            scrape_method = NULL,
+            scrape_notes = NULL,
+            enrichment_status = 'pending',
+            last_enriched_at = NULL,
+            updated_at = NOW()
+          WHERE id = $1
+          RETURNING
+            id, name, lat, lng, address, state, status, rating, notes,
+            website_url, phone, address_source,
+            style, price_range, style_confidence,
+            enrichment_status, last_enriched_at, scrape_method, scrape_notes,
+            google_place_id
+        `, [
+          canonical.id,
+          sourceReviewText(source.name),
+          source.lat,
+          source.lng,
+          sourceReviewText(source.address),
+          sourceReviewText(source.websiteUrl),
+          sourceReviewText(source.phone),
+        ])
+        const updatedPlace = update.rows[0]
+        const canonicalAfter = sourceReviewPlaceSnapshot(updatedPlace)
+
+        await upsertRefreshedPlaceSource(client, row, canonical.id, reviewerNotes, canonicalBefore)
+
+        const updatedReview = await client.query(`
+          UPDATE source_review_queue
+          SET
+            status = 'linked',
+            decision = 'updated_existing',
+            canonical_place_id = $2,
+            reviewer_notes = $3,
+            reviewed_at = NOW(),
+            reviewed_by = 'admin',
+            updated_at = NOW()
+          WHERE id = $1
+            AND status = 'pending'
+          RETURNING *
+        `, [row.id, canonical.id, reviewerNotes])
+        if (!updatedReview.rows[0]) {
+          const error = new Error('The source review record changed before the update could be saved.')
+          error.status = 409
+          throw error
+        }
+
+        await recordSourceReviewDecision(client, row, {
+          review_kind: row.review_kind,
+          status: 'linked',
+          decision: 'updated_existing',
+          canonical_place_id: canonical.id,
+          reviewer_notes: reviewerNotes,
+          reviewed_by: 'admin',
+        }, 'update_existing_place', { canonicalBefore, canonicalAfter })
+
+        await client.query('COMMIT')
+        return { data: updatedReview.rows[0], place: updatedPlace }
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {})
+        throw error
+      }
+    })
+
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review update existing place error', error)
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to update the existing place.' })
   }
 })
 
