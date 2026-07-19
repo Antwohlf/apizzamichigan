@@ -14,8 +14,13 @@ const isReviewedPlace = place => {
     !Number.isNaN(place.rating)
   )
 }
+const isHistoricalPlace = place => ['closed', 'replaced', 'demolished'].includes(place?.lifecycleStatus)
 const placeMeta = place => {
-  const statusLabel = isReviewedPlace(place) ? 'Anthony reviewed' : ''
+  const statusLabel = isHistoricalPlace(place)
+    ? 'Historical location'
+    : isReviewedPlace(place)
+      ? 'Anthony reviewed'
+      : ''
   const parts = [place?.style, placePrice(place), statusLabel].filter(Boolean)
   if (typeof place?.rating === 'number' && !Number.isNaN(place.rating)) parts.unshift(`★ ${place.rating}`)
   return parts.join(' · ')
@@ -23,6 +28,7 @@ const placeMeta = place => {
 
 export const searchResultBadge = place => {
   if (!place) return ''
+  if (isHistoricalPlace(place)) return 'Historical'
   if (isReviewedPlace(place)) return 'Reviewed'
   const status = String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
   if (status === 'golden') return 'Favorite'

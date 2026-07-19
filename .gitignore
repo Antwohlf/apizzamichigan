@@ -32,6 +32,7 @@ __pycache__/
 /scripts/.status_hourly.json
 /scripts/.supabase-sync-checkpoint*.json
 /scripts/.source-pipeline-state.json
+/scripts/.source-pipeline-last-report.json
 /scripts/.fsq-venv/
 /scripts/.fsq-portal-init.sql
 /data/source-samples/.hf-fsq-cache/

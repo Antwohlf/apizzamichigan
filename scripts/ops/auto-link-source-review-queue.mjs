@@ -160,6 +160,7 @@ function parseArgs(argv) {
     minNameScore: 0.98,
     maxDistanceM: 100,
     brandRules: false,
+    exactIdentifiers: false,
     ids: [],
     limit: 100,
     apply: false,
@@ -174,6 +175,7 @@ function parseArgs(argv) {
     else if (arg === '--min-name-score') args.minNameScore = parseFloat(argv[++i]);
     else if (arg === '--max-distance-m') args.maxDistanceM = parseFloat(argv[++i]);
     else if (arg === '--brand-rules') args.brandRules = true;
+    else if (arg === '--exact-identifiers') args.exactIdentifiers = true;
     else if (arg === '--ids') args.ids = parseIds(argv[++i]);
     else if (arg === '--limit') args.limit = parseInt(argv[++i], 10);
     else if (arg === '--apply') args.apply = true;
@@ -217,6 +219,7 @@ Options:
   --min-name-score <n>           Minimum nearest_name_score, 0-1 (default 0.98)
   --max-distance-m <n>           Maximum nearest distance in meters (default 100)
   --brand-rules                  Also include explicit report/brand rules
+  --exact-identifiers            Require exact address, phone, website, and nearby location
   --ids <ids>                    Exact reviewed source_review_queue ids to link
   --limit <n>                    Candidate limit (default 100)
   --apply                        Link the bounded candidate set
@@ -231,6 +234,10 @@ Brand rules are intentionally explicit and narrow. They are for cases where the
 source spider/report proves the brand but the source and canonical display names
 use incompatible variants, such as Papa Murphy's ATP rows named "Pizza Takeout &
 Delivery" or "Domino's Pizza" source rows nearest to "Domino's".
+
+Exact identifier mode is limited to all_the_places by default and requires the
+source address, phone, store URL, and nearest location to agree. It is intended
+for deterministic official-chain links, not generic fuzzy matching.
 `);
 }
 
@@ -378,10 +385,13 @@ async function fetchCandidates(client, args) {
     "srq.review_kind = 'ambiguous'",
     "srq.status = 'pending'",
     'srq.nearest_place_id IS NOT NULL',
-    'ps.id IS NULL',
+    args.exactIdentifiers
+      ? '(ps.id IS NULL OR ps.place_id = srq.nearest_place_id)'
+      : 'ps.id IS NULL',
   ];
   const brandRuleReasons = [];
   const eligibility = [];
+  let exactIdentifierReason = null;
 
   if (args.ids.length) {
     values.push(args.ids);
@@ -393,6 +403,36 @@ async function fetchCandidates(client, args) {
       const brandRules = brandRuleSql(values);
       eligibility.push(...brandRules.eligibility);
       brandRuleReasons.push(...brandRules.reasons);
+    }
+
+    if (args.exactIdentifiers) {
+      const exactSource = args.source || 'all_the_places';
+      const exactSourceParam = values.push(exactSource);
+      filters.push(`srq.source = $${exactSourceParam}`);
+      const sourceAddress = `regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'address', ''), NULLIF(srq.source_data->>'addr:full', ''), '')), '[^a-z0-9]', '', 'g')`;
+      const canonicalAddress = `regexp_replace(lower(coalesce(canonical.address, '')), '[^a-z0-9]', '', 'g')`;
+      const sourcePhone = `right(regexp_replace(coalesce(NULLIF(srq.source_data->>'phone', ''), NULLIF(srq.source_data->>'contact:phone', ''), ''), '[^0-9]', '', 'g'), 10)`;
+      const canonicalPhone = `right(regexp_replace(coalesce(canonical.phone, ''), '[^0-9]', '', 'g'), 10)`;
+      const sourceWebsite = `regexp_replace(regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'website', ''), NULLIF(srq.source_data->>'contact:website', ''), '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
+      const canonicalWebsite = `regexp_replace(regexp_replace(lower(coalesce(canonical.website_url, '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
+      exactIdentifierReason = `(
+        ${sourceAddress} <> ''
+        AND ${sourceAddress} = ${canonicalAddress}
+        AND length(${sourcePhone}) = 10
+        AND ${sourcePhone} = ${canonicalPhone}
+        AND ${sourceWebsite} <> ''
+        AND ${sourceWebsite} = ${canonicalWebsite}
+        AND srq.nearest_distance_m <= $3
+        AND NOT EXISTS (
+          SELECT 1
+          FROM place_sources conflicting_source
+          WHERE conflicting_source.entity_type = srq.entity_type
+            AND conflicting_source.source = srq.source
+            AND conflicting_source.source_id = srq.source_id
+            AND conflicting_source.place_id <> srq.nearest_place_id
+        )
+      )`;
+      eligibility.push(exactIdentifierReason);
     }
   }
 
@@ -425,9 +465,12 @@ async function fetchCandidates(client, args) {
       srq.nearest_distance_m,
       srq.nearest_name_score,
       srq.review_reason,
+      ps.place_id AS existing_source_place_id,
       CASE
         WHEN ${args.ids.length ? 'TRUE' : 'FALSE'}
           THEN 'exact_reviewed_ids'
+        WHEN ${exactIdentifierReason || 'FALSE'}
+          THEN 'exact_identifiers'
         WHEN srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3
           THEN 'score_distance'
         ${brandRuleReasons.join('\n        ')}
@@ -441,8 +484,9 @@ async function fetchCandidates(client, args) {
      AND ps.source = srq.source
      AND ps.source_id = srq.source_id
     WHERE ${filters.join('\n      AND ')}
-    ORDER BY
+      ORDER BY
       CASE
+        WHEN ${exactIdentifierReason || 'FALSE'} THEN 0
         WHEN srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3 THEN 0
         ELSE 1
       END ASC,
@@ -457,14 +501,17 @@ async function fetchCandidates(client, args) {
 async function applyCandidates(client, candidates, args) {
   const reviewerNotes = args.ids.length
     ? `Linked ambiguous source review row by exact reviewed source_review_queue ids: ${args.ids.join(',')}.`
+    : args.exactIdentifiers
+      ? 'Auto-linked official source row by exact address, phone, store URL, and location agreement.'
     : `Auto-linked ambiguous source review row with nearest_name_score >= ${args.minNameScore} and nearest_distance_m <= ${args.maxDistanceM}${args.brandRules ? ', or an explicit report/brand rule matched' : ''}.`;
   let linked = 0;
 
   await client.query('BEGIN');
   try {
     for (const row of candidates) {
-      const metadata = sourceMetadata(row.source);
-      await client.query(`
+      if (row.existing_source_place_id == null) {
+        const metadata = sourceMetadata(row.source);
+        await client.query(`
         INSERT INTO place_sources (
           entity_type,
           place_id,
@@ -489,22 +536,25 @@ async function applyCandidates(client, candidates, args) {
           match_method = EXCLUDED.match_method,
           retrieved_at = EXCLUDED.retrieved_at,
           updated_at = NOW()
-      `, [
-        row.entity_type,
-        row.nearest_place_id,
-        row.source,
-        row.source_id,
-        row.source_url,
-        metadata.license,
-        metadata.attribution,
-        JSON.stringify(reviewedSourceData(row, reviewerNotes)),
-        1,
-        row.auto_link_reason?.startsWith('brand_rule:')
-          ? 'auto_brand_reviewed_link'
-          : row.auto_link_reason === 'exact_reviewed_ids'
-            ? 'exact_reviewed_link'
-          : 'auto_reviewed_link',
-      ]);
+        `, [
+          row.entity_type,
+          row.nearest_place_id,
+          row.source,
+          row.source_id,
+          row.source_url,
+          metadata.license,
+          metadata.attribution,
+          JSON.stringify(reviewedSourceData(row, reviewerNotes)),
+          1,
+          row.auto_link_reason === 'exact_identifiers'
+            ? 'auto_exact_identifiers'
+            : row.auto_link_reason?.startsWith('brand_rule:')
+            ? 'auto_brand_reviewed_link'
+            : row.auto_link_reason === 'exact_reviewed_ids'
+              ? 'exact_reviewed_link'
+            : 'auto_reviewed_link',
+        ]);
+      }
 
       const result = await client.query(`
         UPDATE source_review_queue
@@ -590,6 +640,7 @@ function outputReport({ args, candidates, applyResult }) {
   console.log(`Report file: ${args.reportFile || 'all'}`);
   console.log(`Thresholds: name_score >= ${args.minNameScore}, distance <= ${args.maxDistanceM}m`);
   console.log(`Brand rules: ${args.brandRules ? 'enabled' : 'disabled'}`);
+  console.log(`Exact identifiers: ${args.exactIdentifiers ? 'enabled' : 'disabled'}`);
   console.log(`Candidates: ${candidates.length}`);
   console.log(`Rows linked: ${applyResult.linked}`);
   console.log('');

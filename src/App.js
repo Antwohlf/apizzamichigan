@@ -67,6 +67,7 @@ const SEARCH_TERM_ALIASES = {
   affordable: ['$'],
   blaze: ['blaze pizza'],
   budget: ['$'],
+  closed: ['permanently closed', 'replaced'],
   cheap: ['$'],
   favorite: ['golden'],
   favorites: ['golden'],
@@ -74,6 +75,7 @@ const SEARCH_TERM_ALIASES = {
   expensive: ['$$$'],
   godfathers: ['godfather', 'godfather s'],
   hungryhowies: ['hungry howies', 'hungry howie', 'howies', 'howie'],
+  historical: ['closed', 'replaced'],
   inexpensive: ['$'],
   jetpizza: ['jet pizza', 'jets pizza', 'jet s pizza'],
   jetspizza: ['jets pizza', 'jet pizza', 'jet s pizza'],
@@ -447,6 +449,7 @@ const statusQueryTerms = {
   reviewed: ['reviewed', 'visited', 'tried', 'anthony'],
   favorite: ['favorite', 'favorites', 'golden', 'best'],
   suggestion: ['suggestion', 'suggestions', 'unvisited'],
+  lifecycle: ['closed', 'historical', 'replaced'],
 }
 
 const normalizedPlaceStatus = place =>
@@ -461,6 +464,11 @@ const termMatchesPlaceStatus = (term, place) => {
   if (statusQueryTerms.favorite.includes(term)) return status.startsWith('golden')
   if (statusQueryTerms.reviewed.includes(term)) return status.startsWith('visited') || status.startsWith('golden')
   if (statusQueryTerms.suggestion.includes(term)) return status.startsWith('unvisited')
+  if (statusQueryTerms.lifecycle.includes(term)) {
+    const lifecycle = String(place?.lifecycleStatus || place?.statusRaw || '').trim().toLowerCase()
+    if (term === 'historical') return lifecycle.startsWith('closed') && place?.rating != null
+    return lifecycle.startsWith('closed') || lifecycle.startsWith('replaced')
+  }
   return false
 }
 
@@ -666,6 +674,14 @@ const normalizeStatus = (status) => {
     }
   }
   return 'visited'
+}
+
+export const normalizeLifecycleStatus = status => {
+  const lower = String(status || '').trim().toLowerCase()
+  if (lower.startsWith('permanently closed') || lower.startsWith('closed')) return 'closed'
+  if (lower.startsWith('replaced')) return 'replaced'
+  if (lower.startsWith('demolished')) return 'demolished'
+  return null
 }
 
 const convertLegacyPhotos = photos =>
@@ -908,6 +924,7 @@ function SiteContainer({ themeKey }) {
       const normalizedLng = typeof place.lng === 'number' ? place.lng : Number(place.lng)
 
       const normalizedStatus = normalizeStatus(place.status)
+      const lifecycleStatus = normalizeLifecycleStatus(place.status)
       const favorited = computeFavorited(place, normalizedStatus)
       const placeType = computePlaceType(place, defaultPlaceType)
       const markerIconUrl = computeMarkerIconUrl(place)
@@ -929,6 +946,7 @@ function SiteContainer({ themeKey }) {
         priceRange: normalizedPriceRange,
         status: normalizedStatus,
         statusRaw: typeof place.status === 'string' ? place.status.trim().toLowerCase() : null,
+        lifecycleStatus,
         favorited,
         lat: normalizedLat,
         lng: normalizedLng,
@@ -1207,9 +1225,12 @@ function SiteContainer({ themeKey }) {
     const searchLower = normalizeSearchText(searchQuery)
     const searchTerms = searchLower.split(/\s+/).filter(Boolean)
     const sourcePlaces = searchLower ? searchPlaces : allLoadedPlaces
+    const lifecycleSearch = searchTerms.some(term => statusQueryTerms.lifecycle.includes(term))
 
     let results = sourcePlaces.reduce((matches, place) => {
       let nextPlace = place
+      const isHistorical = place.lifecycleStatus === 'closed' && place.rating != null
+      if (place.lifecycleStatus && !isHistorical && !lifecycleSearch) return matches
       // Search filter
       if (searchTerms.length > 0) {
         const searchRank = placeSearchRank(place, searchLower, searchTerms)
@@ -1531,7 +1552,7 @@ export default function App() {
             <Route path="/tacos/places/:id" element={<PlaceDetailRoute themeKey={ThemeKeys.TACO} />} />
             <Route path="/data" element={<DataDashboard />} />
             <Route path="/admin/submit" element={<AdminSubmit />} />
-            <Route path="/admin/reviews" element={<AdminReviewsPage />} />
+            <Route path="/admin/reviews/*" element={<AdminReviewsPage />} />
             <Route
               path="/admin"
               element={

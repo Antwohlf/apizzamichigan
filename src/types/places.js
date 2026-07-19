@@ -6,12 +6,14 @@
  * @property {number} [sortOrder]
  *
  * @typedef {'visited' | 'unvisited' | 'golden'} PlaceStatus
+ * @typedef {'closed' | 'replaced' | 'demolished'} LifecycleStatus
  *
  * @typedef {Object} PizzaPlace
  * @property {string} id
  * @property {string} name
  * @property {number|null} rating
  * @property {PlaceStatus} status
+ * @property {LifecycleStatus|null} [lifecycleStatus]
  * @property {string} style
  * @property {string} price
  * @property {number} lat
@@ -28,6 +30,7 @@
  * @property {string} name
  * @property {number|null} rating
  * @property {PlaceStatus} status
+ * @property {LifecycleStatus|null} [lifecycleStatus]
  * @property {string} style
  * @property {string} price
  * @property {number} lat

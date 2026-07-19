@@ -504,6 +504,26 @@ promotion.
 Use `--report-file` to keep the review batch bounded to one generated source
 report/spider at a time.
 
+Official-chain rows with exact independent identifiers do not need manual review.
+Use exact-identifier mode when the source address, phone, store-specific URL, and
+nearest canonical location all agree:
+
+```bash
+node scripts/ops/auto-link-source-review-queue.mjs \
+  --entity pizza \
+  --source all_the_places \
+  --exact-identifiers \
+  --max-distance-m 10 \
+  --limit 100
+```
+
+This mode is read-only by default. Apply mode writes only local provenance and
+review history, uses `match_method='auto_exact_identifiers'`, preserves the
+canonical place name and fields, and skips any source identifier already linked
+to another place. The recurring source pipeline runs this bounded rule after a
+successful source-review queue import. Rows with missing identifiers or any
+conflict remain in the manual queue.
+
 If an ambiguous row is a cross-brand collision rather than a duplicate, use the
 admin `Review as likely-new` action. That keeps the row local and pending but
 moves it into the likely-new track so it can be accepted and later checked by

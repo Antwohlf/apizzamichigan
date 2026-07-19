@@ -177,6 +177,26 @@ admin review product needs it there. It does not imply that a source row should
 be imported into `pizza_places` or linked into `place_sources`; it only records
 that the row needs a decision.
 
+## Business Replacements At The Same Location
+
+An exact OpenStreetMap ID is normally a strong identity match. It can also mean
+that the source record has been updated after one business closed and another
+opened at the same location. The data-review portal handles this as a separate
+**Update existing place** action, not a normal “same place” link.
+
+The action is deliberately narrow: it is available only when the source and
+canonical rows have the exact same OSM ID, a different business name, and the
+canonical record is unvisited, unrated, and has no notes. It updates current
+source facts (name, coordinates, address, and non-empty phone/website values), clears stale
+classifier/scrape values, and marks the row pending for enrichment. It does not
+overwrite state, visits, ratings, notes, photos, or editorial fields.
+
+Each update writes the previous and resulting canonical snapshots to the
+existing local `source_review_decision_history` audit table and records the
+fresh source evidence in `place_sources`. If the old place has personal review
+data, do not update it in place: retain the historical place and review the new
+business through a dedicated replacement/import workflow.
+
 ## Stable Source Names
 
 Use stable source keys in code and database records:

@@ -3,6 +3,7 @@ import App, {
   compareSearchResults,
   placeSearchRank,
   remoteSearchTerms,
+  normalizeLifecycleStatus,
   searchResultPriority,
   stateCodesForSearch,
   stateScopedNameTerms,
@@ -99,6 +100,12 @@ describe('remoteSearchTerms', () => {
 
   test('keeps generic terms when they are the only search input', () => {
     expect(remoteSearchTerms('pizza')).toEqual(['pizza'])
+  })
+
+  test('supports explicit lifecycle searches', () => {
+    expect(normalizeLifecycleStatus('Permanently closed')).toBe('closed')
+    expect(normalizeLifecycleStatus('replaced by a new business')).toBe('replaced')
+    expect(remoteSearchTerms('historical pizza')).toContain('closed')
   })
 
   test('adds conservative punctuation variants for elided names', () => {
@@ -201,6 +208,19 @@ describe('state-aware search helpers', () => {
 })
 
 describe('placeSearchRank', () => {
+  test('keeps historical closed places searchable without treating them as normal matches', () => {
+    const historical = {
+      name: 'Old Neighborhood Pizza',
+      status: 'visited',
+      statusRaw: 'closed',
+      lifecycleStatus: 'closed',
+      rating: 8.5,
+      city: 'Detroit',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(historical, 'historical pizza', ['historical', 'pizza'])).toBeLessThan(99)
+  })
   test('prioritizes mixed name and location matches', () => {
     const query = 'pizza hut detroit'
     const terms = ['pizza', 'hut', 'detroit']
