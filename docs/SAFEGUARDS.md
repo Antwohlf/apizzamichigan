@@ -95,6 +95,11 @@ batches when exact IDs are available.
 The source policy is documented in `docs/DATA_SOURCES.md`. Google Maps is an
 outbound navigation destination, not an ingestion source.
 
+Lifecycle sync is disabled by default because its public-schema migration is
+additive. Apply `scripts/enrichment/supabase-production-migration.sql`, then
+set `ENABLE_LIFECYCLE_SYNC=1` only after the readiness report confirms the
+remote columns exist. Keep that flag unset until then.
+
 ## Archived Safeguards
 
 Older OpenClaw/Discord watchdog notes are preserved in git history and related

@@ -22,7 +22,9 @@ const WORKER_ID = process.env.CLASSIFIER_WORKER_ID || 'launchd-classify'
 const STALE_MINUTES = parsePositiveInt(process.env.CLASSIFIER_HEALTH_STALE_MINUTES, 30)
 const WINDOW_HOURS = parsePositiveInt(process.env.CLASSIFIER_HEALTH_WINDOW_HOURS, 1)
 const MAX_ROWS = parsePositiveInt(process.env.CLASSIFIER_HEALTH_MAX_ROWS, 5)
-const EXPECTED_CLASSIFIER_PROCESSES = parsePositiveInt(process.env.CLASSIFIER_WORKER_COUNT, 2)
+// The iMac runs one Ollama-backed classifier. Operators can explicitly raise
+// this for a machine with enough local inference capacity.
+const EXPECTED_CLASSIFIER_PROCESSES = parsePositiveInt(process.env.CLASSIFIER_WORKER_COUNT, 1)
 const EXPECTED_SCRAPER_PROCESSES = parsePositiveInt(process.env.SCRAPER_PROCESS_COUNT, 1)
 const IDLE_WARNING_MINIMUM = parsePositiveInt(process.env.CLASSIFIER_IDLE_WARNING_MINIMUM, 10)
 

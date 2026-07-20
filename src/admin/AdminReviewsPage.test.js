@@ -107,4 +107,27 @@ describe('AdminReviewsPage', () => {
       expect(screen.getByLabelText(/selected review/i)).toHaveTextContent('Buddy’s Pizza')
     })
   })
+
+  test('lets admins narrow the suggestion inbox before choosing a record', async () => {
+    window.history.replaceState({}, '', '/admin/reviews/suggestions?entity=pizza')
+    global.fetch = jest.fn(async url => {
+      if (url === '/api/admin/check') return response({ authorized: true })
+      if (url === '/api/admin/suggestions?entity=pizza&status=pending') {
+        return response({ data: [
+          { id: 1, name: 'Suggested Pizza', formatted_address: 'Ann Arbor, MI', user_name: 'Anthony' },
+          { id: 2, name: 'Other Pizza', formatted_address: 'Detroit, MI', user_name: 'Guest' },
+        ] })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+
+    render(<AdminReviewsPage />)
+
+    const search = await screen.findByRole('searchbox', { name: 'Find suggestion' })
+    expect(await screen.findByRole('heading', { name: 'Suggested Pizza' })).toBeInTheDocument()
+    userEvent.type(search, 'Detroit')
+
+    expect(await screen.findByRole('heading', { name: 'Other Pizza' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Suggested Pizza' })).not.toBeInTheDocument()
+  })
 })

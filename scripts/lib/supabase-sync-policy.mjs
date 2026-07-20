@@ -1,5 +1,30 @@
 export const SUPABASE_SYNC_TARGET_TABLE = 'pizza_places';
 
+// The public schema stores compact region codes. Keep the full source address
+// intact, but map the one current international subdivision that exceeds the
+// public column width before inserting a new canonical row.
+export const SUPABASE_STATE_ALIASES = Object.freeze({
+  'new providence': 'NP',
+});
+
+export function normalizeSupabaseState(value) {
+  if (value === null || value === undefined) return value;
+  const state = String(value).trim();
+  if (state.length <= 10) return state;
+  const normalized = SUPABASE_STATE_ALIASES[state.toLowerCase()];
+  if (normalized) return normalized;
+  throw new Error(`State value exceeds Supabase's 10-character limit and has no mapping: ${state}`);
+}
+
+// Lifecycle is an explicit editorial decision, so keep it out of the normal
+// sync contract until the matching Supabase columns have been migrated.
+export const LIFECYCLE_SYNC_ENABLED = /^(1|true|yes)$/i.test(
+  String(process.env.ENABLE_LIFECYCLE_SYNC || '').trim(),
+);
+export const LIFECYCLE_COLS = LIFECYCLE_SYNC_ENABLED
+  ? ['lifecycle_status', 'lifecycle_replaced_by_id']
+  : [];
+
 export const LOCAL_ONLY_SUPABASE_TABLES = [
   'place_sources',
   'source_review_queue',
@@ -71,6 +96,7 @@ export const LOCAL_SYNC_COLS = [
   ...LOCAL_CONTEXT_COLS,
   ...FILL_IF_NULL_COLS,
   ...OVERWRITE_COLS,
+  ...LIFECYCLE_COLS,
 ];
 
 const LOCAL_SYNC_CHECKPOINT_COL = `to_char(last_enriched_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as sync_checkpoint_last_enriched_at`;
@@ -80,11 +106,13 @@ export const SUPABASE_SYNC_SELECT_COLS = [
   ...OVERWRITE_COLS,
   ...FILL_IF_NULL_COLS,
   ...QA_DEFAULT_COLS,
+  ...LIFECYCLE_COLS,
 ];
 
 export const LOCAL_SYNC_VALUE_COLS = [
   ...FILL_IF_NULL_COLS,
   ...OVERWRITE_COLS,
+  ...LIFECYCLE_COLS,
 ];
 
 export function assertSupabaseSyncTableBoundary({
@@ -214,6 +242,12 @@ export function buildSupabasePayload(local, current, { nowIso = new Date().toISO
     }
   }
 
+  // Unlike enrichment fields, lifecycle decisions may be intentionally
+  // cleared back to active, so compare and sync nulls as well as values.
+  for (const col of LIFECYCLE_COLS) {
+    if (!syncValuesEqual(local[col], current[col])) payload[col] = local[col] ?? null;
+  }
+
   if (current.qa_status == null) payload.qa_status = 'unreviewed';
   if (current.qa_schema_version == null) payload.qa_schema_version = 1;
 
@@ -246,10 +280,12 @@ export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOStr
 
   for (const col of LOCAL_CONTEXT_COLS) {
     const value = local[col];
-    if (value !== null && value !== undefined) payload[col] = value;
+    if (value !== null && value !== undefined) {
+      payload[col] = col === 'state' ? normalizeSupabaseState(value) : value;
+    }
   }
 
-  for (const col of [...OVERWRITE_COLS, ...FILL_IF_NULL_COLS]) {
+  for (const col of [...OVERWRITE_COLS, ...FILL_IF_NULL_COLS, ...LIFECYCLE_COLS]) {
     const value = local[col];
     if (value !== null && value !== undefined) payload[col] = value;
   }

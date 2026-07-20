@@ -63,8 +63,17 @@ try {
     available,
     replacements: [],
     closed_or_stale: [],
+    closed_signals: [],
     same_location_conflicts: [],
     chain_coverage: [],
+    totals: {
+      replacements: 0,
+      stale_evidence: 0,
+      stale_places: 0,
+      closed_signals: 0,
+      same_location_conflicts: 0,
+      chain_coverage_groups: 0,
+    },
   }
 
   if (available.review_queue) {
@@ -90,13 +99,34 @@ try {
       LIMIT $2
     `, [entityArg, limitArg])
     report.replacements = replacements.rows
+
+    const replacementTotal = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM source_review_queue srq
+      JOIN ${table} p ON p.id = srq.nearest_place_id
+      WHERE srq.entity_type = $1
+        AND srq.status = 'pending'
+        AND srq.review_kind = 'ambiguous'
+        AND srq.source = 'osm'
+        AND srq.source_id = p.google_place_id
+        AND lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))
+          <> lower(regexp_replace(coalesce(p.name, ''), '[^a-z0-9]+', ' ', 'g'))
+    `, [entityArg])
+    report.totals.replacements = Number(replacementTotal.rows[0]?.total || 0)
   }
 
   if (available.place_sources) {
     const stale = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.place_id, ps.source)
+               ps.place_id, ps.source, ps.retrieved_at, ps.data
+        FROM place_sources ps
+        WHERE ps.entity_type = $1
+        ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+      )
       SELECT p.id AS place_id, p.name, p.state, p.status,
-             ps.source, ps.retrieved_at,
-             CASE ps.source
+             latest_source.source, latest_source.retrieved_at,
+             CASE latest_source.source
                WHEN 'osm' THEN 30
                WHEN 'official_website' THEN 30
                WHEN 'all_the_places' THEN 90
@@ -105,10 +135,9 @@ try {
                WHEN 'wikidata' THEN 365
                ELSE 180
              END AS freshness_days
-      FROM place_sources ps
-      JOIN ${table} p ON p.id = ps.place_id
-      WHERE ps.entity_type = $1
-        AND ps.retrieved_at < NOW() - make_interval(days => CASE ps.source
+      FROM latest_source
+      JOIN ${table} p ON p.id = latest_source.place_id
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
           WHEN 'osm' THEN 30
           WHEN 'official_website' THEN 30
           WHEN 'all_the_places' THEN 90
@@ -117,10 +146,99 @@ try {
           WHEN 'wikidata' THEN 365
           ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
-      ORDER BY ps.retrieved_at
+        AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+      ORDER BY latest_source.retrieved_at
       LIMIT $2
     `, [entityArg, limitArg])
     report.closed_or_stale = stale.rows
+
+    const staleTotal = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.place_id, ps.source)
+               ps.place_id, ps.source, ps.retrieved_at
+        FROM place_sources ps
+        WHERE ps.entity_type = $1
+        ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+      )
+      SELECT COUNT(*)::int AS total
+      FROM latest_source
+      JOIN ${table} p ON p.id = latest_source.place_id
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
+          WHEN 'osm' THEN 30
+          WHEN 'official_website' THEN 30
+          WHEN 'all_the_places' THEN 90
+          WHEN 'fsq_os_places' THEN 180
+          WHEN 'overture_places' THEN 365
+          WHEN 'wikidata' THEN 365
+          ELSE 180 END)
+        AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+        AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+    `, [entityArg])
+    report.totals.stale_evidence = Number(staleTotal.rows[0]?.total || 0)
+
+    const stalePlaceTotal = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.place_id, ps.source)
+               ps.place_id, ps.source, ps.retrieved_at
+        FROM place_sources ps
+        WHERE ps.entity_type = $1
+        ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+      )
+      SELECT COUNT(DISTINCT p.id)::int AS total
+      FROM latest_source
+      JOIN ${table} p ON p.id = latest_source.place_id
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
+          WHEN 'osm' THEN 30
+          WHEN 'official_website' THEN 30
+          WHEN 'all_the_places' THEN 90
+          WHEN 'fsq_os_places' THEN 180
+          WHEN 'overture_places' THEN 365
+          WHEN 'wikidata' THEN 365
+          ELSE 180 END)
+        AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+        AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+    `, [entityArg])
+    report.totals.stale_places = Number(stalePlaceTotal.rows[0]?.total || 0)
+
+    const closedSignals = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.place_id, ps.source)
+               ps.place_id, ps.source, ps.source_id, ps.retrieved_at,
+               ps.data, ps.match_method
+        FROM place_sources ps
+        WHERE ps.entity_type = $1
+        ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+      )
+      SELECT p.id AS place_id, p.name, p.state, p.status,
+             latest_source.source, latest_source.source_id,
+             latest_source.retrieved_at, latest_source.match_method,
+             latest_source.data->>'source_url' AS source_url
+      FROM latest_source
+      JOIN ${table} p ON p.id = latest_source.place_id
+      WHERE lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+        AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+        AND latest_source.data->>'is_closed' = 'true'
+      ORDER BY latest_source.retrieved_at DESC NULLS LAST
+      LIMIT $2
+    `, [entityArg, limitArg])
+    report.closed_signals = closedSignals.rows
+
+    const closedSignalTotal = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.place_id, ps.source)
+               ps.place_id, ps.source, ps.retrieved_at, ps.data
+        FROM place_sources ps
+        WHERE ps.entity_type = $1
+        ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+      )
+      SELECT COUNT(*)::int AS total
+      FROM latest_source
+      JOIN ${table} p ON p.id = latest_source.place_id
+      WHERE lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+        AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+        AND latest_source.data->>'is_closed' = 'true'
+    `, [entityArg])
+    report.totals.closed_signals = Number(closedSignalTotal.rows[0]?.total || 0)
 
     const conflicts = await client.query(`
       WITH candidates AS (
@@ -149,6 +267,27 @@ try {
     `, [limitArg])
     report.same_location_conflicts = conflicts.rows
 
+    const conflictTotal = await client.query(`
+      WITH candidates AS (
+        SELECT id, name, state, lat, lng,
+               ROUND(lat::numeric, 4) AS lat_bucket,
+               ROUND(lng::numeric, 4) AS lng_bucket,
+               lower(regexp_replace(coalesce(name, ''), '[^a-z0-9]+', ' ', 'g')) AS normalized_name
+        FROM ${table}
+        WHERE lat IS NOT NULL AND lng IS NOT NULL
+      )
+      SELECT COUNT(*)::int AS total
+      FROM candidates a
+      JOIN candidates b ON b.id > a.id
+        AND b.lat_bucket = a.lat_bucket
+        AND b.lng_bucket = a.lng_bucket
+        AND COALESCE(a.state, '') = COALESCE(b.state, '')
+        AND ABS(a.lat - b.lat) < 0.00015
+        AND ABS(a.lng - b.lng) < 0.00015
+        AND a.normalized_name <> b.normalized_name
+    `)
+    report.totals.same_location_conflicts = Number(conflictTotal.rows[0]?.total || 0)
+
     const chains = await client.query(`
       SELECT COALESCE(NULLIF(btrim(p.brand_wikidata), ''), NULLIF(btrim(p.operator_wikidata), ''),
                       NULLIF(btrim(p.brand), ''), NULLIF(btrim(p.operator), '')) AS chain_identity,
@@ -163,20 +302,34 @@ try {
       LIMIT $1
     `, [limitArg])
     report.chain_coverage = chains.rows
+
+    const chainTotal = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT COALESCE(NULLIF(btrim(p.brand_wikidata), ''), NULLIF(btrim(p.operator_wikidata), ''),
+                        NULLIF(btrim(p.brand), ''), NULLIF(btrim(p.operator), '')) AS chain_identity
+        FROM ${table} p
+        WHERE COALESCE(NULLIF(btrim(p.brand_wikidata), ''), NULLIF(btrim(p.operator_wikidata), ''),
+                       NULLIF(btrim(p.brand), ''), NULLIF(btrim(p.operator), '')) IS NOT NULL
+        GROUP BY 1
+        HAVING COUNT(*) > 1
+      ) grouped_chains
+    `)
+    report.totals.chain_coverage_groups = Number(chainTotal.rows[0]?.total || 0)
   }
 
-  report.counts = Object.fromEntries(Object.entries(report)
-    .filter(([, value]) => Array.isArray(value))
-    .map(([key, value]) => [key, value.length]))
+  report.counts = report.totals
 
   if (json) console.log(JSON.stringify(report, null, 2))
   else {
     console.log(`# Lifecycle Quality Report (${entityArg})`)
     console.log(`Generated: ${report.generated_at}`)
     console.log(`Replacements: ${report.replacements.length}`)
-    console.log(`Closed/stale listings: ${report.closed_or_stale.length}`)
-    console.log(`Same-location conflicts: ${report.same_location_conflicts.length}`)
-    console.log(`Chain coverage groups: ${report.chain_coverage.length}`)
+    console.log(`Likely replacements: ${report.totals.replacements} (showing ${report.replacements.length})`)
+    console.log(`Stale evidence rows: ${report.totals.stale_evidence} (showing ${report.closed_or_stale.length})`)
+    console.log(`Closed source signals: ${report.totals.closed_signals} (showing ${report.closed_signals.length})`)
+    console.log(`Same-location conflicts: ${report.totals.same_location_conflicts} (showing ${report.same_location_conflicts.length})`)
+    console.log(`Chain coverage groups: ${report.totals.chain_coverage_groups} (showing ${report.chain_coverage.length})`)
   }
 } finally {
   await client.end().catch(() => {})

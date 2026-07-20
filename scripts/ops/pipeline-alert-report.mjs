@@ -18,6 +18,7 @@ const unknownFailureLimit = positiveInt(process.env.PIPELINE_UNKNOWN_SCRAPE_FAIL
 const scrapeAheadMinimum = positiveInt(process.env.PIPELINE_SCRAPE_AHEAD_MINIMUM, 0)
 const duplicateWarningLimit = positiveInt(process.env.PIPELINE_DUPLICATE_WARNING_LIMIT, 0)
 const staleSourceWarningLimit = positiveInt(process.env.PIPELINE_STALE_SOURCE_WARNING_LIMIT, 1000)
+const staleSourceRatioWarningPercent = positiveInt(process.env.PIPELINE_STALE_SOURCE_RATIO_WARNING_PERCENT, 95)
 const scrapeExhaustedWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_EXHAUSTED_WARNING_LIMIT, 500)
 const scrapeBlockedWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_BLOCKED_WARNING_LIMIT, 100)
 const scrapeDeadLinkWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_DEAD_LINK_WARNING_LIMIT, 100)
@@ -45,14 +46,45 @@ function sourcePipelineReport() {
   if (!existsSync(statePath)) return { ok: false, error: `source pipeline state missing: ${statePath}` }
   try {
     const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    const reportPath = join(root, 'scripts/.source-pipeline-last-report.json')
+    const rawLastReport = existsSync(reportPath)
+      ? JSON.parse(readFileSync(reportPath, 'utf8'))
+      : null
+    const lastReport = rawLastReport?.mode === 'apply' ? rawLastReport : null
     const lastRunMs = Date.parse(state.last_run || '')
     const ageMinutes = Number.isFinite(lastRunMs)
       ? Math.max(0, Number(((Date.now() - lastRunMs) / 60000).toFixed(1)))
       : null
-    const sourceErrors = Object.entries(state.sources || {})
+    const stateErrors = Object.entries(state.sources || {})
       .filter(([, value]) => value?.last_error)
       .map(([source, value]) => ({ source, last_attempt: value.last_attempt || null, error: value.last_error }))
-    return { ok: true, lastRun: state.last_run || null, ageMinutes, sourceErrors }
+    const reportErrors = (lastReport?.errors || [])
+      .filter(error => error?.source && error?.message)
+      .map(error => ({
+        source: error.source,
+        last_attempt: lastReport.finished_at || lastReport.started_at || null,
+        error: error.message,
+        run_report: true,
+      }))
+    const sourceErrors = [...stateErrors, ...reportErrors]
+      .filter((error, index, errors) => errors.findIndex(candidate =>
+        candidate.source === error.source && candidate.error === error.error
+      ) === index)
+    return {
+      ok: true,
+      lastRun: state.last_run || lastReport?.finished_at || null,
+      ageMinutes,
+      sourceErrors,
+      lastReport: lastReport
+        ? {
+          startedAt: lastReport.started_at || null,
+          finishedAt: lastReport.finished_at || null,
+          mode: lastReport.mode || null,
+          workUnits: lastReport.work_units?.length || 0,
+          errors: reportErrors.length,
+        }
+        : null,
+    }
   } catch (error) {
     return { ok: false, error: `source pipeline state unreadable: ${error.message}` }
   }
@@ -114,13 +146,18 @@ function main() {
   if (missingPrimaryEvidence) alerts.push(`OSM rows missing primary evidence: ${missingPrimaryEvidence}`)
   if (duplicateGroups > duplicateWarningLimit) warnings.push(`duplicate external-id groups: ${duplicateGroups}`)
   for (const source of freshness.sources || []) {
-    if (source.stale_rows > staleSourceWarningLimit) {
-      warnings.push(`stale ${source.source} evidence rows: ${source.stale_rows} > ${staleSourceWarningLimit}`)
+    const hasEvidence = Number(source.evidence_rows || 0) > 0
+    const staleRatio = Number(source.fresh_ratio_percent == null
+      ? (hasEvidence ? (Number(source.stale_rows || 0) / Number(source.evidence_rows || 1)) * 100 : 0)
+      : 100 - Number(source.fresh_ratio_percent))
+    const hasNoFreshEvidence = hasEvidence && Number(source.fresh_rows || 0) === 0
+    if (hasNoFreshEvidence || (source.stale_rows > staleSourceWarningLimit && staleRatio >= staleSourceRatioWarningPercent)) {
+      warnings.push(`stale ${source.source} evidence coverage: ${source.stale_rows}/${source.evidence_rows} rows (${staleRatio.toFixed(1)}% stale)`)
     }
   }
-  const acceptedDuplicateCoordinates = Number(sourceQuality.accepted_duplicate_coordinates?.pairs || 0)
-  if (acceptedDuplicateCoordinates > 0) {
-    warnings.push(`accepted source-review rows blocked by same-source coordinates: ${acceptedDuplicateCoordinates} pair(s)`)
+  const conflictingDuplicateCoordinates = Number(sourceQuality.accepted_duplicate_coordinates?.conflicting_name_pairs || 0)
+  if (conflictingDuplicateCoordinates > 0) {
+    warnings.push(`accepted source-review rows have conflicting same-source coordinates: ${conflictingDuplicateCoordinates} pair(s)`)
   }
   const duplicateRate = Number(sourceQuality.canonical?.affected_row_rate_percent || 0)
   if (duplicateRate > canonicalDuplicateRateLimit) {
@@ -184,7 +221,7 @@ function main() {
     state,
     alerts,
     warnings,
-    thresholds: { unknownFailureLimit, scrapeAheadMinimum, duplicateWarningLimit, staleSourceWarningLimit, scrapeExhaustedWarningLimit, scrapeBlockedWarningLimit, scrapeDeadLinkWarningLimit, scrapeUnknownWarningLimit, canonicalDuplicateRateLimit, sourcePipelineStaleMinutes, reviewBacklogWarningLimit, staleProcessingMinutes },
+    thresholds: { unknownFailureLimit, scrapeAheadMinimum, duplicateWarningLimit, staleSourceWarningLimit, staleSourceRatioWarningPercent, scrapeExhaustedWarningLimit, scrapeBlockedWarningLimit, scrapeDeadLinkWarningLimit, scrapeUnknownWarningLimit, canonicalDuplicateRateLimit, sourcePipelineStaleMinutes, reviewBacklogWarningLimit, staleProcessingMinutes },
     queue,
     staleProcessingJobs,
     classifier: { state: classifier.health?.state || classifier.state || 'FAIL', recent: classifier.queue?.recent || null },

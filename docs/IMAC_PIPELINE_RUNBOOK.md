@@ -134,6 +134,11 @@ The read-only alert report also warns when the source-review backlog exceeds
 warning, not a pipeline failure; it is intended to prompt bounded review
 batches before the queue becomes operationally unmanageable.
 
+Applied source-scheduler health state is stored in
+`scripts/.source-pipeline-last-report.json`. Manual `--dry-run` diagnostics are
+stored separately in `scripts/.source-pipeline-last-dry-run.json`, so a dry run
+cannot overwrite the evidence used by unattended health checks.
+
 The source pipeline is the US-first production entry point for OSM, FSQ OS
 Places, All the Places, Overture, Wikidata, and official-website enrichment.
 It uses the existing provenance/review tables and keeps machine-local cursors
@@ -181,16 +186,20 @@ flag, so scheduled runs remain cadence-controlled.
 The launchd template is the explicit apply path. It caps heavy work at four
 units per hour, strict new-place creation at 50 per run and 250 per day, and
 website scraping at 75 bounded jobs per run. OSM itself runs on an hourly
-cadence and processes eight serial tiles per MI/CA cycle; NY and TX are capped
-at four serial tiles per cycle because their Overpass requests are less
-reliable. The runner never starts concurrent OSM workers, and each regional
-manifest remains resumable if a tile times out.
+cadence and processes two regions per scheduler run. The runner never starts
+concurrent top-level OSM workers; its hard runtime cap, request timeouts,
+endpoint failover, and resumable manifests keep the regional batch bounded
+when an Overpass provider is slow.
 
 The template also sets bounded OSM timeouts: 90 seconds for the Overpass query,
 120 seconds for an HTTP request, and 180 seconds for a tile subprocess. A slow
-provider therefore fails over or checkpoints instead of holding the hourly
-source-pipeline job indefinitely. Successful tiles remain usable when a run
-ends partially.
+provider therefore fails over or checkpoints instead of holding the
+source-pipeline job indefinitely. The launchd job runs every 15 minutes. Every
+region uses two resumable tiles per run. Successful tiles remain usable when a run
+ends partially. A timed-out tile may be adaptively split through two bounded
+level before its remaining subtiles are checkpointed for the next scheduled
+attempt. This deliberately keeps a difficult tile from consuming the entire
+parent run through repeated recursive splits.
 The parent OSM stage is allowed 20 minutes to process its bounded tile batch;
 the `OSM_PIPELINE_TIMEOUT_MS` override is available for a deliberately larger
 operator-run batch.
@@ -258,6 +267,13 @@ jobs. `PIPELINE_STALE_PROCESSING_MINUTES` defaults to 120; an aged scrape or
 menu job is reported as actionable with its job ID and worker assignment so an
 operator can verify the heartbeat before requeueing it.
 
+The OSM refresh uses region-specific tile budgets because the regions do not
+have comparable Overpass response times. The current bounded profile is eight
+tiles per Michigan run, four per New York run, and two per Texas or California
+run. Texas and California stay conservative because adaptive tile splits can
+approach the per-run runtime limit; the scheduler resumes remaining tiles on
+later runs instead of retrying an entire region.
+
 Retryable scrape recovery can be narrowed to a source prefix, which is
 important because legacy OSM jobs currently dominate the historical failure
 population:
@@ -320,10 +336,13 @@ operator uses the results.
 
 An expected `WARN` with `missingSupabaseRows > 0` is not a failed sync service:
 it means the selected batch contains local canonical rows that are absent from
-Supabase and therefore cannot use the ordinary update-only path. Do not weaken
-the broad policy to clear that warning. Route each approved reviewed-new row
-through the exact-ID command below; rows without `reviewed_new_import` proof
-remain intentionally blocked until reviewed.
+Supabase and therefore cannot use the ordinary update-only path. The scheduled
+wrapper separately reconciles all approved reviewed-new rows in bounded groups
+of 250, so this warning should drain without manual intervention. Rows without
+`reviewed_new_import` proof remain intentionally blocked until reviewed.
+
+Supabase network failures use bounded retry/backoff. Inserts confirm the row by
+ID before retrying after an uncertain response, preventing duplicate rows.
 
 Verify the sync boundary before changing sync scripts or running a manual sync:
 
@@ -431,8 +450,9 @@ ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"
 ssh apizza-imac 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
 ```
 
-The service applies at most one 100-row batch every 30 minutes. It should remain
-disabled if classification QA is not healthy.
+The service applies at most one 100-row ordinary batch plus one guarded
+reviewed-new reconciliation batch of up to 250 rows every 30 minutes. It should
+remain disabled if classification QA is not healthy.
 
 The wrapper owns `/tmp/apizzamichigan/supabase-sync.lock` to avoid overlapping
 runs. If a prior process exits badly, locks older than 25 minutes are treated as

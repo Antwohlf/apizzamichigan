@@ -161,6 +161,9 @@ function parseArgs(argv) {
     maxDistanceM: 100,
     brandRules: false,
     exactIdentifiers: false,
+    exactSourceId: false,
+    sourceIdentity: false,
+    minExactIdentifiers: 3,
     ids: [],
     limit: 100,
     apply: false,
@@ -176,6 +179,9 @@ function parseArgs(argv) {
     else if (arg === '--max-distance-m') args.maxDistanceM = parseFloat(argv[++i]);
     else if (arg === '--brand-rules') args.brandRules = true;
     else if (arg === '--exact-identifiers') args.exactIdentifiers = true;
+    else if (arg === '--exact-source-id') args.exactSourceId = true;
+    else if (arg === '--source-identity') args.sourceIdentity = true;
+    else if (arg === '--min-exact-identifiers') args.minExactIdentifiers = parseInt(argv[++i], 10);
     else if (arg === '--ids') args.ids = parseIds(argv[++i]);
     else if (arg === '--limit') args.limit = parseInt(argv[++i], 10);
     else if (arg === '--apply') args.apply = true;
@@ -194,6 +200,9 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(args.maxDistanceM) || args.maxDistanceM <= 0) {
     throw new Error('Invalid --max-distance-m.');
+  }
+  if (!Number.isInteger(args.minExactIdentifiers) || args.minExactIdentifiers < 2 || args.minExactIdentifiers > 3) {
+    throw new Error('Invalid --min-exact-identifiers. Use 2 or 3.');
   }
   if (!Number.isFinite(args.limit) || args.limit <= 0) throw new Error('Invalid --limit.');
 
@@ -219,7 +228,10 @@ Options:
   --min-name-score <n>           Minimum nearest_name_score, 0-1 (default 0.98)
   --max-distance-m <n>           Maximum nearest distance in meters (default 100)
   --brand-rules                  Also include explicit report/brand rules
-  --exact-identifiers            Require exact address, phone, website, and nearby location
+  --exact-identifiers            Require an exact official store URL and nearby location
+  --min-exact-identifiers <n>    Require 2 or 3 matching identifiers in exact mode (default 3)
+  --exact-source-id              Require an exact OSM source ID and unchanged source name
+  --source-identity              Require an exact Wikidata brand identity and nearby location
   --ids <ids>                    Exact reviewed source_review_queue ids to link
   --limit <n>                    Candidate limit (default 100)
   --apply                        Link the bounded candidate set
@@ -235,9 +247,14 @@ source spider/report proves the brand but the source and canonical display names
 use incompatible variants, such as Papa Murphy's ATP rows named "Pizza Takeout &
 Delivery" or "Domino's Pizza" source rows nearest to "Domino's".
 
-Exact identifier mode is limited to all_the_places by default and requires the
-source address, phone, store URL, and nearest location to agree. It is intended
-for deterministic official-chain links, not generic fuzzy matching.
+Exact identifier mode is limited to all_the_places by default and requires an
+exact official store URL plus at least one corroborating identifier and nearby
+location. It is intended for deterministic official-chain links, not generic
+fuzzy matching.
+
+Source-identity mode is limited to Wikidata brand identities. It only links an
+unreviewed canonical place when the source QID matches the canonical brand QID,
+the location is within 25m, and both Latin labels are not in conflict.
 `);
 }
 
@@ -385,19 +402,26 @@ async function fetchCandidates(client, args) {
     "srq.review_kind = 'ambiguous'",
     "srq.status = 'pending'",
     'srq.nearest_place_id IS NOT NULL',
-    args.exactIdentifiers
+    args.exactIdentifiers || args.exactSourceId
       ? '(ps.id IS NULL OR ps.place_id = srq.nearest_place_id)'
       : 'ps.id IS NULL',
   ];
   const brandRuleReasons = [];
   const eligibility = [];
   let exactIdentifierReason = null;
+  let exactSourceIdReason = null;
+  let sourceIdentityReason = null;
 
   if (args.ids.length) {
     values.push(args.ids);
     filters.push(`srq.id = ANY($${values.length}::bigint[])`);
   } else {
-    eligibility.push('(srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3)');
+    // Exact-identifier automation must not inherit the broader spatial/name
+    // rule. Operators can still invoke the high-score path explicitly when
+    // they are intentionally reviewing that risk class.
+    if (!args.exactIdentifiers) {
+      eligibility.push('(srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3)');
+    }
 
     if (args.brandRules) {
       const brandRules = brandRuleSql(values);
@@ -415,13 +439,16 @@ async function fetchCandidates(client, args) {
       const canonicalPhone = `right(regexp_replace(coalesce(canonical.phone, ''), '[^0-9]', '', 'g'), 10)`;
       const sourceWebsite = `regexp_replace(regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'website', ''), NULLIF(srq.source_data->>'contact:website', ''), '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
       const canonicalWebsite = `regexp_replace(regexp_replace(lower(coalesce(canonical.website_url, '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
+      const exactIdentifierMatches = `(
+        CASE WHEN ${sourceAddress} <> '' AND ${sourceAddress} = ${canonicalAddress} THEN 1 ELSE 0 END
+        + CASE WHEN length(${sourcePhone}) = 10 AND ${sourcePhone} = ${canonicalPhone} THEN 1 ELSE 0 END
+        + CASE WHEN ${sourceWebsite} <> '' AND ${sourceWebsite} = ${canonicalWebsite} THEN 1 ELSE 0 END
+      )`;
+      const exactIdentifierCountParam = values.push(args.minExactIdentifiers);
       exactIdentifierReason = `(
-        ${sourceAddress} <> ''
-        AND ${sourceAddress} = ${canonicalAddress}
-        AND length(${sourcePhone}) = 10
-        AND ${sourcePhone} = ${canonicalPhone}
-        AND ${sourceWebsite} <> ''
+        ${sourceWebsite} <> ''
         AND ${sourceWebsite} = ${canonicalWebsite}
+        AND ${exactIdentifierMatches} >= $${exactIdentifierCountParam}
         AND srq.nearest_distance_m <= $3
         AND NOT EXISTS (
           SELECT 1
@@ -433,6 +460,51 @@ async function fetchCandidates(client, args) {
         )
       )`;
       eligibility.push(exactIdentifierReason);
+    }
+
+    if (args.exactSourceId) {
+      const sourceParam = values.push('osm');
+      const sourceName = `lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))`;
+      const canonicalName = `lower(regexp_replace(coalesce(canonical.name, ''), '[^a-z0-9]+', ' ', 'g'))`;
+      exactSourceIdReason = `(
+        srq.source = $${sourceParam}
+        AND srq.source_id = canonical.google_place_id
+        AND srq.nearest_distance_m <= $3
+        AND COALESCE(canonical.lifecycle_status, '') = ''
+        AND (${sourceName} = '' OR ${sourceName} = ${canonicalName})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM place_sources conflicting_source
+          WHERE conflicting_source.entity_type = srq.entity_type
+            AND conflicting_source.source = srq.source
+            AND conflicting_source.source_id = srq.source_id
+            AND conflicting_source.place_id <> srq.nearest_place_id
+        )
+      )`;
+      eligibility.push(exactSourceIdReason);
+    }
+
+    if (args.sourceIdentity) {
+      const identitySource = values.push('wikidata');
+      const sourceName = `lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))`;
+      const canonicalName = `lower(regexp_replace(coalesce(canonical.name, ''), '[^a-z0-9]+', ' ', 'g'))`;
+      sourceIdentityReason = `(
+        srq.source = $${identitySource}
+        AND (
+          srq.source_id = NULLIF(canonical.brand_wikidata, '')
+          OR srq.source_id = NULLIF(canonical.osm_tags->>'brand:wikidata', '')
+        )
+        AND srq.nearest_distance_m <= 25
+        AND COALESCE(canonical.status, 'unvisited') = 'unvisited'
+        AND canonical.rating IS NULL
+        AND NULLIF(btrim(canonical.notes), '') IS NULL
+        AND NOT (
+          srq.source_name ~ '[A-Za-z]'
+          AND canonical.name ~ '[A-Za-z]'
+          AND ${sourceName} <> ${canonicalName}
+        )
+      )`;
+      eligibility.push(sourceIdentityReason);
     }
   }
 
@@ -471,6 +543,10 @@ async function fetchCandidates(client, args) {
           THEN 'exact_reviewed_ids'
         WHEN ${exactIdentifierReason || 'FALSE'}
           THEN 'exact_identifiers'
+        WHEN ${exactSourceIdReason || 'FALSE'}
+          THEN 'exact_source_id'
+        WHEN ${sourceIdentityReason || 'FALSE'}
+          THEN 'source_identity'
         WHEN srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3
           THEN 'score_distance'
         ${brandRuleReasons.join('\n        ')}
@@ -487,6 +563,8 @@ async function fetchCandidates(client, args) {
       ORDER BY
       CASE
         WHEN ${exactIdentifierReason || 'FALSE'} THEN 0
+        WHEN ${exactSourceIdReason || 'FALSE'} THEN 0
+        WHEN ${sourceIdentityReason || 'FALSE'} THEN 0
         WHEN srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3 THEN 0
         ELSE 1
       END ASC,
@@ -502,14 +580,18 @@ async function applyCandidates(client, candidates, args) {
   const reviewerNotes = args.ids.length
     ? `Linked ambiguous source review row by exact reviewed source_review_queue ids: ${args.ids.join(',')}.`
     : args.exactIdentifiers
-      ? 'Auto-linked official source row by exact address, phone, store URL, and location agreement.'
+      ? `Auto-linked official source row by exact store URL plus at least ${args.minExactIdentifiers - 1} corroborating identifier(s) and location agreement.`
+    : args.exactSourceId
+      ? 'Auto-linked unchanged OSM evidence by exact source ID, matching name, nearby location, and active canonical lifecycle.'
+    : args.sourceIdentity
+      ? 'Auto-linked Wikidata source row by exact brand identity, nearby location, and non-conflicting labels on an unreviewed place.'
     : `Auto-linked ambiguous source review row with nearest_name_score >= ${args.minNameScore} and nearest_distance_m <= ${args.maxDistanceM}${args.brandRules ? ', or an explicit report/brand rule matched' : ''}.`;
   let linked = 0;
 
   await client.query('BEGIN');
   try {
     for (const row of candidates) {
-      if (row.existing_source_place_id == null) {
+      if (row.existing_source_place_id == null || args.exactSourceId) {
         const metadata = sourceMetadata(row.source);
         await client.query(`
         INSERT INTO place_sources (
@@ -548,6 +630,10 @@ async function applyCandidates(client, candidates, args) {
           1,
           row.auto_link_reason === 'exact_identifiers'
             ? 'auto_exact_identifiers'
+            : row.auto_link_reason === 'exact_source_id'
+              ? 'auto_exact_source_id'
+            : row.auto_link_reason === 'source_identity'
+              ? 'auto_source_identity'
             : row.auto_link_reason?.startsWith('brand_rule:')
             ? 'auto_brand_reviewed_link'
             : row.auto_link_reason === 'exact_reviewed_ids'
@@ -620,6 +706,9 @@ function outputReport({ args, candidates, applyResult }) {
     min_name_score: args.minNameScore,
     max_distance_m: args.maxDistanceM,
     brand_rules: args.brandRules,
+    min_exact_identifiers: args.exactIdentifiers ? args.minExactIdentifiers : null,
+    source_identity: args.sourceIdentity,
+    exact_source_id: args.exactSourceId,
     ids: args.ids,
     limit: args.limit,
     candidates: candidates.length,
@@ -641,6 +730,9 @@ function outputReport({ args, candidates, applyResult }) {
   console.log(`Thresholds: name_score >= ${args.minNameScore}, distance <= ${args.maxDistanceM}m`);
   console.log(`Brand rules: ${args.brandRules ? 'enabled' : 'disabled'}`);
   console.log(`Exact identifiers: ${args.exactIdentifiers ? 'enabled' : 'disabled'}`);
+  console.log(`Source identity: ${args.sourceIdentity ? 'enabled' : 'disabled'}`);
+  console.log(`Exact source ID: ${args.exactSourceId ? 'enabled' : 'disabled'}`);
+  console.log(`Minimum exact identifiers: ${args.exactIdentifiers ? args.minExactIdentifiers : 'n/a'}`);
   console.log(`Candidates: ${candidates.length}`);
   console.log(`Rows linked: ${applyResult.linked}`);
   console.log('');

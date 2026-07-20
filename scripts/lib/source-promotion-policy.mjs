@@ -188,6 +188,16 @@ export const SOURCE_PROMOTION_FIELD_POLICIES = {
     disposition: 'blocked',
     reason: 'Manual/user-facing field; source adapters must not promote it.',
   },
+  lifecycle_status: {
+    group: 'lifecycle',
+    disposition: 'blocked',
+    reason: 'Manual lifecycle field; source adapters must not decide whether a business is closed or replaced.',
+  },
+  lifecycle_replaced_by_id: {
+    group: 'lifecycle',
+    disposition: 'blocked',
+    reason: 'Manual lifecycle relationship; replacement links require an explicit review action.',
+  },
   photos: {
     group: 'editorial',
     disposition: 'blocked',

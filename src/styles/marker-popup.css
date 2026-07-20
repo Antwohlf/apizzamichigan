@@ -111,6 +111,20 @@
   overflow-wrap: anywhere;
 }
 
+.marker-popup .popup-card__lifecycle {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: rgba(253, 186, 116, 0.96);
+}
+
+.marker-popup .popup-card__lifecycle a {
+  display: inline-block;
+  margin-left: 4px;
+  color: inherit;
+  font-weight: 700;
+}
+
 .marker-popup .review-gallery-wrap {
   margin-top: 8px;
   max-width: 100%;

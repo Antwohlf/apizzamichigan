@@ -8,6 +8,7 @@ const ROOT = process.cwd();
 const CONFIG_PATH = resolve(ROOT, 'config/source-pipeline.json');
 const STATE_PATH = resolve(ROOT, 'scripts/.source-pipeline-state.json');
 const LAST_REPORT_PATH = resolve(ROOT, 'scripts/.source-pipeline-last-report.json');
+const LAST_DRY_RUN_PATH = resolve(ROOT, 'scripts/.source-pipeline-last-dry-run.json');
 const LOCK_PATH = '/tmp/apizzamichigan/source-pipeline.lock';
 const NODE = process.execPath;
 const OSM_PIPELINE_TIMEOUT_MS = Number.parseInt(process.env.OSM_PIPELINE_TIMEOUT_MS || '', 10) || 1200000;
@@ -33,28 +34,28 @@ function args(argv) {
 function loadJson(path, fallback) { return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback; }
 function saveJson(path, value) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`); }
 function run(command, commandArgs, { timeout = 120000, env = process.env } = {}) {
-  // Keep every adapter in its own process group. Node's spawnSync timeout
-  // stops the direct child, but it does not reliably reap descendants such
-  // as exporters, Python helpers, or HTTP clients.
+  // Keep adapters attached to the launchd process group so a job restart cannot
+  // orphan an exporter that continues writing a resumable manifest. The OSM
+  // tile runner applies its own direct-child timeout for nested requests.
   const result = spawnSync(command, commandArgs, {
     cwd: ROOT,
     encoding: 'utf8',
     env,
     timeout,
-    detached: true,
+    detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error?.code === 'ETIMEDOUT' || result.signal === 'SIGTERM') {
-    killProcessGroup(result.pid);
+    killProcess(result.pid);
   }
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${commandArgs.join(' ')} failed: ${String(result.stderr || result.stdout).trim().slice(-3000)}`);
   return String(result.stdout || '').trim();
 }
-function killProcessGroup(pid) {
+function killProcess(pid) {
   if (!pid) return;
-  try { process.kill(-Number(pid), 'SIGTERM'); } catch {}
-  try { process.kill(-Number(pid), 'SIGKILL'); } catch {}
+  try { process.kill(Number(pid), 'SIGTERM'); } catch {}
+  try { process.kill(Number(pid), 'SIGKILL'); } catch {}
 }
 function acquireLock() {
   mkdirSync(dirname(LOCK_PATH), { recursive: true });
@@ -94,6 +95,31 @@ function osmManifestPath(regionalOutput, bbox, step) {
   const suffix = String(step).replace('.', 'p');
   return `${regionalOutput.replace(/\.json$/, '')}.step-${suffix}.json.manifest.json`;
 }
+
+function osmBacklog(region, osmConfig) {
+  const regionalOutput = resolve(ROOT, 'reports/osm', `${region.key.toLowerCase()}-pizza.json`);
+  const step = Number(osmConfig.tile_step || 0.5);
+  const manifestPath = osmManifestPath(regionalOutput, region.bbox, step);
+  if (!existsSync(manifestPath)) return null;
+  try {
+    const manifest = loadJson(manifestPath, null);
+    const total = Number(manifest?.total_tiles || Object.keys(manifest?.tiles || {}).length || 0);
+    const success = Number(manifest?.statuses?.success || Object.values(manifest?.tiles || {}).filter(tile => tile.status === 'success').length || 0);
+    return Math.max(0, total - success);
+  } catch {
+    return null;
+  }
+}
+
+function selectOsmRegion(regions, osmConfig, cursor = 0) {
+  const scored = regions.map((region, index) => ({
+    region,
+    index,
+    backlog: osmBacklog(region, osmConfig),
+  })).filter(item => item.backlog !== null && item.backlog > 0);
+  if (!scored.length) return regions[Number(cursor || 0) % regions.length];
+  return scored.sort((left, right) => right.backlog - left.backlog || left.index - right.index)[0].region;
+}
 function assertSourceCapabilities(source, sourceConfig, required) {
   const capabilities = sourceConfig?.capabilities || [];
   if (!required.every(capability => capabilities.includes(capability))) {
@@ -127,6 +153,7 @@ function runAdapter(source, region, output, config, state) {
     const tilesPerRunByRegion = config.sources.osm.tiles_per_run_by_region || {};
     const tilesPerRun = Number(tilesPerRunByRegion[region.key] || defaultTilesPerRun);
     const tileTimeout = Number((config.sources.osm.tile_timeout_ms_by_region || {})[region.key] || config.sources.osm.tile_timeout_ms || 180000);
+    const refreshAfterHours = Number(config.sources.osm.refresh_after_hours || 720);
     const requestTimeout = Number((config.sources.osm.overpass_request_timeout_ms_by_region || {})[region.key] || config.sources.osm.overpass_request_timeout_ms || 90000);
     const queryTimeout = Number((config.sources.osm.overpass_query_timeout_seconds_by_region || {})[region.key] || config.sources.osm.overpass_query_timeout_seconds || 90);
     const manifest = osmManifestPath(regionalOutput, region.bbox, step);
@@ -138,7 +165,7 @@ function runAdapter(source, region, output, config, state) {
       '--max-tiles', String(tilesPerRun),
       '--output', regionalOutput,
       '--manifest', manifest,
-    ], { timeout: OSM_PIPELINE_TIMEOUT_MS, env: { ...process.env, OSM_TILE_TIMEOUT_MS: String(tileTimeout), OVERPASS_REQUEST_TIMEOUT_MS: String(requestTimeout), OVERPASS_QUERY_TIMEOUT_SECONDS: String(queryTimeout) } });
+    ], { timeout: OSM_PIPELINE_TIMEOUT_MS, env: { ...process.env, OSM_TILE_TIMEOUT_MS: String(tileTimeout), OSM_REFRESH_AFTER_HOURS: String(refreshAfterHours), OVERPASS_REQUEST_TIMEOUT_MS: String(requestTimeout), OVERPASS_QUERY_TIMEOUT_SECONDS: String(queryTimeout) } });
     writeFileSync(output, readFileSync(regionalOutput));
   } else if (source === 'overture_places') {
     const overtureOutput = resolve(ROOT, 'data/source-inputs', `overture_places-${region.key}.json`);
@@ -154,9 +181,20 @@ function runAdapter(source, region, output, config, state) {
   run(NODE, ['scripts/ops/source-input-sample-report.mjs', '--source', source, '--input', paths.input, '--entity', config.entity, '--max-distance-m', '100', '--limit', String(config.limits.candidate_rows_per_source), '--sample', '10', '--review-output', paths.report, ...(config.apply ? ['--apply'] : [])], { timeout: 600000 });
   if (config.apply) {
     run(NODE, ['scripts/ops/import-source-review-queue.mjs', '--input-files', paths.report, '--entity', config.entity, '--apply'], { timeout: 180000 });
-    if (source === 'all_the_places') {
-      run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 });
-    }
+    // Exact store URLs or normalized phones, combined with a nearby
+    // canonical location, are safe enough to link automatically for every
+    // feeder. The auto-link command still rejects conflicting source IDs and
+    // never promotes identity or lifecycle fields.
+    run(NODE, [
+      'scripts/ops/auto-link-source-review-queue.mjs',
+      '--entity', config.entity,
+      '--source', source,
+      ...(source === 'osm' ? ['--exact-source-id'] : ['--exact-identifiers']),
+      ...(source === 'all_the_places' || source === 'fsq_os_places' ? ['--min-exact-identifiers', '2'] : []),
+      ...(source === 'wikidata' ? ['--source-identity'] : []),
+      '--max-distance-m', '100',
+      '--limit', '100',
+    ], { timeout: 180000 });
   }
   return paths;
 }
@@ -244,7 +282,9 @@ try {
     const regionIndex = Number.isInteger(Number(sourceState.region_index))
       ? Number(sourceState.region_index)
       : 0;
-    const region = config.regions[regionIndex % config.regions.length];
+    const region = source === 'osm'
+      ? selectOsmRegion(config.regions, config.sources.osm, regionIndex)
+      : config.regions[regionIndex % config.regions.length];
     try {
       const sourceConfig = config.sources[source];
       if (!sourceConfig?.capabilities?.includes('enrich_evidence')) {
@@ -266,7 +306,7 @@ try {
         const result = runAtp(region, config, state.sources, options.apply, config.sources[source].spiders_per_run || 3);
         report.work_units.push({ source, region: region.key, spiders: result?.selected || [] });
         if (options.apply) {
-          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 }).slice(-2000);
+          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--min-exact-identifiers', '2', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 }).slice(-2000);
         }
         for (const spider of result?.selected || []) {
           processNew(resolve(ROOT, 'reports/source-review', `${spider}-review.json`), source, config, options.apply, options.maxNewPlaces);
@@ -280,20 +320,33 @@ try {
       } else {
         assertSourceCapabilities(source, sourceConfig, ['match_existing', 'enrich_evidence']);
         if (sourceConfig.auto_create) assertSourceCapabilities(source, sourceConfig, ['discover']);
-        const output = resolve(ROOT, 'data/source-inputs', `${source}-${region.key}-${now}.json`);
-        mkdirSync(dirname(output), { recursive: true });
-        const paths = runAdapter(source, region, output, { ...config, apply: options.apply }, state);
-        report.work_units.push({ source, region: region.key, report_file: paths.reportFile });
-        processNew(paths.report, source, config, options.apply, options.maxNewPlaces);
-        state.sources[source] = { ...(state.sources[source] || {}), last_success: new Date().toISOString(), region_index: (Number(state.sources[source]?.region_index || 0) + 1) };
+        const regionsPerRun = Math.max(1, Math.min(
+          Number(sourceConfig.regions_per_run || 1),
+          options.maxWorkUnits - workUnits,
+        ));
+        const startingRegionIndex = Number(sourceState.region_index || 0);
+        for (let regionOffset = 0; regionOffset < regionsPerRun; regionOffset += 1) {
+          const region = config.regions[(startingRegionIndex + regionOffset) % config.regions.length];
+          const output = resolve(ROOT, 'data/source-inputs', `${source}-${region.key}-${now}-${regionOffset}.json`);
+          mkdirSync(dirname(output), { recursive: true });
+          const paths = runAdapter(source, region, output, { ...config, apply: options.apply }, state);
+          report.work_units.push({ source, region: region.key, report_file: paths.reportFile });
+          processNew(paths.report, source, config, options.apply, options.maxNewPlaces);
+          state.sources[source] = {
+            ...(state.sources[source] || {}),
+            region_index: (startingRegionIndex + regionOffset + 1) % config.regions.length,
+          };
+          workUnits += 1;
+        }
       }
       state.sources[source] = {
         ...(state.sources[source] || {}),
         last_attempt: new Date().toISOString(),
+        last_success: new Date().toISOString(),
         last_error: null,
         consecutive_failures: 0,
       };
-      workUnits += 1;
+      if (!['official_website', 'osm'].includes(source)) workUnits += 1;
     } catch (error) {
       const message = error?.stack || error?.message || String(error);
       report.errors.push({ source, message });
@@ -324,10 +377,10 @@ try {
   state.last_run = new Date().toISOString();
   if (options.apply) saveJson(STATE_PATH, state);
   report.finished_at = new Date().toISOString();
-  // Keep the last scheduler result separate from the cursor state. This gives
-  // launchd and read-only health checks an exact result even when a run made
-  // no progress or one source failed while the others continued.
-  saveJson(LAST_REPORT_PATH, report);
+  // Keep the last applied scheduler result separate from dry-run diagnostics.
+  // A manual dry run must never make health checks report that production
+  // automation succeeded or failed when it did not actually apply work.
+  saveJson(options.apply ? LAST_REPORT_PATH : LAST_DRY_RUN_PATH, report);
   console.log(options.json ? JSON.stringify(report, null, 2) : `source pipeline ${report.mode}: work_units=${workUnits} errors=${report.errors.length}`);
   // A source-level failure is recorded in state and the JSON report for the
   // health/alerting layer. The other sources still get their work units, but

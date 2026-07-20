@@ -157,59 +157,153 @@ const US_STATE_CODES = new Set(Object.values(STATE_SEARCH_ALIASES))
 
 const supabaseIlikePattern = term => `%${String(term || '').trim().replace(/[%_]/g, value => `\\${value}`)}%`
 const SEARCH_LOOKUP_LIMIT = 250
+const MAX_REMOTE_SEARCH_TERMS = 6
+const MAX_STATE_SCOPED_SEARCH_TERMS = 4
+const SEARCH_RESULT_LIMIT = 250
+const SEARCH_PHOTO_LIMIT = 100
+const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000
+const SEARCH_CACHE_MAX_ENTRIES = 32
+const LIFECYCLE_SEARCH_TERMS = new Set(['closed', 'historical', 'replaced', 'demolished'])
+const searchCache = new Map()
+
+const readSearchCache = key => {
+  const entry = searchCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.createdAt > SEARCH_CACHE_TTL_MS) {
+    searchCache.delete(key)
+    return null
+  }
+  // Refresh insertion order so frequently repeated searches stay resident.
+  searchCache.delete(key)
+  searchCache.set(key, entry)
+  return entry.rows
+}
+
+const writeSearchCache = (key, rows) => {
+  searchCache.delete(key)
+  searchCache.set(key, { createdAt: Date.now(), rows })
+  while (searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
+    searchCache.delete(searchCache.keys().next().value)
+  }
+}
+
+export const remoteSearchableColumns = table => [
+  'name',
+  'address',
+  'state',
+  'style',
+  'status',
+  table === 'pizza_places' ? 'price_range' : 'price',
+  ...(table === 'pizza_places' ? ['brand', 'operator'] : []),
+]
+
+// Search results do not need enrichment internals, audit columns, or large
+// JSON fields. Keep this list limited to fields used by ranking and popups.
+export const publicSearchSelect = [
+  'id',
+  'name',
+  'lat',
+  'lng',
+  'address',
+  'google_place_id',
+  'state',
+  'status',
+  'style',
+  'price',
+  'price_range',
+  'rating',
+  'brand',
+  'operator',
+  'lifecycle_status',
+  'lifecycle_replaced_by_id',
+].join(', ')
+
+const isMissingSearchColumnError = error => {
+  const message = String(error?.message || error?.details || '').toLowerCase()
+  return message.includes('column') && (
+    message.includes('does not exist') ||
+    message.includes('not found') ||
+    message.includes('schema cache')
+  )
+}
+
+async function executeSearchQuery(queryFactory) {
+  const compactResult = await queryFactory(publicSearchSelect)
+  if (!compactResult.error || !isMissingSearchColumnError(compactResult.error)) return compactResult
+  // Keep deployments with an older enrichment schema usable while the
+  // additive migration is rolled out. This path is intentionally rare.
+  return queryFactory('*')
+}
 
 async function fetchPlacesForSearch(table, searchTerms, originalQuery = '') {
   const terms = [...new Set((Array.isArray(searchTerms) ? searchTerms : [searchTerms])
     .map(term => String(term || '').trim())
-    .filter(term => term.length >= 2))]
+    .filter(term => term.length >= 2))].slice(0, MAX_REMOTE_SEARCH_TERMS)
   if (!terms.length) return []
 
-  const responses = await Promise.all(terms.map(async term => {
-    const pattern = supabaseIlikePattern(term)
-    const searchableColumns = [
-      'name',
-      'address',
-      'city',
-      'state',
-      'style',
-      'status',
-      table === 'pizza_places' ? 'price_range' : 'price',
-      ...(table === 'pizza_places' ? ['brand', 'operator'] : []),
-    ]
-    const { data, error } = await supabase
+  const termBatches = []
+  for (let index = 0; index < terms.length; index += 3) termBatches.push(terms.slice(index, index + 3))
+  const responses = await Promise.all(termBatches.map(async batch => {
+    const remoteSearchFilter = remoteSearchableColumns(table)
+      .flatMap(column => batch.map(term => `${column}.ilike.${supabaseIlikePattern(term)}`))
+      .join(',')
+    const { data, error } = await executeSearchQuery(select => supabase
       .from(table)
-      .select('*')
-      .or(searchableColumns.map(column => `${column}.ilike.${pattern}`).join(','))
-      .limit(SEARCH_LOOKUP_LIMIT)
+      .select(select)
+      .or(remoteSearchFilter)
+      .order('rating', { ascending: false, nullsFirst: false })
+      .order('name', { ascending: true })
+      .limit(Math.min(SEARCH_LOOKUP_LIMIT * batch.length, 1000)))
 
     if (error) throw error
     return data || []
   }))
 
+  const lifecycleTerms = String(originalQuery || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(term => LIFECYCLE_SEARCH_TERMS.has(term))
+  if (lifecycleTerms.length) {
+    const lifecycleFilter = lifecycleTerms
+      .map(term => `lifecycle_status.ilike.${supabaseIlikePattern(term)}`)
+      .join(',')
+    const { data, error } = await supabase
+      .from(table)
+      .select(`${publicSearchSelect}, lifecycle_status, lifecycle_replaced_by_id`)
+      .or(lifecycleFilter)
+      .order('name', { ascending: true })
+      .limit(SEARCH_LOOKUP_LIMIT)
+    // Older Supabase schemas do not have lifecycle columns yet. The normal
+    // search response remains valid; this optional lookup becomes active
+    // automatically once the additive lifecycle migration is applied.
+    if (!error) responses.push(...(data || []))
+  }
+
   const stateCodes = stateCodesForSearch(originalQuery)
   if (stateCodes.length) {
-    const stateScopedTerms = stateScopedNameTerms(originalQuery)
+    const stateScopedTerms = stateScopedNameTerms(originalQuery).slice(0, MAX_STATE_SCOPED_SEARCH_TERMS)
+    if (!stateScopedTerms.length) return [...new Map(responses.flat().map(row => [row.id ?? `${row.google_place_id || ''}:${row.name || ''}:${row.address || ''}`, row])).values()]
     const stateSearchColumns = [
       'name',
       'address',
-      'city',
       'style',
       ...(table === 'pizza_places' ? ['brand', 'operator'] : []),
     ]
-    const stateResponses = await Promise.all(stateCodes.flatMap(stateCode =>
-      stateScopedTerms.map(async term => {
-        const pattern = supabaseIlikePattern(term)
-        const { data, error } = await supabase
-          .from(table)
-          .select('*')
-          .eq('state', stateCode)
-          .or(stateSearchColumns.map(column => `${column}.ilike.${pattern}`).join(','))
-          .limit(SEARCH_LOOKUP_LIMIT)
+    const stateResponses = await Promise.all(stateCodes.map(async stateCode => {
+      const stateSearchFilter = stateSearchColumns
+        .flatMap(column => stateScopedTerms.map(term => `${column}.ilike.${supabaseIlikePattern(term)}`))
+        .join(',')
+      const { data, error } = await executeSearchQuery(select => supabase
+        .from(table)
+        .select(select)
+        .eq('state', stateCode)
+        .or(stateSearchFilter)
+        .order('rating', { ascending: false, nullsFirst: false })
+        .limit(Math.min(SEARCH_LOOKUP_LIMIT * stateScopedTerms.length, 1000)))
 
-        if (error) throw error
-        return data || []
-      })
-    ))
+      if (error) throw error
+      return data || []
+    }))
     responses.push(...stateResponses)
   }
 
@@ -807,6 +901,7 @@ function SiteContainer({ themeKey }) {
   const [searchPlaces, setSearchPlaces] = useState([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState(null)
+  const searchRequestIdRef = React.useRef(0)
   const [userLocation, setUserLocation] = useState(null)
   const [nearMeActive, setNearMeActive] = useState(false)
   const [nearMeRadius, setNearMeRadius] = useState(25)
@@ -924,7 +1019,7 @@ function SiteContainer({ themeKey }) {
       const normalizedLng = typeof place.lng === 'number' ? place.lng : Number(place.lng)
 
       const normalizedStatus = normalizeStatus(place.status)
-      const lifecycleStatus = normalizeLifecycleStatus(place.status)
+      const lifecycleStatus = normalizeLifecycleStatus(place.lifecycle_status || place.lifecycleStatus || place.status)
       const favorited = computeFavorited(place, normalizedStatus)
       const placeType = computePlaceType(place, defaultPlaceType)
       const markerIconUrl = computeMarkerIconUrl(place)
@@ -947,6 +1042,8 @@ function SiteContainer({ themeKey }) {
         status: normalizedStatus,
         statusRaw: typeof place.status === 'string' ? place.status.trim().toLowerCase() : null,
         lifecycleStatus,
+        lifecycle_status: place.lifecycle_status || null,
+        lifecycle_replaced_by_id: place.lifecycle_replaced_by_id || null,
         favorited,
         lat: normalizedLat,
         lng: normalizedLng,
@@ -1118,6 +1215,9 @@ function SiteContainer({ themeKey }) {
 
   useEffect(() => {
     let isMounted = true
+    const requestId = searchRequestIdRef.current + 1
+    searchRequestIdRef.current = requestId
+    const isCurrentRequest = () => isMounted && searchRequestIdRef.current === requestId
     const lookupTerms = remoteSearchTerms(searchQuery)
 
     if (!lookupTerms.length) {
@@ -1132,15 +1232,35 @@ function SiteContainer({ themeKey }) {
     async function loadSearchPlaces() {
       setSearchLoading(true)
       setSearchError(null)
+      setSearchPlaces([])
       const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
       const defaultPlaceType = isPizza ? 'pizzeria' : 'taqueria'
 
       try {
-        const rows = await fetchPlacesForSearch(table, lookupTerms, searchQuery)
-        if (!isMounted) return
+        const cacheKey = `${table}|${normalizeSearchText(searchQuery)}|${lookupTerms.join('|')}`
+        const cachedRows = readSearchCache(cacheKey)
+        const rows = cachedRows || await fetchPlacesForSearch(table, lookupTerms, searchQuery)
+        if (!cachedRows) writeSearchCache(cacheKey, rows)
+        if (!isCurrentRequest()) return
+
+        // Rank and cap before loading photo metadata. Broad searches such as
+        // "pizza" can otherwise turn one keystroke into hundreds of photo
+        // requests before the map has anything useful to render.
+        const rankedRows = rows
+          .map(row => ({
+            ...row,
+            _searchRank: placeSearchRank(row, normalizeSearchText(searchQuery), searchWords(searchQuery)),
+          }))
+          .filter(row => row._searchRank < 99)
+          .sort((left, right) => {
+            const rankDelta = left._searchRank - right._searchRank
+            if (rankDelta !== 0) return rankDelta
+            return String(left.name || '').localeCompare(String(right.name || ''))
+          })
+          .slice(0, SEARCH_RESULT_LIMIT)
 
         let photoMap = {}
-        const placeIds = rows.map(p => p.id).filter(Boolean)
+        const placeIds = rankedRows.slice(0, SEARCH_PHOTO_LIMIT).map(p => p.id).filter(Boolean)
         if (placeIds.length) {
           try {
             photoMap = await fetchPhotoMap(placeIds)
@@ -1149,15 +1269,15 @@ function SiteContainer({ themeKey }) {
           }
         }
 
-        if (!isMounted) return
-        setSearchPlaces(normalizePlaceData(rows, photoMap, defaultPlaceType))
+        if (!isCurrentRequest()) return
+        setSearchPlaces(normalizePlaceData(rankedRows, photoMap, defaultPlaceType))
       } catch (err) {
-        if (!isMounted) return
+        if (!isCurrentRequest()) return
         setSearchPlaces([])
         setSearchError(err)
         console.warn('[App] Search lookup failed:', err)
       } finally {
-        if (isMounted) setSearchLoading(false)
+        if (isCurrentRequest()) setSearchLoading(false)
       }
     }
 

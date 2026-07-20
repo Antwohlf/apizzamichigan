@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import AdminConfirmDialog from './AdminConfirmDialog'
 import {
   buildReviewWorklist,
   canonicalContextLines,
@@ -380,6 +381,17 @@ export default function AdminSourceProvenancePanel({ entity }) {
   const [importPreflightRefreshKey, setImportPreflightRefreshKey] = useState(0)
   const [sourceRefreshKey, setSourceRefreshKey] = useState(0)
   const [queueRefreshKey, setQueueRefreshKey] = useState(0)
+  const [confirmation, setConfirmation] = useState(null)
+
+  const requestConfirmation = ({ title, message, confirmLabel = 'Continue', danger = false }) => new Promise(resolve => {
+    setConfirmation({ title, message, confirmLabel, danger, resolve })
+  })
+
+  const closeConfirmation = confirmed => {
+    const active = confirmation
+    setConfirmation(null)
+    active?.resolve(Boolean(confirmed))
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -617,9 +629,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
 
   const reopenDecision = async row => {
     if (!row || row.status === 'pending' || row.status === 'linked') return
-    const confirmed = window.confirm(
-      `Reopen "${row.source_name || row.source_id}" for review?\n\nThis clears the current decision, returns the row to pending, and preserves the decision history. Linked rows must be handled through a separate unlink review.`
-    )
+    const confirmed = await requestConfirmation({
+      title: 'Reopen this review row?',
+      message: `Reopen "${row.source_name || row.source_id}" for review?\n\nThis clears the current decision, returns the row to pending, and preserves the decision history. Linked rows must be handled through a separate unlink review.`,
+      confirmLabel: 'Reopen row',
+    })
     if (!confirmed) return
 
     setActionState(prev => ({ ...prev, [row.id]: 'reopen' }))
@@ -660,9 +674,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
     const draft = decisionDrafts[row.id] || {}
     const reviewerNotes = (draft.reviewerNotes || '').trim()
 
-    const confirmed = window.confirm(
-      `Move "${row.source_name || row.source_id}" from ambiguous-link review to likely-new review?\n\nThis does not create a canonical place or source evidence. It keeps the row pending so it can go through duplicate review and reviewed-new import preflight.`
-    )
+    const confirmed = await requestConfirmation({
+      title: 'Review this as a new place?',
+      message: `Move "${row.source_name || row.source_id}" from ambiguous-link review to likely-new review?\n\nThis does not create a canonical place or source evidence. It keeps the row pending so it can go through duplicate review and reviewed-new import preflight.`,
+      confirmLabel: 'Move to likely new',
+    })
     if (!confirmed) {
       setQueueMessage('Reclassification cancelled.')
       return
@@ -749,9 +765,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
         const skippedText = preview?.skipped
           ? `\n\n${formatCount(preview.skipped)} selected rows will be skipped because they are not pending likely-new rows.`
           : ''
-        const confirmed = window.confirm(
-          `Accept ${formatCount(eligibleRows.length)} likely-new source rows as future import candidates?\n\n${exampleRows.join('\n')}${eligibleRows.length > 5 ? '\n- ...' : ''}${skippedText}\n\nThis does not create canonical places or write Supabase.`
-        )
+        const confirmed = await requestConfirmation({
+          title: `Accept ${formatCount(eligibleRows.length)} new-place candidates?`,
+          message: `${exampleRows.join('\n')}${eligibleRows.length > 5 ? '\n- ...' : ''}${skippedText}\n\nThis does not create canonical places or write Supabase.`,
+          confirmLabel: 'Accept candidates',
+        })
         if (!confirmed) {
           setQueueMessage('Bulk accept cancelled.')
           return
@@ -782,9 +800,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
         const skippedText = preview?.skipped
           ? `\n\n${formatCount(preview.skipped)} selected rows will be skipped because they are not pending ambiguous rows with a valid nearest canonical place.`
           : ''
-        const confirmed = window.confirm(
-          `Link ${formatCount(eligibleRows.length)} selected source rows to their nearest canonical places?\n\n${exampleRows.join('\n')}${eligibleRows.length > 5 ? '\n- ...' : ''}${skippedText}\n\nThis writes source evidence to place_sources.`
-        )
+        const confirmed = await requestConfirmation({
+          title: `Link ${formatCount(eligibleRows.length)} source rows?`,
+          message: `${exampleRows.join('\n')}${eligibleRows.length > 5 ? '\n- ...' : ''}${skippedText}\n\nThis writes source evidence to place_sources.`,
+          confirmLabel: 'Link rows',
+        })
         if (!confirmed) {
           setQueueMessage('Bulk link cancelled.')
           return
@@ -834,9 +854,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
       return
     }
 
-    const confirmed = window.confirm(
-      `Import ${formatCount(ready)} reviewed-new candidate${ready === 1 ? '' : 's'} into local canonical places?\n\nThis recomputes duplicate checks, writes local pizza_places and place_sources rows, and does not sync Supabase. Rows with nearby canonical matches or missing data will be skipped.`
-    )
+    const confirmed = await requestConfirmation({
+      title: `Import ${formatCount(ready)} reviewed-new candidate${ready === 1 ? '' : 's'}?`,
+      message: 'This recomputes duplicate checks, writes local canonical places, and does not sync Supabase. Rows with nearby canonical matches or missing data will be skipped.',
+      confirmLabel: 'Import locally',
+    })
     if (!confirmed) {
       setQueueMessage('Reviewed-new import cancelled.')
       return
@@ -901,9 +923,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
       return
     }
 
-    const confirmed = window.confirm(
-      `Import ${formatCount(eligibleIds.length)} selected reviewed-new candidate${eligibleIds.length === 1 ? '' : 's'} into local canonical places?\n\nThis uses exact review IDs, recomputes duplicate checks, writes local pizza_places and place_sources rows, and does not sync Supabase.`
-    )
+    const confirmed = await requestConfirmation({
+      title: `Import ${formatCount(eligibleIds.length)} selected candidate${eligibleIds.length === 1 ? '' : 's'}?`,
+      message: 'This uses exact review IDs, recomputes duplicate checks, writes local canonical places, and does not sync Supabase.',
+      confirmLabel: 'Import locally',
+    })
     if (!confirmed) {
       setQueueMessage('Selected reviewed-new import cancelled.')
       return
@@ -1152,6 +1176,15 @@ export default function AdminSourceProvenancePanel({ entity }) {
 
   return (
     <div style={panelStyle}>
+      <AdminConfirmDialog
+        open={Boolean(confirmation)}
+        title={confirmation?.title}
+        message={confirmation?.message}
+        confirmLabel={confirmation?.confirmLabel}
+        danger={confirmation?.danger}
+        onConfirm={() => closeConfirmation(true)}
+        onCancel={() => closeConfirmation(false)}
+      />
       <StatusMessage>
         <strong style={{ color: '#f8fafc' }}>Local-only source evidence.</strong>{' '}
         {payload.syncPolicy}

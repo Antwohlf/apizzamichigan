@@ -81,6 +81,15 @@ have values in `price`; new enrichment should prefer `price_range`.
 
 Values stored in `status` column for both tables:
 
+`status` is the personal map status: `visited`, `unvisited`, or `golden`.
+Business lifecycle is separate and optional:
+
+- `lifecycle_status`: explicit `closed`, `replaced`, or `demolished` state.
+- `lifecycle_replaced_by_id`: canonical ID of the successor business when the
+  lifecycle is `replaced`.
+- A null lifecycle status means “not explicitly classified,” not “confirmed
+  open.” Source adapters cannot set these fields.
+
 | Value | Description |
 |-------|-------------|
 | unvisited | Not yet visited by the user (default) |

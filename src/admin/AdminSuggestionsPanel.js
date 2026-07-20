@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Check, ExternalLink } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, ExternalLink, Search } from 'lucide-react'
 
 const STATUS_OPTIONS = [
   { id: 'pending', label: 'To review' },
@@ -13,7 +13,18 @@ const formatDate = value => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
 }
 
+function useModalEscape(onCancel) {
+  useEffect(() => {
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onCancel])
+}
+
 function RejectDialog({ suggestion, reason, busy, onReasonChange, onCancel, onConfirm }) {
+  useModalEscape(onCancel)
   if (!suggestion) return null
   return (
     <div className="admin-modal" role="presentation">
@@ -40,6 +51,7 @@ export default function AdminSuggestionsPanel({ entity }) {
   const [status, setStatus] = useState('pending')
   const [suggestions, setSuggestions] = useState([])
   const [selectedId, setSelectedId] = useState(null)
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -50,6 +62,7 @@ export default function AdminSuggestionsPanel({ entity }) {
   useEffect(() => {
     setStatus('pending')
     setSelectedId(null)
+    setSearch('')
   }, [entity])
 
   useEffect(() => {
@@ -78,20 +91,41 @@ export default function AdminSuggestionsPanel({ entity }) {
     }
   }, [entity, status])
 
+  const filteredSuggestions = useMemo(() => {
+    const terms = String(search || '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (!terms.length) return suggestions
+    return suggestions.filter(item => {
+      const text = [
+        item.name,
+        item.formatted_address,
+        item.location_text,
+        item.user_name,
+        item.recommendation,
+        item.notes,
+        item.description,
+      ].filter(Boolean).join(' ').toLowerCase()
+      return terms.every(term => text.includes(term))
+    })
+  }, [search, suggestions])
+
   useEffect(() => {
-    if (!suggestions.length) {
+    if (!filteredSuggestions.length) {
       setSelectedId(null)
-    } else if (!suggestions.some(item => item.id === selectedId)) {
-      setSelectedId(suggestions[0].id)
+    } else if (!filteredSuggestions.some(item => item.id === selectedId)) {
+      setSelectedId(filteredSuggestions[0].id)
     }
-  }, [selectedId, suggestions])
+  }, [filteredSuggestions, selectedId])
 
   const selectedIndex = useMemo(
-    () => suggestions.findIndex(item => item.id === selectedId),
-    [selectedId, suggestions]
+    () => filteredSuggestions.findIndex(item => item.id === selectedId),
+    [filteredSuggestions, selectedId]
   )
-  const selected = selectedIndex >= 0 ? suggestions[selectedIndex] : null
-  const visibleSuggestions = suggestions.slice(Math.max(0, selectedIndex - 3), Math.max(8, selectedIndex + 5)).slice(0, 8)
+  const selected = selectedIndex >= 0 ? filteredSuggestions[selectedIndex] : null
+  const visibleSuggestions = filteredSuggestions.slice(Math.max(0, selectedIndex - 3), Math.max(8, selectedIndex + 5)).slice(0, 8)
+  const selectOffset = offset => {
+    const next = filteredSuggestions[selectedIndex + offset]
+    if (next) setSelectedId(next.id)
+  }
 
   const removeSelected = updated => {
     setSuggestions(current => current.filter(item => item.id !== updated.id))
@@ -145,6 +179,21 @@ export default function AdminSuggestionsPanel({ entity }) {
 
   return (
     <div className="admin-content">
+      <div className="admin-toolbar">
+        <div className="admin-search-wrap">
+          <Search size={17} aria-hidden="true" />
+          <input
+            className="admin-search-input"
+            type="search"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Search name, city, or submitter"
+            aria-label="Find suggestion"
+          />
+        </div>
+        <div className="admin-toolbar__spacer" />
+        <span className="admin-progress">{filteredSuggestions.length} found</span>
+      </div>
       <div className="admin-queue-tabs" role="tablist" aria-label="Suggestion status">
         {STATUS_OPTIONS.map(option => (
           <button
@@ -156,6 +205,7 @@ export default function AdminSuggestionsPanel({ entity }) {
             onClick={() => {
               setStatus(option.id)
               setSelectedId(null)
+              setSearch('')
             }}
           >
             {option.label}
@@ -169,7 +219,7 @@ export default function AdminSuggestionsPanel({ entity }) {
       {!loading && !error && !selected ? (
         <div className="admin-empty">
           <Check size={24} aria-hidden="true" />
-          <p>No suggestions in this view.</p>
+          <p>{suggestions.length ? 'No suggestions match this search.' : 'No suggestions in this view.'}</p>
         </div>
       ) : null}
 
@@ -195,11 +245,33 @@ export default function AdminSuggestionsPanel({ entity }) {
           <section>
             <div className="admin-selected-header">
               <div>
-                <div className="admin-progress">{selectedIndex + 1} of {suggestions.length} · Submitted {formatDate(selected.created_at)}</div>
+                <div className="admin-progress">{selectedIndex + 1} of {filteredSuggestions.length} · Submitted {formatDate(selected.created_at)}</div>
                 <h2>{selected.name}</h2>
                 <p>{selected.formatted_address || selected.location_text || 'No address provided'}</p>
               </div>
-              <span className="admin-status-badge">{selected.status}</span>
+              <div className="admin-inline-actions">
+                <button
+                  className="admin-button admin-button--icon"
+                  type="button"
+                  onClick={() => selectOffset(-1)}
+                  disabled={selectedIndex <= 0}
+                  aria-label="Previous suggestion"
+                  title="Previous"
+                >
+                  <ChevronLeft size={18} aria-hidden="true" />
+                </button>
+                <button
+                  className="admin-button admin-button--icon"
+                  type="button"
+                  onClick={() => selectOffset(1)}
+                  disabled={selectedIndex >= filteredSuggestions.length - 1}
+                  aria-label="Next suggestion"
+                  title="Next"
+                >
+                  <ChevronRight size={18} aria-hidden="true" />
+                </button>
+                <span className="admin-status-badge">{selected.status}</span>
+              </div>
             </div>
 
             <dl className="admin-data-list">

@@ -88,9 +88,18 @@ node scripts/ops/source-input-sample-report.mjs \
 The apply path writes only to `place_sources` for matched existing canonical
 rows. It does not write `pizza_places`, `taco_places`, or Supabase.
 
-By default, only `exact_name_nearby` and `strong_spatial_name` matches are
-eligible for persistence. `weak_spatial_name` rows stay review-only unless the
-operator explicitly adds `--include-weak`.
+By default, `exact_identifier_nearby`, `exact_name_nearby`, and
+`strong_spatial_name` matches are eligible for persistence. An exact
+store-specific website URL or normalized phone number must agree with a
+canonical place within the configured coordinate radius for the identifier
+match. `weak_spatial_name` rows stay review-only unless the operator explicitly
+adds `--include-weak`.
+
+Source rows identified as closed are handled separately: a high-confidence
+match writes `is_closed: true` evidence to `place_sources` with a
+`closed_signal:` match method. This never changes the canonical lifecycle
+fields automatically; the admin lifecycle watchlist presents the signal for
+an explicit closed or replacement decision.
 
 For durable review output:
 

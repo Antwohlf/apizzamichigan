@@ -28,6 +28,25 @@ and map need a lifecycle/replacement relationship at the same time. Splitting
 only the local row would create two different truths between the admin system
 and the public map.
 
+The schema now provides that relationship without adding another table:
+
+- `lifecycle_status` is explicitly `closed`, `replaced`, or `demolished`.
+- `lifecycle_replaced_by_id` points to the newer canonical place when one exists.
+- `NULL` means the place has not been explicitly classified as historical; it is
+  not treated as evidence that the business is active.
+
+These fields are manual lifecycle fields. Source adapters and enrichment do not
+promote them automatically. When lifecycle sync is enabled, it will send only
+non-null explicit values so an unclassified local row cannot erase a reviewed
+public lifecycle.
+
+Before enabling lifecycle sync, apply the local statements in
+`scripts/enrichment/schema-migration.sql` to local Postgres and the public
+statements in `scripts/enrichment/supabase-production-migration.sql` to
+Supabase. Then set `ENABLE_LIFECYCLE_SYNC=1` on the guarded sync service and
+run its readiness report before allowing the recurring job to continue.
+Without that environment flag, lifecycle values remain local-only by design.
+
 ## Audit Command
 
 The read-only audit reports exact OSM identity changes and separates safe
@@ -39,4 +58,42 @@ LOCAL_DB_NAME=pizza_enrichment LOCAL_DB_USER=ant \
 node scripts/ops/replacement-candidate-report.mjs --entity pizza
 ```
 
-No command in this document changes a place, queue row, or public data.
+The audit command above never changes a place, queue row, or public data.
+
+## Explicit Lifecycle Action
+
+### Same-location replacement from source review
+
+When an exact OSM match has a different business name and the old place has
+personal history, use **Business replaced** in the admin data review. The
+guarded action:
+
+1. Marks the old canonical place `closed` without changing its visits, rating,
+   or notes.
+2. Moves the source row into the likely-new approval queue.
+3. Allows the reviewed-new import preflight to recognize the closed source
+   identity as a replacement rather than a duplicate.
+4. Imports the successor with the original source identity, marks the old row
+   `replaced`, and records `lifecycle_replaced_by_id`.
+
+The old row receives a `historical:` external identity so the unique source ID
+can belong to the successor. The source provenance row follows the successor,
+while the decision history preserves the before/after record.
+
+This is deliberately separate from **Same place** and **Update existing
+place**: the first links evidence without changing the canonical name, and the
+second is only for an unreviewed place with no personal history.
+
+Once the additive schema has been applied locally, an operator can record a
+verified lifecycle decision without changing the place's visit history:
+
+```bash
+node scripts/ops/set-place-lifecycle.mjs \\
+  --entity pizza --id 123 --status closed \\
+  --reason "Official site confirms permanent closure"
+```
+
+That command is a dry run by default. Add `--apply` only after reviewing the
+before/after output. For a replacement, use `--status replaced
+--replaced-by-id <new-place-id>`. The admin API exposes the same guarded
+operation at `PATCH /api/admin/places/:id/lifecycle`.

@@ -99,13 +99,13 @@ Options:
   --state <code>              Optional source state/region/country filter
   --ids <ids>                 Optional exact source_review_queue ids
   --limit <n>                 Accepted row scan limit (default 100)
-  --ready-limit <n>           Maximum candidate_ready rows to import
+  --ready-limit <n>           Maximum ready or replacement-ready rows to import
   --nearby-radius-m <n>       Duplicate warning radius in meters (default 150)
   --output <file>             Optional CSV output path
   --apply                     Import candidate_ready rows into local Postgres
   --json                      Emit JSON instead of Markdown
 
-Default mode is read-only. With --apply, only candidate_ready rows are imported.
+Default mode is read-only. With --apply, only candidate_ready or replacement-ready rows are imported.
 Rows with missing fields, duplicate source ids, or nearby canonical places stay
 in the accepted review queue for additional review.
 `);
@@ -430,6 +430,7 @@ async function loadCanonicalPlaces(client, tableName, payloads, radiusM) {
       AND lng IS NOT NULL
       AND lat::double precision BETWEEN $1 AND $2
       AND lng::double precision BETWEEN $3 AND $4
+      AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
   `, [minLat, maxLat, minLng, maxLng]);
 
   return result.rows;
@@ -496,19 +497,19 @@ async function googlePlaceIdExists(client, tableName, googlePlaceId) {
 
 async function existingGooglePlaceIds(client, tableName, payloads) {
   const ids = [...new Set(payloads.map(payload => payload.google_place_id).filter(Boolean))];
-  if (!ids.length) return new Set();
+  if (!ids.length) return new Map();
   const result = await client.query(
-    `SELECT google_place_id FROM ${tableName} WHERE google_place_id = ANY($1::text[])`,
+    `SELECT google_place_id, lifecycle_status FROM ${tableName} WHERE google_place_id = ANY($1::text[])`,
     [ids],
   );
-  return new Set(result.rows.map(row => row.google_place_id));
+  return new Map(result.rows.map(row => [row.google_place_id, row]));
 }
 
 async function existingExternalIdentities(client, entity, rows, payloads) {
   const legacyIds = await existingGooglePlaceIds(client, ENTITY_TABLES[entity], payloads);
-  const result = new Set([...legacyIds].map(id => `legacy:${id}`));
+  const result = new Set([...legacyIds.keys()].map(id => `legacy:${id}`));
   const tableExists = (await client.query(`SELECT to_regclass('public.place_external_ids') IS NOT NULL AS exists`)).rows[0].exists;
-  if (!tableExists) return result;
+  if (!tableExists) return { identities: result, legacyPlaces: legacyIds };
 
   const pairs = rows.map((row, index) => {
     const source = String(row.source || '').trim();
@@ -517,7 +518,7 @@ async function existingExternalIdentities(client, entity, rows, payloads) {
       : String(row.source_id || '').trim();
     return source && sourceId && payloads[index]?.google_place_id ? { source, sourceId } : null;
   }).filter(Boolean);
-  if (!pairs.length) return result;
+  if (!pairs.length) return { identities: result, legacyPlaces: legacyIds };
   const values = [entity];
   const clauses = pairs.map(pair => {
     values.push(pair.source, pair.sourceId);
@@ -528,7 +529,11 @@ async function existingExternalIdentities(client, entity, rows, payloads) {
     values,
   );
   for (const row of external.rows) result.add(`${row.source}:${row.external_id}`);
-  return result;
+  return { identities: result, legacyPlaces: legacyIds };
+}
+
+function legacyPlaceForPayload(legacyPlaces, payload) {
+  return payload.google_place_id ? legacyPlaces.get(payload.google_place_id) || null : null;
 }
 
 async function allocateNextCanonicalPlaceId(client, tableName) {
@@ -544,7 +549,8 @@ function readiness(payload, duplicateBySourceId, nearbyRows) {
   if (payload.lng === null) missing.push('lng');
   if (!payload.google_place_id) missing.push('source_id');
   if (missing.length) return `missing_${missing.join('_')}`;
-  if (duplicateBySourceId) return 'duplicate_source_id';
+  if (duplicateBySourceId && !['closed', 'replaced', 'demolished'].includes(duplicateBySourceId.lifecycle_status)) return 'duplicate_source_id';
+  if (duplicateBySourceId) return 'replacement_candidate_ready';
   if (nearbyRows.length) return 'nearby_canonical_review';
   return 'candidate_ready';
 }
@@ -602,7 +608,9 @@ async function buildReport(client, args) {
   const rows = await fetchReviewRows(client, args);
   const candidates = [];
   const payloads = rows.map(row => candidatePayload(row));
-  const duplicateExternalIdentities = await existingExternalIdentities(client, args.entity, rows, payloads);
+  const externalIdentityState = await existingExternalIdentities(client, args.entity, rows, payloads);
+  const duplicateExternalIdentities = externalIdentityState.identities;
+  const existingLegacyPlaces = externalIdentityState.legacyPlaces;
   const canonicalPlaces = await loadCanonicalPlaces(client, tableName, payloads, args.nearbyRadiusM);
   const gridCellDegrees = 0.02;
   const placeGrid = buildPlaceGrid(canonicalPlaces, gridCellDegrees);
@@ -611,7 +619,8 @@ async function buildReport(client, args) {
     const payload = payloads[index];
     const sourceId = String(row.source_id || '').trim().replace(/^osm:/, '');
     const duplicateBySourceId = duplicateExternalIdentities.has(`${row.source}:${sourceId}`)
-      || duplicateExternalIdentities.has(`legacy:${payload.google_place_id}`);
+      ? { lifecycle_status: null }
+      : legacyPlaceForPayload(existingLegacyPlaces, payload);
     const nearbyRows = nearbyPlacesFromGrid(placeGrid, payload, {
       radiusM: args.nearbyRadiusM,
       cellDegrees: gridCellDegrees,
@@ -703,6 +712,24 @@ async function importCandidate(client, tableName, candidate) {
     ? String(candidate.source_id || '').replace(/^osm:/, '')
     : candidate.source_id;
   const placeId = await allocateNextCanonicalPlaceId(client, tableName);
+  const existing = payload.google_place_id
+    ? (await client.query(`
+        SELECT id, google_place_id, lifecycle_status
+        FROM ${tableName}
+        WHERE google_place_id = $1
+        FOR UPDATE
+      `, [payload.google_place_id])).rows[0] || null
+    : null;
+  if (existing && !['closed', 'replaced', 'demolished'].includes(existing.lifecycle_status)) {
+    throw new Error('This source identity already belongs to an active place.');
+  }
+  if (existing) {
+    await client.query(`
+      UPDATE ${tableName}
+      SET google_place_id = $2, updated_at = NOW()
+      WHERE id = $1
+    `, [existing.id, `historical:${payload.google_place_id}`]);
+  }
 
   const insert = await client.query(`
     INSERT INTO ${tableName} (
@@ -737,6 +764,14 @@ async function importCandidate(client, tableName, candidate) {
   ]);
 
   const insertedPlaceId = insert.rows[0].id;
+
+  if (existing) {
+    await client.query(`
+      UPDATE ${tableName}
+      SET lifecycle_status = 'replaced', lifecycle_replaced_by_id = $2, updated_at = NOW()
+      WHERE id = $1
+    `, [existing.id, insertedPlaceId]);
+  }
 
   await client.query(`
     INSERT INTO place_sources (
@@ -794,7 +829,7 @@ async function applyReadyCandidates(client, report) {
     throw new Error('place_sources table does not exist. Run backfill-place-sources.mjs --apply-schema first.');
   }
 
-  const ready = report.candidates.filter(candidate => candidate.readiness === 'candidate_ready');
+  const ready = report.candidates.filter(candidate => ['candidate_ready', 'replacement_candidate_ready'].includes(candidate.readiness));
   const selected = report.readyLimit ? ready.slice(0, report.readyLimit) : ready;
   const skipped = report.candidates.length - selected.length;
   const imported = [];
@@ -860,7 +895,7 @@ async function main() {
     }
 
     const report = await buildReport(client, args);
-    const readyAvailable = report.candidates.filter(candidate => candidate.readiness === 'candidate_ready').length;
+    const readyAvailable = report.candidates.filter(candidate => ['candidate_ready', 'replacement_candidate_ready'].includes(candidate.readiness)).length;
     const applyResult = args.apply
       ? await applyReadyCandidates(client, report)
       : { ready: 0, readyAvailable, imported: [], skipped: report.candidates.length };

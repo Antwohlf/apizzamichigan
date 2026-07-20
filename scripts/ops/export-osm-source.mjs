@@ -15,7 +15,7 @@ if (![south, west, north, east].every(Number.isFinite) || !output) {
 
 const overpassTimeoutSeconds = positiveInt(process.env.OVERPASS_QUERY_TIMEOUT_SECONDS, 120);
 const requestTimeoutMs = positiveInt(process.env.OVERPASS_REQUEST_TIMEOUT_MS, (overpassTimeoutSeconds + 30) * 1000);
-const query = `[out:json][timeout:${overpassTimeoutSeconds}];(nwr["amenity"="restaurant"]["cuisine"~"pizza|pizzeria",i](${south},${west},${north},${east});nwr["amenity"="fast_food"]["cuisine"~"pizza|pizzeria",i](${south},${west},${north},${east}););out center tags;`;
+const query = `[out:json][timeout:${overpassTimeoutSeconds}];(nwr["amenity"="restaurant"]["cuisine"~"pizza|pizzeria",i](${south},${west},${north},${east});nwr["amenity"="fast_food"]["cuisine"~"pizza|pizzeria",i](${south},${west},${north},${east});nwr["disused:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east});nwr["abandoned:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east});nwr["demolished:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east}););out center tags;`;
 const endpoints = (process.env.OVERPASS_ENDPOINTS
   ? process.env.OVERPASS_ENDPOINTS.split(',')
   : [
@@ -49,6 +49,10 @@ const rows = (payload.elements || []).map(element => {
   const tags = element.tags || {};
   const lat = element.lat ?? element.center?.lat;
   const lng = element.lon ?? element.center?.lon;
+  const operatingStatus = tags['demolished:amenity'] ? 'demolished'
+    : tags['abandoned:amenity'] ? 'abandoned'
+      : tags['disused:amenity'] ? 'disused'
+        : null;
   return {
     id: `osm:${element.type}/${element.id}`,
     name: tags.name || tags['name:en'] || null,
@@ -61,7 +65,8 @@ const rows = (payload.elements || []).map(element => {
     country: tags['addr:country'] || 'US',
     website: tags.website || tags['contact:website'] || null,
     phone: tags.phone || tags['contact:phone'] || null,
-    category: [tags.amenity, tags.cuisine, tags.shop].filter(Boolean).join('; '),
+    category: [tags.amenity, tags['disused:amenity'], tags['abandoned:amenity'], tags['demolished:amenity'], tags.cuisine, tags.shop].filter(Boolean).join('; '),
+    operating_status: operatingStatus,
     source_url: `https://www.openstreetmap.org/${element.type}/${element.id}`,
     osm_tags: tags,
   };

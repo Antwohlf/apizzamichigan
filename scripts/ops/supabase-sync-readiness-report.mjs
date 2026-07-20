@@ -15,6 +15,8 @@ import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
   FILL_IF_NULL_COLS,
+  LIFECYCLE_COLS,
+  LIFECYCLE_SYNC_ENABLED,
   LOCAL_ONLY_SUPABASE_TABLES,
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
@@ -195,6 +197,16 @@ async function main() {
     const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
     const ids = localRows.map(row => row.id);
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+    const lifecycleSchemaCheck = await supabase
+      .from(SUPABASE_SYNC_TARGET_TABLE)
+      .select('id, lifecycle_status, lifecycle_replaced_by_id')
+      .limit(1);
+    const lifecycleRemoteSchema = lifecycleSchemaCheck.error
+      ? {
+        state: /column .* does not exist/i.test(lifecycleSchemaCheck.error.message || '') ? 'missing' : 'unavailable',
+        detail: lifecycleSchemaCheck.error.message,
+      }
+      : { state: 'ready', detail: 'Supabase exposes both lifecycle columns.' };
 
     const { data: sbRows, error } = await supabase
       .from(SUPABASE_SYNC_TARGET_TABLE)
@@ -236,7 +248,9 @@ async function main() {
     const qaDefaults = changedFields.filter(col => QA_DEFAULT_COLS.includes(col));
     const protectedConflicts = protectedSkips.filter(skip => skip.differs);
 
-    const state = missingSupabaseRows.length ? 'WARN' : 'OK';
+    const state = missingSupabaseRows.length
+      ? 'WARN'
+      : (LIFECYCLE_SYNC_ENABLED && lifecycleRemoteSchema.state !== 'ready' ? 'BLOCKED' : 'OK');
     const payloadSamples = sample(updates, options).map(item => ({
       id: item.local.id,
       name: item.local.name,
@@ -254,6 +268,14 @@ async function main() {
         ...syncBoundary,
         status: 'OK',
         note: 'Only canonical pizza_places rows are eligible for Supabase sync; provenance/review tables remain local-only.',
+      },
+      lifecycleSync: {
+        enabled: LIFECYCLE_SYNC_ENABLED,
+        columns: [...LIFECYCLE_COLS],
+        remoteSchema: lifecycleRemoteSchema,
+        note: LIFECYCLE_SYNC_ENABLED
+          ? 'Lifecycle columns are included in the sync contract; the Supabase migration must already be applied.'
+          : 'Lifecycle fields remain local-only until the Supabase migration is applied and ENABLE_LIFECYCLE_SYNC=1 is set.',
       },
       options: {
         ...options,
@@ -315,6 +337,14 @@ async function main() {
     console.log(`- local-only tables: ${LOCAL_ONLY_SUPABASE_TABLES.map(tableName => `\`${tableName}\``).join(', ')}`);
     console.log(`- status: ${result.syncBoundary.status}`);
     console.log(`- note: ${result.syncBoundary.note}`);
+    console.log('');
+
+    console.log('## Lifecycle Sync');
+    console.log(`- enabled: ${result.lifecycleSync.enabled ? 'yes' : 'no'}`);
+    console.log(`- columns: ${result.lifecycleSync.columns.length ? result.lifecycleSync.columns.map(column => `\`${column}\``).join(', ') : 'none'}`);
+    console.log(`- remote schema: ${result.lifecycleSync.remoteSchema.state}`);
+    console.log(`- remote schema detail: ${result.lifecycleSync.remoteSchema.detail}`);
+    console.log(`- note: ${result.lifecycleSync.note}`);
     console.log('');
 
     console.log('## Field Counts');

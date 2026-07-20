@@ -12,6 +12,15 @@ ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS address_source TEXT
     CHECK (address_source IN ('website', 'osm', 'geocoded'));
 
+-- Business lifecycle is distinct from the personal visit status. NULL means
+-- active/unknown so existing rows remain safe until explicitly reviewed.
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS lifecycle_status TEXT
+    CHECK (lifecycle_status IN ('closed', 'replaced', 'demolished'));
+
+ALTER TABLE pizza_places
+  ADD COLUMN IF NOT EXISTS lifecycle_replaced_by_id BIGINT;
+
 ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS price_range TEXT
     CHECK (price_range IN ('$', '$$', '$$$', '$$$$'));
@@ -110,6 +119,13 @@ ALTER TABLE pizza_places
 ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS address_source TEXT
     CHECK (address_source IN ('website', 'osm', 'geocoded'));
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS lifecycle_status TEXT
+    CHECK (lifecycle_status IN ('closed', 'replaced', 'demolished'));
+
+ALTER TABLE taco_places
+  ADD COLUMN IF NOT EXISTS lifecycle_replaced_by_id BIGINT;
 
 ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS price_range TEXT

@@ -62,6 +62,8 @@ function main() {
   const syncPolicy = verifier('verify-supabase-sync-policy.mjs')
   const classifier = run('classifier-health-report.mjs', ['--json'])
   const sync = run('supabase-sync-status-report.mjs', ['--json'])
+  const reviewedNew = run('reconcile-reviewed-new-supabase.mjs', ['--limit', '250', '--json'])
+  const publicSchema = run('supabase-sync-readiness-report.mjs', ['--batch', '1', '--sample', '1', '--json'])
 
   const sourceItems = source.ok ? source.value.items : []
   const sourceItem = name => sourceItems.find(row => row.item === name)
@@ -108,13 +110,35 @@ function main() {
     ),
     item(
       '6. Operations',
-      runtime.ok && syncPolicy.ok && sync.ok && sync.value.status === 'OK' ? 'ready' : 'partial',
-      [runtime, syncPolicy].filter(row => row.ok).map(row => row.output.split('\n').at(-1)).concat(sync.ok ? [`sync_status=${sync.value.status}`] : []),
+      runtime.ok && syncPolicy.ok && sync.ok && sync.value.status === 'OK'
+        && reviewedNew.ok && reviewedNew.value.missing_count === 0 ? 'ready' : 'partial',
+      [runtime, syncPolicy].filter(row => row.ok).map(row => row.output.split('\n').at(-1)).concat(
+        sync.ok ? [`sync_status=${sync.value.status}`] : [],
+        reviewedNew.ok ? [`reviewed_new_missing=${reviewedNew.value.missing_count}`] : [],
+      ),
       [
-        ...(runtime.ok && syncPolicy.ok && sync.ok ? [] : ['runtime, sync policy, or live sync status is not verified']),
+        ...(runtime.ok && syncPolicy.ok && sync.ok && reviewedNew.ok ? [] : ['runtime, sync policy, sync status, or reviewed-new reconciliation is not verified']),
         ...[runtime, syncPolicy].filter(row => !row.ok).map(row => row.error),
         ...(sync.ok ? (sync.value.status === 'OK' ? [] : [`sync status=${sync.value.status}`]) : [sync.error]),
+        ...(reviewedNew.ok
+          ? (reviewedNew.value.missing_count === 0 ? [] : [`${reviewedNew.value.missing_count} reviewed-new local rows still need Supabase insertion`])
+          : [reviewedNew.error]),
       ],
+    ),
+    item(
+      '7. Public schema and search performance',
+      'partial',
+      publicSchema.ok ? [
+        `lifecycle_remote_schema=${publicSchema.value.lifecycleSync?.remoteSchema?.state || 'unknown'}`,
+        `lifecycle_sync=${publicSchema.value.lifecycleSync?.enabled ? 'enabled' : 'disabled'}`,
+        'search-index migration is checked in and preserves existing search behavior',
+      ] : [],
+      publicSchema.ok ? [
+        ...(publicSchema.value.lifecycleSync?.remoteSchema?.state === 'ready'
+          ? []
+          : ['apply supabase-production-migration.sql in the Supabase SQL editor']),
+        'set ENABLE_LIFECYCLE_SYNC=1 only after the lifecycle readiness report is ready',
+      ] : [publicSchema.error, 'apply supabase-production-migration.sql and rerun readiness'],
     ),
   ]
 

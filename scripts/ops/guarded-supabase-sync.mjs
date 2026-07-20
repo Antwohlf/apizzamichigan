@@ -95,6 +95,10 @@ function assertState(label, actual, allowed = ['OK']) {
   }
 }
 
+function blockingClassifierHealthIssues(health) {
+  return (health?.health?.issues || []).filter(issue => !/^(Ollama(?: tunnel)?|laptop Ollama tunnel) unavailable:/i.test(issue));
+}
+
 function syncArgs(options, { dryRun = false } = {}) {
   const args = [
     'scripts/sync-local-to-supabase.mjs',
@@ -171,13 +175,19 @@ async function main() {
   step('Health Gate');
   const health = run(NODE, ['scripts/ops/classifier-health-report.mjs', '--json'], { json: true });
   console.log(`state=${health.health.state}, completed_last_window=${health.queue?.recent?.completed ?? 'n/a'}, failed_last_window=${health.queue?.recent?.failed ?? 'n/a'}`);
-  // The iMac cannot inspect the laptop-owned tunnel launchd service. A healthy
-  // tunnel endpoint is sufficient for sync; only actionable health issues
-  // should block the write gate.
-  if (health.health.issues?.length) {
-    throw new Error(`health gate failed: ${JSON.stringify(health.health.issues)}`);
+  // Sync consumes already-classified local rows and never calls Ollama. A
+  // transient inference/tunnel probe failure must not strand an otherwise
+  // safe publication batch, while queue, Postgres, worker, and integrity
+  // failures still block the write.
+  const blockingIssues = blockingClassifierHealthIssues(health);
+  const toleratedIssues = (health.health.issues || []).filter(issue => !blockingIssues.includes(issue));
+  if (toleratedIssues.length) {
+    console.log(`health warnings do not block sync: ${JSON.stringify(toleratedIssues)}`);
   }
-  if (health.health.state !== 'OK') {
+  if (blockingIssues.length) {
+    throw new Error(`health gate failed: ${JSON.stringify(blockingIssues)}`);
+  }
+  if (health.health.state !== 'OK' && !toleratedIssues.length) {
     console.log(`health warnings do not block sync: ${JSON.stringify(health.health.warnings || [])}`);
   }
 

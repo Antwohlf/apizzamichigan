@@ -114,6 +114,7 @@ try {
   const acceptedDuplicateCoordinate = reviewExists.rows[0].exists ? await client.query(`
     WITH accepted AS (
       SELECT id, source, source_name,
+        regexp_replace(lower(coalesce(source_name, '')), '[^a-z0-9]+', '', 'g') AS name_key,
         NULLIF(source_data->>'lat', '')::double precision AS lat,
         NULLIF(source_data->>'lng', '')::double precision AS lng
       FROM source_review_queue
@@ -122,18 +123,23 @@ try {
     ), pairs AS (
       SELECT a.id AS left_id, b.id AS right_id, a.source,
         a.source_name AS left_name, b.source_name AS right_name,
+        a.name_key = b.name_key AS same_name,
         ROUND((111320 * sqrt(power(a.lat - b.lat, 2) + power((a.lng - b.lng) * cos(radians(a.lat)), 2)))::numeric, 2) AS distance_m
       FROM accepted a JOIN accepted b ON a.source = b.source AND a.id < b.id
       WHERE abs(a.lat - b.lat) <= 0.003 AND abs(a.lng - b.lng) <= 0.003
         AND (111320 * sqrt(power(a.lat - b.lat, 2) + power((a.lng - b.lng) * cos(radians(a.lat)), 2))) <= 150
     )
     SELECT COUNT(*)::int AS pairs, COUNT(DISTINCT left_id)::int AS affected_rows,
+      COUNT(*) FILTER (WHERE same_name)::int AS identical_name_pairs,
+      COUNT(*) FILTER (WHERE NOT same_name)::int AS conflicting_name_pairs,
+      COUNT(DISTINCT left_id) FILTER (WHERE NOT same_name)::int AS conflicting_affected_rows,
       COALESCE(MIN(distance_m), 0) AS closest_distance_m
     FROM pairs
   `, [entity]) : { rows: [{ pairs: 0, affected_rows: 0, closest_distance_m: 0 }] };
   const acceptedDuplicateSamples = reviewExists.rows[0].exists ? await client.query(`
     WITH accepted AS (
       SELECT id, source, source_name,
+        regexp_replace(lower(coalesce(source_name, '')), '[^a-z0-9]+', '', 'g') AS name_key,
         NULLIF(source_data->>'lat', '')::double precision AS lat,
         NULLIF(source_data->>'lng', '')::double precision AS lng
       FROM source_review_queue
@@ -142,6 +148,7 @@ try {
     )
     SELECT a.id AS left_id, b.id AS right_id, a.source,
       a.source_name AS left_name, b.source_name AS right_name,
+      a.name_key = b.name_key AS same_name,
       ROUND((111320 * sqrt(power(a.lat - b.lat, 2) + power((a.lng - b.lng) * cos(radians(a.lat)), 2)))::numeric, 2) AS distance_m
     FROM accepted a JOIN accepted b ON a.source = b.source AND a.id < b.id
     WHERE abs(a.lat - b.lat) <= 0.003 AND abs(a.lng - b.lng) <= 0.003

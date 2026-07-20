@@ -1,6 +1,7 @@
 import {
   DEFAULT_SOURCE_REVIEW_QUEUE,
   canUpdateExactOsmPlace,
+  canRecordBusinessReplacement,
   humanReadiness,
   isExactOsmIdentityMatch,
   sourceAddress,
@@ -51,6 +52,9 @@ describe('sourceReviewQueues', () => {
     expect(canUpdateExactOsmPlace(row)).toBe(true)
     expect(canUpdateExactOsmPlace({ ...row, nearest_status: 'visited' })).toBe(false)
     expect(canUpdateExactOsmPlace({ ...row, nearest_notes: 'Great old spot' })).toBe(false)
+    expect(canUpdateExactOsmPlace({ ...row, nearest_lifecycle_status: 'closed' })).toBe(false)
     expect(canUpdateExactOsmPlace({ ...row, source_id: 'osm:way/631308927', source_name: 'Canonical Pizza', nearest_place_name: 'Canonical Pizza' })).toBe(false)
+    expect(canRecordBusinessReplacement({ ...row, nearest_status: 'visited' })).toBe(true)
+    expect(canRecordBusinessReplacement(row)).toBe(false)
   })
 })

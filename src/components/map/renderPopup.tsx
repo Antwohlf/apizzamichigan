@@ -28,6 +28,9 @@ type Place = {
   style?: string | null
   google_place_id?: string | null
   google_maps_url?: string | null
+  lifecycle_status?: string | null
+  lifecycleStatus?: string | null
+  lifecycle_replaced_by_id?: string | number | null
   favorited?: boolean | null
   photos?: Array<ReviewPhoto | string> | null
 }
@@ -50,6 +53,14 @@ function displayStatus(place: Place) {
   if (normalized.startsWith('visited')) return 'Anthony reviewed'
   if (normalized.startsWith('golden')) return 'Golden'
   return raw
+}
+
+function displayLifecycle(place: Place) {
+  const raw = String(place.lifecycle_status || place.lifecycleStatus || '').trim().toLowerCase()
+  if (raw === 'closed' || raw.startsWith('closed')) return 'Historical location'
+  if (raw === 'replaced' || raw.startsWith('replaced')) return 'Replaced by a newer business'
+  if (raw === 'demolished' || raw.startsWith('demolished')) return 'Demolished location'
+  return null
 }
 
 function displayLocation(place: Place) {
@@ -79,6 +90,7 @@ export function renderPreview(node: HTMLElement, place: Place) {
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
   const price = displayPrice(place)
   const status = displayStatus(place)
+  const lifecycle = displayLifecycle(place)
   const classNames = ['popup-card']
   if (isGolden) {
     classNames.push('popup-card--favorited', 'golden-glow')
@@ -96,6 +108,7 @@ export function renderPreview(node: HTMLElement, place: Place) {
         {price ? <span className="badge">{price}</span> : null}
         {place.style ? <span className="badge badge--style">{place.style}</span> : null}
         {status ? <span className="badge badge--status">{status}</span> : null}
+        {lifecycle ? <span className="badge badge--status">{lifecycle}</span> : null}
         {isGolden ? <span className="badge badge--golden">Golden</span> : null}
       </div>
     </div>
@@ -106,6 +119,7 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
   const isGolden = place.type === 'taco' && Boolean(place.favorited)
   const price = displayPrice(place)
   const status = displayStatus(place)
+  const lifecycle = displayLifecycle(place)
   const location = displayLocation(place)
   const photos = Array.isArray(place.photos) ? place.photos.filter(Boolean) : []
   const classNames = ['popup-card']
@@ -138,11 +152,27 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       </button>
       <div className="popup-card__body">
         <div className="title">{place.name}</div>
-        {(place.style || price || status) ? (
+        {(place.style || price || status || lifecycle) ? (
           <div className="popup-card__chips">
             {place.style ? <span className="badge badge--style">{place.style}</span> : null}
             {price ? <span className="badge">{price}</span> : null}
             {status ? <span className="badge badge--status">{status}</span> : null}
+            {lifecycle ? <span className="badge badge--status">{lifecycle}</span> : null}
+          </div>
+        ) : null}
+        {lifecycle ? (
+          <div className="popup-card__lifecycle">
+            {lifecycle}.
+            {place.lifecycle_replaced_by_id ? (
+              <a
+                href={internalDetailHref({ ...place, id: String(place.lifecycle_replaced_by_id) })}
+                onClick={stopPopupEvent}
+                onMouseDown={stopPopupEvent}
+                onPointerDown={stopPopupEvent}
+              >
+                View current place
+              </a>
+            ) : null}
           </div>
         ) : null}
         {typeof place.rating === 'number' ? (

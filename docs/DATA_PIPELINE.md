@@ -42,6 +42,15 @@ Supabase sync writes only canonical `pizza_places` rows. Provenance and review
 tables such as `place_sources` and `source_review_queue` are local operator
 state and are not public sync targets.
 
+### Public Search Performance
+
+The public map keeps its existing substring search across names, addresses,
+styles, brands, and operators. Apply
+`scripts/enrichment/supabase-production-migration.sql` in the Supabase SQL
+editor after the table columns are present. It enables `pg_trgm` and adds
+idempotent indexes for the fields searched by both the pizza and taco sites;
+the migration does not change records or search behavior.
+
 The normal automated path is the guarded recent-classification window:
 
 ```bash
