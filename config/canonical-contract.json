@@ -9,7 +9,7 @@
   "sync_target": "pizza_places",
   "fields": {
     "identity": ["id", "name", "lat", "lng", "address", "state", "google_place_id"],
-    "editorial": ["status", "rating", "notes", "photos"],
+    "editorial": ["status", "rating", "notes", "photos", "lifecycle_status", "lifecycle_replaced_by_id"],
     "source_factual": [
       "website_url", "menu_url", "phone", "email", "instagram_url",
       "facebook_url", "twitter_url", "whatsapp", "hours", "delivery",
@@ -26,11 +26,12 @@
     "style": ["Traditional", "New York", "Chicago", "Tavern", "Detroit", "Neapolitan", "Sicilian", "Roman", "California"],
     "price_range": ["$", "$$", "$$$", "$$$$"],
     "style_confidence": ["confirmed", "inferred"],
-    "enrichment_status": ["pending", "enriched", "failed"]
+    "enrichment_status": ["pending", "enriched", "failed"],
+    "lifecycle_status": ["closed", "replaced", "demolished"]
   },
   "promotion": {
     "auto_fill_if_blank": ["website_url", "phone"],
     "manual_review_only": ["name", "address", "lat", "lng", "state", "google_place_id"],
-    "blocked_from_source_promotion": ["style", "price", "price_range", "style_confidence", "rating", "notes", "status", "photos"]
+    "blocked_from_source_promotion": ["style", "price", "price_range", "rating", "notes", "status", "photos", "lifecycle_status", "lifecycle_replaced_by_id"]
   }
 }

@@ -113,6 +113,59 @@ function loadEnvLocal() {
   return out;
 }
 
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function isRetryableSupabaseError(error) {
+  const status = Number(error?.status || error?.statusCode || 0);
+  if (status >= 400 && status < 500) return false;
+  const message = String(error?.message || error || '').toLowerCase();
+  return !status || status >= 500 || /fetch failed|network|timeout|timed out|econnreset|enotfound|eai_again/.test(message);
+}
+
+async function supabaseRequest(operation, label, attempts = 4) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await operation();
+      if (result?.error) throw result.error;
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableSupabaseError(error)) throw error;
+      const delayMs = 1000 * (2 ** (attempt - 1));
+      console.warn(`[supabase retry] ${label}; attempt=${attempt + 1}/${attempts} delay_ms=${delayMs}`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+async function insertSupabaseRow(sb, payload) {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const { data } = await supabaseRequest(
+        () => sb.from(SUPABASE_SYNC_TARGET_TABLE).insert(payload).select('id'),
+        `insert id=${payload.id}`,
+        1,
+      );
+      return data;
+    } catch (error) {
+      if (attempt >= 4 || !isRetryableSupabaseError(error)) throw error;
+      // A network failure can happen after Supabase commits the insert. Check
+      // by primary key before retrying so recovery cannot create a duplicate.
+      const existing = await supabaseRequest(
+        () => sb.from(SUPABASE_SYNC_TARGET_TABLE).select('id').eq('id', payload.id),
+        `confirm insert id=${payload.id}`,
+      );
+      if (existing.data?.length) return existing.data;
+      const delayMs = 1000 * (2 ** (attempt - 1));
+      console.warn(`[supabase retry] insert id=${payload.id}; attempt=${attempt + 1}/4 delay_ms=${delayMs}`);
+      await sleep(delayMs);
+    }
+  }
+  throw new Error(`Supabase insert failed for id=${payload.id}`);
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const env = loadEnvLocal();
@@ -165,12 +218,13 @@ async function main() {
       const ids = localRows.map(r => r.id);
 
       // Fetch current supabase state for protected fields + QA.
-      const { data: sbRows, error: sbErr } = await sb
-        .from(SUPABASE_SYNC_TARGET_TABLE)
-        .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
-        .in('id', ids);
-
-      if (sbErr) throw sbErr;
+      const { data: sbRows } = await supabaseRequest(
+        () => sb
+          .from(SUPABASE_SYNC_TARGET_TABLE)
+          .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
+          .in('id', ids),
+        `read ids=${ids.length}`,
+      );
 
       // Supabase may return ids as strings; normalize keys to string for reliable lookup.
       const sbMap = new Map((sbRows || []).map(r => [String(r.id), r]));
@@ -254,12 +308,7 @@ async function main() {
 
       let inserted = 0;
       for (const payload of inserts) {
-        const { data, error: insertErr } = await sb
-          .from(SUPABASE_SYNC_TARGET_TABLE)
-          .insert(payload)
-          .select('id');
-
-        if (insertErr) throw insertErr;
+        const data = await insertSupabaseRow(sb, payload);
         if (!data?.length) {
           throw new Error(`Supabase insert returned no row for id=${payload.id}`);
         }
@@ -269,13 +318,14 @@ async function main() {
       let updated = 0;
       for (const payload of updates) {
         const { id, ...fields } = payload;
-        const { data, error: upErr } = await sb
-          .from(SUPABASE_SYNC_TARGET_TABLE)
-          .update(fields)
-          .eq('id', id)
-          .select('id');
-
-        if (upErr) throw upErr;
+        const { data } = await supabaseRequest(
+          () => sb
+            .from(SUPABASE_SYNC_TARGET_TABLE)
+            .update(fields)
+            .eq('id', id)
+            .select('id'),
+          `update id=${id}`,
+        );
         if (!data?.length) {
           throw new Error(`Supabase update matched no rows for id=${id}`);
         }

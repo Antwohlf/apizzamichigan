@@ -328,6 +328,22 @@ function launchdServiceReport(label) {
   }
 }
 
+function ollamaTunnelReport() {
+  const port = 11435
+  const result = run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'])
+  const listeners = result.ok
+    ? result.stdout.split('\n').map(line => line.trim()).filter(Boolean)
+    : []
+  return {
+    port,
+    ownership: 'remote-laptop',
+    inspectable: false,
+    ok: listeners.length > 1,
+    listeners: listeners.slice(1),
+    error: listeners.length > 1 ? null : result.stderr || 'no forwarded listener on 127.0.0.1:11435',
+  }
+}
+
 function syncLockReport() {
   const path = process.env.APIZZA_SYNC_LOCK_DIR || '/tmp/apizzamichigan/supabase-sync.lock'
   if (!existsSync(path)) return { path, exists: false }
@@ -390,17 +406,16 @@ async function main() {
   const processes = processReport()
   const launchd = [
     launchdServiceReport('com.apizzamichigan.classifier'),
-    launchdServiceReport('com.apizzamichigan.classifier-2'),
     launchdServiceReport('com.apizzamichigan.scraper'),
-    launchdServiceReport('com.apizzamichigan.laptop-ollama-tunnel'),
     launchdServiceReport('com.apizzamichigan.supabase-sync')
   ]
+  const ollamaTunnel = ollamaTunnelReport()
   const syncLock = syncLockReport()
   const fsqSample = fsqSampleReport(root)
   const now = new Date().toISOString()
 
   if (args.has('--json')) {
-    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, syncLock, fsqSample, processes }, null, 2))
+    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, ollamaTunnel, syncLock, fsqSample, processes }, null, 2))
     return
   }
 
@@ -483,6 +498,12 @@ async function main() {
     runInterval: service.runInterval || '',
     status: service.ok ? 'ok' : `failed: ${service.error}`
   }))))
+  console.log(``)
+
+  console.log(`## Ollama Tunnel`)
+  console.log(`- ownership: remote laptop`)
+  console.log(`- forwarded listener: ${ollamaTunnel.ok ? 'ok' : 'unavailable'}`)
+  if (ollamaTunnel.error) console.log(`- error: ${ollamaTunnel.error}`)
   console.log(``)
 
   console.log(`## Sync Lock`)

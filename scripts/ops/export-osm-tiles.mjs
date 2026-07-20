@@ -23,6 +23,8 @@ const tileTimeoutMs = positiveInt(process.env.OSM_TILE_TIMEOUT_MS, 240000)
 const retryCooldownMs = positiveInt(process.env.OSM_RETRY_COOLDOWN_MS, 60 * 60 * 1000)
 const subtileConcurrency = positiveInt(process.env.OSM_SUBTILE_CONCURRENCY, 2)
 const maxRuntimeMs = positiveInt(process.env.OSM_EXPORT_MAX_RUNTIME_MS, 15 * 60 * 1000)
+const refreshAfterHours = positiveInt(process.env.OSM_REFRESH_AFTER_HOURS, 30 * 24)
+const refreshAfterMs = refreshAfterHours * 60 * 60 * 1000
 const retryFailed = args['retry-failed'] === true || args['retry-failed'] === 'true'
 if (![south, west, north, east].every(Number.isFinite) || !output) {
   throw new Error('Usage: export-osm-tiles.mjs --bbox south,west,north,east --output file [--step 0.5] [--manifest file]')
@@ -51,11 +53,26 @@ for (const tile of Object.values(manifest.tiles)) {
 let processed = 0
 let deferred = 0
 const startedAt = Date.now()
-for (const tile of tiles) {
+const orderedTiles = [...tiles].sort((left, right) => {
+  const leftPrior = manifest.tiles[tileKey(left)]
+  const rightPrior = manifest.tiles[tileKey(right)]
+  const retryPriority = prior => {
+    if (!prior || !['failed', 'partial'].includes(prior.status)) return 1
+    if (retryFailed) return 0
+    if (prior.next_retry_at && Date.parse(prior.next_retry_at) > Date.now()) return 2
+    return 0
+  }
+  return retryPriority(leftPrior) - retryPriority(rightPrior)
+})
+for (const tile of orderedTiles) {
   if (Date.now() - startedAt >= maxRuntimeMs) break
   const key = tileKey(tile)
   const prior = manifest.tiles[key]
-  if (prior?.status === 'success' && args.resume !== 'false') continue
+  const completedAt = prior?.completed_at ? Date.parse(prior.completed_at) : NaN
+  const successIsFresh = prior?.status === 'success'
+    && Number.isFinite(completedAt)
+    && Date.now() - completedAt < refreshAfterMs
+  if (successIsFresh && args.resume !== 'false') continue
   if (prior?.status === 'failed' && !retryFailed && prior.next_retry_at && Date.parse(prior.next_retry_at) > Date.now() && args.resume !== 'false') {
     deferred += 1
     continue
@@ -163,9 +180,9 @@ async function runTile(tile, tileOutput, child, timeoutMs, depth = 0, resumeSubt
     const stdout = await runChild([child, '--bbox', tile.bbox.join(','), '--output', tileOutput], timeoutMs)
     return { rows: JSON.parse(readFileSync(tileOutput, 'utf8')), stdout }
   } catch (error) {
-    // One split level is enough to reduce query size without allowing a
-    // single source run to fan out into an unbounded request tree. Failed
-    // subtiles remain persisted for the next scheduled attempt.
+    // One split level gives dense or geographically awkward tiles a bounded
+    // recovery chance. Failed subtiles remain persisted for the next
+    // scheduled attempt, so a source run never fans out indefinitely.
     if (depth >= 1 || !isTimeout(error)) throw error
 
     // Overpass can time out on a sparse-looking but geographically broad tile.
@@ -244,7 +261,10 @@ async function runSubtiles(subtiles, child, timeoutMs, parentOutput, depth) {
 function runChild(childArgs, timeoutMs) {
   return new Promise((resolveChild, rejectChild) => {
     const child = spawn(process.execPath, childArgs, {
-      detached: true,
+      // These exporters do not spawn their own workers. Keeping them attached
+      // makes timeout cleanup deterministic on macOS, where detached process
+      // groups are not consistently addressable from Node.
+      detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -299,16 +319,14 @@ function runChild(childArgs, timeoutMs) {
 
 function killChildProcess(child) {
   if (!child?.pid) return
-  // Detached process groups are not consistently addressable through
-  // process.kill(-pid) on macOS. Use the system kill utility as a fallback so
-  // a hung Overpass child cannot keep the scheduler occupied indefinitely.
-  try { process.kill(-child.pid, 'SIGKILL') } catch {}
+  // The child is intentionally attached, so killing its PID is sufficient and
+  // avoids leaving orphaned adaptive subtile requests on macOS.
   try { child.kill('SIGKILL') } catch {}
   try { spawnSync('/bin/kill', ['-KILL', String(child.pid)], { stdio: 'ignore' }) } catch {}
 }
 
 function isTimeout(error) {
-  return error?.code === 'ETIMEDOUT' || /timed?out/i.test(String(error?.message || error?.stderr || ''))
+  return error?.code === 'ETIMEDOUT' || /time(?:d\s*out|out)/i.test(String(error?.message || error?.stderr || ''))
 }
 
 function round(value) {

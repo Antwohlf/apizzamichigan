@@ -3,6 +3,8 @@ import App, {
   compareSearchResults,
   placeSearchRank,
   remoteSearchTerms,
+  remoteSearchableColumns,
+  publicSearchSelect,
   normalizeLifecycleStatus,
   searchResultPriority,
   stateCodesForSearch,
@@ -94,6 +96,24 @@ describe('App routing themes', () => {
 })
 
 describe('remoteSearchTerms', () => {
+  test('keeps public search payload bounded to display and ranking fields', () => {
+    expect(publicSearchSelect).toContain('name')
+    expect(publicSearchSelect).toContain('brand')
+    expect(publicSearchSelect).toContain('rating')
+    expect(publicSearchSelect).toContain('lifecycle_status')
+    expect(publicSearchSelect).toContain('lifecycle_replaced_by_id')
+    expect(publicSearchSelect).not.toContain('osm_tags')
+    expect(publicSearchSelect).not.toContain('scrape_notes')
+    expect(publicSearchSelect).not.toContain('website_url')
+  })
+
+  test('uses only columns present in the canonical tables', () => {
+    expect(remoteSearchableColumns('pizza_places')).toEqual([
+      'name', 'address', 'state', 'style', 'status', 'price_range', 'brand', 'operator',
+    ])
+    expect(remoteSearchableColumns('taco_places')).not.toContain('city')
+  })
+
   test('uses specific terms instead of generic pizza terms when possible', () => {
     expect(remoteSearchTerms('Pizza Hut Detroit')).toEqual(['pizza hut detroit', 'hut detroit', 'pizza hut', 'detroit', 'hut'])
   })

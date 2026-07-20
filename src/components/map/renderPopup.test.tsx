@@ -137,6 +137,32 @@ describe('renderExpanded', () => {
     )
   })
 
+  test('explains historical locations and links to a replacement when available', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Old Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          lifecycle_status: 'replaced',
+          lifecycle_replaced_by_id: 456,
+        },
+        jest.fn()
+      )
+    })
+
+    expect(screen.getByText('Replaced by a newer business.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view current place/i })).toHaveAttribute(
+      'href',
+      '/places/456'
+    )
+  })
+
   test('opens and closes the photo viewer from a popup thumbnail', () => {
     const outsideClick = jest.fn()
     document.body.addEventListener('click', outsideClick)

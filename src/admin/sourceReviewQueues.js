@@ -72,6 +72,13 @@ export const canUpdateExactOsmPlace = row =>
   && row?.nearest_status === 'unvisited'
   && row?.nearest_rating == null
   && !String(row?.nearest_notes || '').trim()
+  && !String(row?.nearest_lifecycle_status || '').trim()
+
+export const canRecordBusinessReplacement = row =>
+  isExactOsmIdentityMatch(row)
+  && valuesDiffer(row?.source_name || row?.source_data?.name, row?.nearest_place_name)
+  && !canUpdateExactOsmPlace(row)
+  && !String(row?.nearest_lifecycle_status || '').trim()
 
 export const sourceAddress = row =>
   row?.source_data?.address
@@ -119,6 +126,7 @@ export const humanReadiness = readiness => {
     duplicate_accepted_source_coordinate: 'Duplicate source location',
     missing_required_data: 'Missing information',
     link_review: 'Needs match decision',
+    replacement_candidate_ready: 'Ready to replace a historical place',
   }
   return labels[readiness] || String(readiness || 'Unknown').replace(/_/g, ' ')
 }

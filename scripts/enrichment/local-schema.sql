@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS pizza_places (
   google_place_id TEXT UNIQUE,
   state TEXT,
   status TEXT DEFAULT 'unvisited' CHECK (status IN ('visited', 'unvisited', 'golden')),
+  -- Separate business lifecycle from personal visit status.
+  lifecycle_status TEXT CHECK (lifecycle_status IN ('closed', 'replaced', 'demolished')),
+  lifecycle_replaced_by_id BIGINT,
   style TEXT,
   price TEXT,
   rating NUMERIC,
@@ -75,6 +78,8 @@ CREATE TABLE IF NOT EXISTS taco_places (
   google_place_id TEXT UNIQUE,
   state TEXT,
   status TEXT DEFAULT 'unvisited' CHECK (status IN ('visited', 'unvisited', 'golden')),
+  lifecycle_status TEXT CHECK (lifecycle_status IN ('closed', 'replaced', 'demolished')),
+  lifecycle_replaced_by_id BIGINT,
   style TEXT,
   price TEXT,
   rating NUMERIC,

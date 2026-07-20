@@ -26,6 +26,8 @@
     <string>10</string>
     <key>APIZZA_SYNC_INSERT_MISSING_REVIEWED_NEW</key>
     <string>true</string>
+    <key>ENABLE_LIFECYCLE_SYNC</key>
+    <string>1</string>
   </dict>
 
   <key>WorkingDirectory</key>

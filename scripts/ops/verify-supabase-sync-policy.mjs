@@ -8,6 +8,8 @@
  */
 
 import {
+  LIFECYCLE_COLS,
+  LIFECYCLE_SYNC_ENABLED,
   LOCAL_ONLY_SUPABASE_TABLES,
   SUPABASE_SYNC_TARGET_TABLE,
   assertSupabaseSyncTableBoundary,
@@ -53,10 +55,19 @@ function main() {
     assert(!new RegExp(`\\b${tableName}\\b`, 'i').test(sql), `Local sync SQL must not reference ${tableName}.`);
   }
 
+  if (LIFECYCLE_SYNC_ENABLED) {
+    assert(LIFECYCLE_COLS.includes('lifecycle_status'), 'Enabled lifecycle sync must select lifecycle_status.');
+    assert(LIFECYCLE_COLS.includes('lifecycle_replaced_by_id'), 'Enabled lifecycle sync must select replacement IDs.');
+  } else {
+    assert(LIFECYCLE_COLS.length === 0, 'Lifecycle columns must stay disabled until the remote migration is applied.');
+    assert(!/\\blifecycle_status\\b/i.test(sql), 'Default sync must not reference lifecycle_status.');
+  }
+
   console.log('# Supabase Sync Policy Verification');
   console.log('');
   console.log(`target_table=${SUPABASE_SYNC_TARGET_TABLE}`);
   console.log(`local_only_tables=${LOCAL_ONLY_SUPABASE_TABLES.join(',')}`);
+  console.log(`lifecycle_sync=${LIFECYCLE_SYNC_ENABLED ? 'enabled' : 'disabled'}`);
   console.log('status=ok');
 }
 

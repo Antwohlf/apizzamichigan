@@ -80,10 +80,12 @@ function sourceMatchingStatus(files) {
   assertEvidence(files.sourceInput.includes('buildPrefetchTiles'), 'source-input adapter batches candidates into prefetch tiles', evidence);
   assertEvidence(files.sourceInput.includes('buildPlaceGrid'), 'source-input adapter builds an in-memory coordinate grid', evidence);
   assertEvidence(files.sourceInput.includes('nearbyPlacesFromGrid'), 'matching uses grid lookup instead of one spatial query per source row', evidence);
+  assertEvidence(files.sourceInput.includes('exact_identifier_nearby') && files.sourceInput.includes('sourceIdentifierMatch'), 'matching auto-accepts exact store identifiers near the canonical location', evidence);
   assertEvidence(files.prefetchVerifier.includes('canonical_prefetch_queries'), 'prefetch verifier asserts query/tile metrics', evidence);
 
   if (!files.sourceInput.includes('loadCanonicalPlaces')) missing.push('batched canonical prefetch implementation');
   if (!files.sourceInput.includes('nearbyPlacesFromGrid')) missing.push('grid-based nearest-place lookup');
+  if (!files.sourceInput.includes('exact_identifier_nearby') || !files.sourceInput.includes('sourceIdentifierMatch')) missing.push('exact website/phone identifier matching');
   if (!files.prefetchVerifier.includes('Source Matching Prefetch Verification')) missing.push('read-only prefetch verifier');
 
   return {
@@ -258,13 +260,17 @@ function fsqStatus(files) {
     remaining.push(`preflight failed: ${preflight.error}`);
   }
 
-  if (!preflight.ok || !['sample_ready', 'hf_export_ready', 'portal_export_ready'].includes(preflight.value.state)) {
-    remaining.push('real FSQ slice/export is not ready yet');
+  const productionReady = preflight.ok
+    && (preflight.value.can_export_via_hf === true || preflight.value.can_export_via_portal === true);
+  if (!productionReady) {
+    remaining.push(preflight.ok && preflight.value.input_exists
+      ? 'FSQ is sample-ready only; configure a real HF or Places Portal export before production ingestion'
+      : 'real FSQ slice/export is not ready yet');
   }
 
   return {
-    item: 'FSQ sample/import path',
-    status: remaining.length ? 'blocked' : 'ready',
+    item: 'FSQ production input path',
+    status: productionReady ? 'ready' : 'partial',
     evidence,
     remaining,
   };
@@ -309,8 +315,8 @@ function uiSearchStatus(files) {
   assertEvidence(files.reviewGallery.includes('imageState') && files.reviewGallery.includes('Photo failed to load'), 'photo lightbox has loading and failure states for large review images', evidence);
   assertEvidence(files.renderPopup.includes('Open in Google Maps') && files.renderPopup.includes('Anthony reviewed'), 'expanded map popups expose clearer status and Google Maps actions', evidence);
   assertEvidence(files.bugReport.includes('price_range') && files.bugReport.includes('Open selected place in Google Maps'), 'bug reports capture rich selected-place context from the map', evidence);
-  assertEvidence(files.adminReviews.includes('Matching reviews'), 'admin reviews has compact matching-review selection', evidence);
-  assertEvidence(files.adminReviews.includes('Selected review') && files.adminReviews.includes('selectAdjacentReview'), 'admin reviews shows the active editing target with previous/next navigation', evidence);
+  assertEvidence(files.adminReviews.includes('Matching reviewed places'), 'admin reviews has compact matching-review selection', evidence);
+  assertEvidence(files.adminReviews.includes('Selected review') && files.adminReviews.includes('selectOffset'), 'admin reviews shows the active editing target with previous/next navigation', evidence);
   assertEvidence(files.adminPanel.includes('Recent Source Links'), 'admin exposes source/provenance visibility', evidence);
   assertEvidence(files.adminPanel.includes('Export current filtered queue') && files.adminPanel.includes('currentQueueExportCommand') && files.exportReviewQueue.includes('--search'), 'admin source review queue exposes a current-filter CSV export handoff', evidence);
   assertEvidence(files.adminPanel.includes('Selected queue export command') && files.adminPanel.includes('selectedQueueExportCommand') && files.exportReviewQueue.includes('--ids'), 'admin source review queue exposes exact selected-row CSV exports', evidence);
@@ -329,8 +335,8 @@ function uiSearchStatus(files) {
   if (!files.reviewGallery.includes('openerRef')) remaining.push('photo lightbox focus restoration not implemented');
   if (!files.reviewGallery.includes('imageState')) remaining.push('photo lightbox loading/error state not implemented');
   if (!files.bugReport.includes('price_range')) remaining.push('bug report selected-place context not implemented');
-  if (!files.adminReviews.includes('Matching reviews')) remaining.push('admin review selector not implemented');
-  if (!files.adminReviews.includes('Selected review')) remaining.push('admin selected-review target summary not implemented');
+  if (!files.adminReviews.includes('Matching reviewed places')) remaining.push('admin review selector not implemented');
+  if (!files.adminReviews.includes('Selected review') || !files.adminReviews.includes('selectOffset')) remaining.push('admin selected-review target summary not implemented');
   if (!files.adminPanel.includes('Export current filtered queue') || !files.exportReviewQueue.includes('--search')) remaining.push('admin source review current-filter export handoff not implemented');
   if (!files.adminPanel.includes('selectedQueueExportCommand') || !files.exportReviewQueue.includes('--ids')) remaining.push('admin source review selected-row export handoff not implemented');
   if (!files.adminTriage.includes('reviewDecisionChecklist')) remaining.push('source review decision checklists not implemented');
@@ -386,7 +392,7 @@ function loadFiles() {
     supabaseVerifier: read('scripts/ops/verify-supabase-sync-policy.mjs'),
     mapControls: read('src/map/MapControls.js'),
     placesLayer: read('src/map/PlacesLayer.js'),
-    adminReviews: read('src/admin/AdminReviewsPage.js'),
+    adminReviews: read('src/admin/AdminPhotosPanel.js'),
     promotionPolicy: read('scripts/lib/source-promotion-policy.mjs'),
     promotionVerifier: read('scripts/ops/verify-source-promotion-policy.mjs'),
     app: read('src/App.js'),

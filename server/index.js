@@ -707,7 +707,7 @@ const parseReviewIdList = value => {
 
 const allowedSourceReviewStatuses = new Set(['pending', 'accepted', 'linked', 'rejected', 'ignored'])
 const allowedSourceReviewKinds = new Set(['ambiguous', 'likely_new'])
-const allowedSourceReviewReadiness = new Set(['candidate_ready', 'nearby_canonical_review', 'duplicate_accepted_source_coordinate', 'missing_required_data', 'link_review'])
+const allowedSourceReviewReadiness = new Set(['candidate_ready', 'replacement_candidate_ready', 'nearby_canonical_review', 'duplicate_accepted_source_coordinate', 'missing_required_data', 'link_review'])
 const allowedSourceReviewScopes = new Set(['chain', 'independent'])
 const SOURCE_CONTACT_PROMOTION_PREVIEW = {
   sources: ['official_website', 'osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata'],
@@ -838,8 +838,13 @@ const sourceReviewCandidatePayload = row => {
 
 async function sourceReviewGooglePlaceIdExists(client, tableName, googlePlaceId) {
   if (!googlePlaceId) return false
-  const result = await client.query(`SELECT id FROM ${tableName} WHERE google_place_id = $1 LIMIT 1`, [googlePlaceId])
-  return Boolean(result.rows[0])
+  const result = await client.query(`
+    SELECT id, name, lifecycle_status, lifecycle_replaced_by_id
+    FROM ${tableName}
+    WHERE google_place_id = $1
+    LIMIT 1
+  `, [googlePlaceId])
+  return result.rows[0] || null
 }
 
 async function findNearbySourceReviewPlaces(client, tableName, payload, radiusM) {
@@ -902,6 +907,7 @@ async function loadSourceReviewCanonicalPlaces(client, tableName, payloads, radi
       AND lng IS NOT NULL
       AND lat::double precision BETWEEN $1 AND $2
       AND lng::double precision BETWEEN $3 AND $4
+      AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
   `, [minLat, maxLat, minLng, maxLng])
 
   return result.rows
@@ -970,7 +976,8 @@ const reviewedNewImportReadiness = (payload, duplicateBySourceId, nearbyRows) =>
   if (payload.lng === null) missing.push('lng')
   if (!payload.googlePlaceId) missing.push('source_id')
   if (missing.length) return `missing_${missing.join('_')}`
-  if (duplicateBySourceId) return 'duplicate_source_id'
+  if (duplicateBySourceId && !['closed', 'replaced', 'demolished'].includes(duplicateBySourceId.lifecycle_status)) return 'duplicate_source_id'
+  if (duplicateBySourceId) return 'replacement_candidate_ready'
   if (nearbyRows.length) return 'nearby_canonical_review'
   return 'candidate_ready'
 }
@@ -991,7 +998,11 @@ function annotateAcceptedSourceCoordinateDuplicates(candidates, duplicateRadiusM
   for (const candidate of candidates) {
     if (candidate.readiness !== 'candidate_ready') continue
     const duplicates = candidates
-      .filter(other => other !== candidate && other.source_id !== candidate.source_id)
+      .filter(other => (
+        other !== candidate
+        && other.source === candidate.source
+        && other.source_id !== candidate.source_id
+      ))
       .map(other => ({
         candidate: other,
         distanceM: sourceCandidateDistanceMeters(candidate, other),
@@ -1066,18 +1077,18 @@ async function buildReviewedNewImportPreflight(client, { entity, source, reportF
   const payloads = rows.rows.map(row => sourceReviewCandidatePayload(row))
   const googlePlaceIds = [...new Set(payloads.map(payload => payload.googlePlaceId).filter(Boolean))]
   const existingGooglePlaceIds = googlePlaceIds.length
-    ? new Set((await client.query(
-      `SELECT google_place_id FROM ${tableName} WHERE google_place_id = ANY($1::text[])`,
+    ? new Map((await client.query(
+      `SELECT google_place_id, id, name, lifecycle_status, lifecycle_replaced_by_id FROM ${tableName} WHERE google_place_id = ANY($1::text[])`,
       [googlePlaceIds],
-    )).rows.map(row => row.google_place_id))
-    : new Set()
+    )).rows.map(row => [row.google_place_id, row]))
+    : new Map()
   const canonicalPlaces = await loadSourceReviewCanonicalPlaces(client, tableName, payloads, nearbyRadiusM)
   const gridCellDegrees = 0.02
   const placeGrid = buildSourceReviewPlaceGrid(canonicalPlaces, gridCellDegrees)
 
   rows.rows.forEach((row, index) => {
     const payload = payloads[index]
-    const duplicateBySourceId = existingGooglePlaceIds.has(payload.googlePlaceId)
+    const duplicateBySourceId = existingGooglePlaceIds.get(payload.googlePlaceId) || null
     const nearbyRows = nearbySourceReviewPlacesFromGrid(placeGrid, payload, {
       radiusM: nearbyRadiusM,
       cellDegrees: gridCellDegrees,
@@ -1115,7 +1126,9 @@ async function buildReviewedNewImportPreflight(client, { entity, source, reportF
     return acc
   }, {})).map(([readiness, rows]) => ({ readiness, rows }))
 
-  const candidateReady = readinessCounts.find(row => row.readiness === 'candidate_ready')?.rows || 0
+  const candidateReady = readinessCounts
+    .filter(row => ['candidate_ready', 'replacement_candidate_ready'].includes(row.readiness))
+    .reduce((total, row) => total + row.rows, 0)
   return {
     generatedAt: new Date().toISOString(),
     entity,
@@ -1165,6 +1178,27 @@ async function importReviewedNewCandidate(client, tableName, row) {
     attribution: row.source,
   }
   const placeId = await allocateNextCanonicalPlaceId(client, tableName)
+  const existingResult = payload.googlePlaceId
+    ? await client.query(`
+        SELECT id, name, google_place_id, lifecycle_status
+        FROM ${tableName}
+        WHERE google_place_id = $1
+        FOR UPDATE
+      `, [payload.googlePlaceId])
+    : { rows: [] }
+  const historicalPlace = existingResult.rows[0] || null
+  if (historicalPlace && !['closed', 'replaced', 'demolished'].includes(historicalPlace.lifecycle_status)) {
+    const error = new Error('This source identity already belongs to an active place.')
+    error.status = 409
+    throw error
+  }
+  if (historicalPlace) {
+    await client.query(`
+      UPDATE ${tableName}
+      SET google_place_id = $2, updated_at = NOW()
+      WHERE id = $1
+    `, [historicalPlace.id, `historical:${payload.googlePlaceId}`])
+  }
 
   const insert = await client.query(`
     INSERT INTO ${tableName} (
@@ -1197,6 +1231,14 @@ async function importReviewedNewCandidate(client, tableName, row) {
   ])
 
   const place = insert.rows[0]
+
+  if (historicalPlace) {
+    await client.query(`
+      UPDATE ${tableName}
+      SET lifecycle_status = 'replaced', lifecycle_replaced_by_id = $2, updated_at = NOW()
+      WHERE id = $1
+    `, [historicalPlace.id, place.id])
+  }
 
   await client.query(`
     INSERT INTO place_sources (
@@ -1251,6 +1293,7 @@ async function importReviewedNewCandidate(client, tableName, row) {
     place_id: place.id,
     source_name: row.source_name,
     google_place_id: place.google_place_id,
+    replacement_of_place_id: historicalPlace?.id || null,
   }
 }
 
@@ -1278,7 +1321,7 @@ async function applyReviewedNewImports(client, { entity, source, reportFile, sta
     candidateSampleLimit: limit,
   })
   const readyIds = preflight.candidates
-    .filter(candidate => candidate.readiness === 'candidate_ready')
+    .filter(candidate => ['candidate_ready', 'replacement_candidate_ready'].includes(candidate.readiness))
     .map(candidate => candidate.review_id)
 
   if (!readyIds.length) {
@@ -1312,6 +1355,7 @@ async function applyReviewedNewImports(client, { entity, source, reportFile, sta
 
   const imported = []
   const skippedReasons = []
+  const acceptedBatchCandidates = []
   const countSkip = reason => {
     const existing = skippedReasons.find(row => row.reason === reason)
     if (existing) existing.rows += 1
@@ -1322,10 +1366,24 @@ async function applyReviewedNewImports(client, { entity, source, reportFile, sta
   try {
     for (const row of rowsResult.rows) {
       const payload = sourceReviewCandidatePayload(row)
+      const coordinates = { proposed_lat: payload.lat, proposed_lng: payload.lng }
+      const sameSourceCandidate = acceptedBatchCandidates
+        .filter(candidate => candidate.source === row.source)
+        .map(candidate => ({
+          candidate,
+          distanceM: sourceCandidateDistanceMeters(coordinates, candidate.coordinates),
+        }))
+        .filter(item => item.distanceM !== null && item.distanceM <= 25)
+        .sort((a, b) => a.distanceM - b.distanceM)[0]
+      if (sameSourceCandidate) {
+        countSkip('duplicate_accepted_source_coordinate')
+        continue
+      }
+      acceptedBatchCandidates.push({ source: row.source, coordinates })
       const duplicateBySourceId = await sourceReviewGooglePlaceIdExists(client, tableName, payload.googlePlaceId)
       const nearbyRows = await findNearbySourceReviewPlaces(client, tableName, payload, nearbyRadiusM)
       const readiness = reviewedNewImportReadiness(payload, duplicateBySourceId, nearbyRows)
-      if (readiness !== 'candidate_ready') {
+      if (!['candidate_ready', 'replacement_candidate_ready'].includes(readiness)) {
         countSkip(readiness)
         continue
       }
@@ -1426,6 +1484,8 @@ const sourceReviewPlaceSnapshot = place => ({
   address: place.address || null,
   state: place.state || null,
   status: place.status || null,
+  lifecycle_status: place.lifecycle_status || null,
+  lifecycle_replaced_by_id: place.lifecycle_replaced_by_id || null,
   website_url: place.website_url || null,
   phone: place.phone || null,
   address_source: place.address_source || null,
@@ -1447,6 +1507,7 @@ const sourceReviewCanUpdateExistingPlace = (row, place) => {
   const hasPersonalReview = place.status !== 'unvisited'
     || place.rating != null
     || Boolean(sourceReviewText(place.notes))
+  const hasHistoricalLifecycle = Boolean(sourceReviewText(place.lifecycle_status))
 
   return Boolean(
     row.status === 'pending'
@@ -1454,6 +1515,7 @@ const sourceReviewCanUpdateExistingPlace = (row, place) => {
     && exactOsmIdentity
     && sourceNameChanged
     && !hasPersonalReview
+    && !hasHistoricalLifecycle
   )
 }
 
@@ -2000,35 +2062,34 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
             approvedForImport: 0,
             lifecycle: 0,
           },
-          lifecycle: { replacements: 0, staleEvidence: 0 },
+          lifecycle: { replacements: 0, staleEvidence: 0, stalePlaces: 0, closedSignals: 0 },
           sourceRows: 0,
           linkedPlaces: 0,
           latestSourceUpdate: null,
         }
       }
 
-      const [queueResult, sourceResult, lifecycleResult] = await Promise.all([
-        client.query(`
-          SELECT
-            review_kind,
-            status,
-            ${sourceReviewReadinessSql} AS readiness,
-            COUNT(*)::int AS rows
-          FROM source_review_queue
-          WHERE entity_type = $1
-          GROUP BY review_kind, status, readiness
-        `, [entity]),
-        tables.has('place_sources')
-          ? client.query(`
-              SELECT
-                COUNT(*)::int AS source_rows,
-                COUNT(DISTINCT place_id)::int AS linked_places,
-                MAX(updated_at) AS latest_source_update
-              FROM place_sources
-              WHERE entity_type = $1
-            `, [entity])
-          : Promise.resolve({ rows: [{ source_rows: 0, linked_places: 0, latest_source_update: null }] }),
-        client.query(`
+      const queueResult = await client.query(`
+        SELECT
+          review_kind,
+          status,
+          ${sourceReviewReadinessSql} AS readiness,
+          COUNT(*)::int AS rows
+        FROM source_review_queue
+        WHERE entity_type = $1
+        GROUP BY review_kind, status, readiness
+      `, [entity])
+      const sourceResult = tables.has('place_sources')
+        ? await client.query(`
+            SELECT
+              COUNT(*)::int AS source_rows,
+              COUNT(DISTINCT place_id)::int AS linked_places,
+              MAX(updated_at) AS latest_source_update
+            FROM place_sources
+            WHERE entity_type = $1
+          `, [entity])
+        : { rows: [{ source_rows: 0, linked_places: 0, latest_source_update: null }] }
+      const lifecycleResult = await client.query(`
           SELECT COUNT(*) FILTER (
             WHERE srq.source_id = p.google_place_id
               AND lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))
@@ -2036,10 +2097,15 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           )::int AS replacements,
           ${tables.has('place_sources') ? `(
             SELECT COUNT(*)::int
-            FROM place_sources ps
-            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} stale_place ON stale_place.id = ps.place_id
-            WHERE ps.entity_type = $1
-              AND ps.retrieved_at < NOW() - make_interval(days => CASE ps.source
+            FROM (
+              SELECT DISTINCT ON (ps.place_id, ps.source)
+                     ps.place_id, ps.source, ps.retrieved_at
+              FROM place_sources ps
+              WHERE ps.entity_type = $1
+              ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+            ) latest_source
+            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} stale_place ON stale_place.id = latest_source.place_id
+            WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
                 WHEN 'osm' THEN 30
                 WHEN 'official_website' THEN 30
                 WHEN 'all_the_places' THEN 90
@@ -2048,15 +2114,50 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
                 WHEN 'wikidata' THEN 365
                 ELSE 180 END)
               AND lower(coalesce(stale_place.status, '')) NOT LIKE 'closed%'
-          )` : '0'}::int AS stale_evidence
+              AND COALESCE(stale_place.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+          )` : '0'}::int AS stale_evidence,
+          ${tables.has('place_sources') ? `(
+            SELECT COUNT(DISTINCT stale_place.id)::int
+            FROM (
+              SELECT DISTINCT ON (ps.place_id, ps.source)
+                     ps.place_id, ps.source, ps.retrieved_at
+              FROM place_sources ps
+              WHERE ps.entity_type = $1
+              ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+            ) latest_source
+            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} stale_place ON stale_place.id = latest_source.place_id
+            WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
+                WHEN 'osm' THEN 30
+                WHEN 'official_website' THEN 30
+                WHEN 'all_the_places' THEN 90
+                WHEN 'fsq_os_places' THEN 180
+                WHEN 'overture_places' THEN 365
+                WHEN 'wikidata' THEN 365
+                ELSE 180 END)
+              AND lower(coalesce(stale_place.status, '')) NOT LIKE 'closed%'
+              AND COALESCE(stale_place.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+          )` : '0'}::int AS stale_places
+          , ${tables.has('place_sources') ? `(
+            SELECT COUNT(*)::int
+            FROM (
+              SELECT DISTINCT ON (ps.place_id, ps.source)
+                     ps.place_id, ps.source, ps.retrieved_at, ps.data
+              FROM place_sources ps
+              WHERE ps.entity_type = $1
+              ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+            ) latest_closed_source
+            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} closed_place ON closed_place.id = latest_closed_source.place_id
+            WHERE lower(coalesce(closed_place.status, '')) NOT LIKE 'closed%'
+              AND COALESCE(closed_place.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+              AND latest_closed_source.data->>'is_closed' = 'true'
+          )` : '0'}::int AS closed_signals
           FROM source_review_queue srq
           JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = srq.nearest_place_id
           WHERE srq.entity_type = $1
             AND srq.status = 'pending'
             AND srq.review_kind = 'ambiguous'
             AND srq.source = 'osm'
-        `, [entity]),
-      ])
+      `, [entity])
 
       const countQueue = (reviewKind, status, readiness = null) => queueResult.rows
         .filter(row =>
@@ -2070,6 +2171,8 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
       const lifecycle = {
         replacements: normalizeCount(lifecycleTotals.replacements),
         staleEvidence: tables.has('place_sources') ? normalizeCount(lifecycleTotals.stale_evidence) : 0,
+        stalePlaces: tables.has('place_sources') ? normalizeCount(lifecycleTotals.stale_places) : 0,
+        closedSignals: tables.has('place_sources') ? normalizeCount(lifecycleTotals.closed_signals) : 0,
       }
 
       return {
@@ -2108,7 +2211,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           approvedForImport: 0,
           lifecycle: 0,
         },
-        lifecycle: { replacements: 0, staleEvidence: 0 },
+          lifecycle: { replacements: 0, staleEvidence: 0, stalePlaces: 0, closedSignals: 0 },
         sourceRows: 0,
         linkedPlaces: 0,
         latestSourceUpdate: null,
@@ -2318,7 +2421,9 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
           nearest.google_place_id AS nearest_current_google_place_id,
           nearest.lat AS nearest_lat,
           nearest.lng AS nearest_lng,
-          nearest.status AS nearest_status,
+            nearest.status AS nearest_status,
+          nearest.lifecycle_status AS nearest_lifecycle_status,
+          nearest.lifecycle_replaced_by_id AS nearest_lifecycle_replaced_by_id,
           nearest.rating AS nearest_rating,
           nearest.notes AS nearest_notes,
           nearest.website_url AS nearest_website_url,
@@ -2644,6 +2749,103 @@ app.patch('/api/admin/source-review-queue/:id/reclassify-likely-new', requireAdm
   }
 })
 
+app.patch('/api/admin/source-review-queue/:id/reclassify-replacement', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  const reviewerNotes = typeof req.body?.reviewerNotes === 'string'
+    ? req.body.reviewerNotes.trim().slice(0, 1000)
+    : null
+
+  if (!id) return res.status(400).json({ error: 'Invalid source review queue id.' })
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      await client.query('BEGIN')
+      try {
+        const current = await client.query(`
+          SELECT *
+          FROM source_review_queue
+          WHERE id = $1
+          FOR UPDATE
+        `, [id])
+        const row = current.rows[0]
+        if (!row) {
+          const error = new Error('Source review queue row not found.')
+          error.status = 404
+          throw error
+        }
+        if (row.status !== 'pending' || row.review_kind !== 'ambiguous' || row.source !== 'osm' || !row.nearest_place_id) {
+          const error = new Error('Only pending exact OpenStreetMap matches can be recorded as business replacements.')
+          error.status = 400
+          throw error
+        }
+
+        const canonicalResult = await client.query(`
+          SELECT id, name, google_place_id, status, rating, notes, lifecycle_status
+          FROM ${SOURCE_REVIEW_ENTITY_TABLES[row.entity_type]}
+          WHERE id = $1
+          FOR UPDATE
+        `, [row.nearest_place_id])
+        const canonical = canonicalResult.rows[0]
+        const exactIdentity = canonical
+          && sourceReviewText(row.source_id) === sourceReviewText(canonical.google_place_id)
+        const changedName = canonical
+          && sourceReviewComparableText(canonicalSourceReviewName(row)) !== sourceReviewComparableText(canonical.name)
+        if (!canonical || !exactIdentity || !changedName) {
+          const error = new Error('This row is not an exact OpenStreetMap identity change.')
+          error.status = 409
+          throw error
+        }
+        if (canonical.lifecycle_status) {
+          const error = new Error('This place already has a lifecycle decision.')
+          error.status = 409
+          throw error
+        }
+
+        await client.query(`
+          UPDATE ${SOURCE_REVIEW_ENTITY_TABLES[row.entity_type]}
+          SET lifecycle_status = 'closed', updated_at = NOW()
+          WHERE id = $1
+        `, [canonical.id])
+        const updated = await client.query(`
+          UPDATE source_review_queue
+          SET
+            review_kind = 'likely_new',
+            decision = NULL,
+            canonical_place_id = NULL,
+            reviewer_notes = COALESCE(NULLIF($2, ''), reviewer_notes),
+            reviewed_at = NULL,
+            reviewed_by = 'admin:reclassified-replacement',
+            updated_at = NOW()
+          WHERE id = $1
+          RETURNING *
+        `, [id, reviewerNotes])
+
+        await recordSourceReviewDecision(client, row, {
+          review_kind: 'likely_new',
+          status: 'pending',
+          decision: 'business_replacement',
+          canonical_place_id: canonical.id,
+          reviewer_notes: reviewerNotes,
+          reviewed_by: 'admin:reclassified-replacement',
+        }, 'reclassify_business_replacement', {
+          canonicalBefore: sourceReviewPlaceSnapshot(canonical),
+          canonicalAfter: { ...sourceReviewPlaceSnapshot(canonical), lifecycle_status: 'closed' },
+        })
+
+        await client.query('COMMIT')
+        return { data: updated.rows[0], closedPlaceId: canonical.id }
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {})
+        throw error
+      }
+    })
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review replacement reclassify error', error)
+    return res.status(error.status || 500).json({ error: error.message || 'Failed to record the business replacement.' })
+  }
+})
+
 app.get('/api/admin/source-review-queue/:id/history', requireAdminAuth, async (req, res) => {
   const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
   if (!id) return res.status(400).json({ error: 'Invalid source review queue id.' })
@@ -2811,6 +3013,7 @@ app.patch('/api/admin/source-review-queue/:id/update-existing', requireAdminAuth
         const canonicalResult = await client.query(`
           SELECT
             id, name, lat, lng, address, state, status, rating, notes,
+            lifecycle_status, lifecycle_replaced_by_id,
             website_url, phone, address_source,
             style, price_range, style_confidence,
             enrichment_status, last_enriched_at, scrape_method, scrape_notes,
@@ -2860,6 +3063,7 @@ app.patch('/api/admin/source-review-queue/:id/update-existing', requireAdminAuth
           WHERE id = $1
           RETURNING
             id, name, lat, lng, address, state, status, rating, notes,
+            lifecycle_status, lifecycle_replaced_by_id,
             website_url, phone, address_source,
             style, price_range, style_confidence,
             enrichment_status, last_enriched_at, scrape_method, scrape_notes,
@@ -2919,6 +3123,222 @@ app.patch('/api/admin/source-review-queue/:id/update-existing', requireAdminAuth
   } catch (error) {
     console.error('[admin] source review update existing place error', error)
     return res.status(error.status || 500).json({ error: error.message || 'Failed to update the existing place.' })
+  }
+})
+
+app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) => {
+  const entity = req.query.entity === 'taco' ? 'taco' : 'pizza'
+  const kind = String(req.query.kind || 'replacements').trim().toLowerCase()
+  const limit = safeInteger(req.query.limit, 50, { min: 1, max: 100 })
+  const tableName = SOURCE_REVIEW_ENTITY_TABLES[entity]
+  const allowedKinds = new Set(['replacements', 'stale', 'closed', 'conflicts'])
+
+  if (!allowedKinds.has(kind)) return res.status(400).json({ error: 'Invalid lifecycle candidate kind.' })
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      const tables = await client.query(`
+        SELECT to_regclass('public.place_sources') IS NOT NULL AS place_sources,
+               to_regclass('public.source_review_queue') IS NOT NULL AS review_queue
+      `)
+      const available = tables.rows[0] || {}
+      if (kind === 'replacements' && !available.review_queue) {
+        return { entity, kind, available: false, total: 0, rows: [] }
+      }
+      if (kind !== 'replacements' && !available.place_sources) {
+        return { entity, kind, available: false, total: 0, rows: [] }
+      }
+
+      if (kind === 'replacements') {
+        const where = `
+          srq.entity_type = $1
+          AND srq.status = 'pending'
+          AND srq.review_kind = 'ambiguous'
+          AND srq.source = 'osm'
+          AND srq.source_id = p.google_place_id
+          AND lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))
+            <> lower(regexp_replace(coalesce(p.name, ''), '[^a-z0-9]+', ' ', 'g'))
+        `
+        const [total, rows] = await Promise.all([
+          client.query(`SELECT COUNT(*)::int AS total FROM source_review_queue srq JOIN ${tableName} p ON p.id = srq.nearest_place_id WHERE ${where}`, [entity]),
+          client.query(`
+            SELECT srq.id AS review_id, srq.source, srq.source_name, srq.source_id,
+                   p.id AS place_id, p.name AS current_name, p.address,
+                   p.status, p.rating, p.lifecycle_status,
+                   CASE WHEN p.status <> 'unvisited' OR p.rating IS NOT NULL
+                          OR NULLIF(btrim(p.notes), '') IS NOT NULL
+                        THEN 'history_requires_review'
+                        ELSE 'safe_unreviewed_update'
+                   END AS handling
+            FROM source_review_queue srq
+            JOIN ${tableName} p ON p.id = srq.nearest_place_id
+            WHERE ${where}
+            ORDER BY srq.id
+            LIMIT $2
+          `, [entity, limit]),
+        ])
+        return { entity, kind, available: true, total: Number(total.rows[0]?.total || 0), rows: rows.rows }
+      }
+
+      const latestSourceSql = `
+        WITH latest_source AS (
+          SELECT DISTINCT ON (ps.place_id, ps.source)
+                 ps.entity_type, ps.place_id, ps.source, ps.retrieved_at
+          FROM place_sources ps
+          WHERE ps.entity_type = $1
+          ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+        )
+      `
+      if (kind === 'stale') {
+        const where = `
+          latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
+            WHEN 'osm' THEN 30 WHEN 'official_website' THEN 30 WHEN 'all_the_places' THEN 90
+            WHEN 'fsq_os_places' THEN 180 WHEN 'overture_places' THEN 365 WHEN 'wikidata' THEN 365 ELSE 180 END)
+          AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+          AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+        `
+        const [total, rows] = await Promise.all([
+          client.query(`${latestSourceSql} SELECT COUNT(*)::int AS total FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id WHERE latest_source.entity_type = $1 AND ${where}`, [entity]),
+          client.query(`${latestSourceSql}
+            SELECT p.id AS place_id, p.name, p.state, p.status, latest_source.source, latest_source.retrieved_at,
+                   CASE latest_source.source WHEN 'osm' THEN 30 WHEN 'official_website' THEN 30 WHEN 'all_the_places' THEN 90
+                     WHEN 'fsq_os_places' THEN 180 WHEN 'overture_places' THEN 365 WHEN 'wikidata' THEN 365 ELSE 180 END AS freshness_days
+            FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id
+            WHERE latest_source.entity_type = $1 AND ${where}
+            ORDER BY latest_source.retrieved_at NULLS FIRST
+            LIMIT $2
+          `, [entity, limit]),
+        ])
+        return { entity, kind, available: true, total: Number(total.rows[0]?.total || 0), rows: rows.rows }
+      }
+
+      if (kind === 'closed') {
+        const latestClosedSourceSql = `
+          WITH latest_closed_source AS (
+            SELECT DISTINCT ON (ps.place_id, ps.source)
+                   ps.entity_type, ps.place_id, ps.source, ps.source_id,
+                   ps.source_url, ps.retrieved_at, ps.match_method, ps.data
+            FROM place_sources ps
+            WHERE ps.entity_type = $1
+            ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+          )
+        `
+        const where = `
+          lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+          AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+          AND latest_closed_source.data->>'is_closed' = 'true'
+        `
+        const [total, rows] = await Promise.all([
+          client.query(`${latestClosedSourceSql} SELECT COUNT(*)::int AS total FROM latest_closed_source JOIN ${tableName} p ON p.id = latest_closed_source.place_id WHERE ${where}`, [entity]),
+          client.query(`${latestClosedSourceSql}
+            SELECT p.id AS place_id, p.name, p.state, p.status,
+                   latest_closed_source.source, latest_closed_source.source_id,
+                   latest_closed_source.source_url, latest_closed_source.retrieved_at,
+                   latest_closed_source.match_method
+            FROM latest_closed_source JOIN ${tableName} p ON p.id = latest_closed_source.place_id
+            WHERE ${where}
+            ORDER BY latest_closed_source.retrieved_at DESC NULLS LAST
+            LIMIT $2
+          `, [entity, limit]),
+        ])
+        return { entity, kind, available: true, total: Number(total.rows[0]?.total || 0), rows: rows.rows }
+      }
+
+      const candidates = `
+        WITH candidates AS (
+          SELECT id, name, state, lat, lng,
+                 ROUND(lat::numeric, 4) AS lat_bucket,
+                 ROUND(lng::numeric, 4) AS lng_bucket,
+                 lower(regexp_replace(coalesce(name, ''), '[^a-z0-9]+', ' ', 'g')) AS normalized_name
+          FROM ${tableName}
+          WHERE lat IS NOT NULL AND lng IS NOT NULL
+        )
+      `
+      const where = `
+        b.id > a.id AND b.lat_bucket = a.lat_bucket AND b.lng_bucket = a.lng_bucket
+        AND COALESCE(a.state, '') = COALESCE(b.state, '')
+        AND ABS(a.lat - b.lat) < 0.00015 AND ABS(a.lng - b.lng) < 0.00015
+        AND a.normalized_name <> b.normalized_name
+      `
+      const [total, rows] = await Promise.all([
+        client.query(`${candidates} SELECT COUNT(*)::int AS total FROM candidates a JOIN candidates b ON ${where}`, []),
+        client.query(`${candidates}
+          SELECT a.id AS first_place_id, a.name AS first_name, b.id AS second_place_id, b.name AS second_name, a.state,
+                 ROUND((ABS(a.lat - b.lat) * 111000)::numeric, 1) AS latitude_gap_m,
+                 ROUND((ABS(a.lng - b.lng) * 111000 * COS(RADIANS(a.lat)))::numeric, 1) AS longitude_gap_m
+          FROM candidates a JOIN candidates b ON ${where}
+          ORDER BY a.id, b.id
+          LIMIT $1
+        `, [limit]),
+      ])
+      return { entity, kind, available: true, total: Number(total.rows[0]?.total || 0), rows: rows.rows }
+    })
+    return res.json({ data: payload })
+  } catch (error) {
+    console.error('[admin] lifecycle candidates error', error)
+    return res.status(error.status || 503).json({ error: error.message || 'Lifecycle candidates are unavailable.' })
+  }
+})
+
+app.patch('/api/admin/places/:id/lifecycle', requireAdminAuth, async (req, res) => {
+  const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  const entity = req.body?.entity === 'taco' ? 'taco' : 'pizza'
+  const status = String(req.body?.lifecycleStatus || 'active').trim().toLowerCase()
+  const replacementId = req.body?.replacedByPlaceId == null || req.body?.replacedByPlaceId === ''
+    ? null
+    : safeInteger(req.body.replacedByPlaceId, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
+  const tableName = SOURCE_REVIEW_ENTITY_TABLES[entity]
+  const allowedStatuses = new Set(['active', 'closed', 'replaced', 'demolished'])
+
+  if (!id) return res.status(400).json({ error: 'Invalid place id.' })
+  if (!allowedStatuses.has(status)) return res.status(400).json({ error: 'Invalid lifecycle status.' })
+  if (status === 'replaced' && !replacementId) return res.status(400).json({ error: 'A replacement place is required.' })
+  if (status !== 'replaced' && replacementId) return res.status(400).json({ error: 'A replacement place is only valid for replaced places.' })
+  if (replacementId === id) return res.status(400).json({ error: 'A place cannot replace itself.' })
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      const current = await client.query(`
+        SELECT id, name, lifecycle_status, lifecycle_replaced_by_id
+        FROM ${tableName}
+        WHERE id = $1
+      `, [id])
+      if (!current.rows[0]) {
+        const error = new Error('Place not found.')
+        error.status = 404
+        throw error
+      }
+      if (replacementId) {
+        const replacement = await client.query(`
+          SELECT id, lifecycle_status
+          FROM ${tableName}
+          WHERE id = $1
+        `, [replacementId])
+        if (!replacement.rows[0]) {
+          const error = new Error('Replacement place not found.')
+          error.status = 404
+          throw error
+        }
+        if (replacement.rows[0].lifecycle_status) {
+          const error = new Error('Replacement place must be active or unclassified.')
+          error.status = 409
+          throw error
+        }
+      }
+      const updated = await client.query(`
+        UPDATE ${tableName}
+        SET lifecycle_status = $2,
+            lifecycle_replaced_by_id = $3,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, name, lifecycle_status, lifecycle_replaced_by_id, updated_at
+      `, [id, status === 'active' ? null : status, status === 'replaced' ? replacementId : null])
+      return { data: updated.rows[0] }
+    })
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] lifecycle update error', error)
+    return res.status(error.status || 503).json({ error: error.message || 'Failed to update place lifecycle.' })
   }
 })
 

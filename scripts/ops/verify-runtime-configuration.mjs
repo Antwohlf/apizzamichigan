@@ -64,23 +64,21 @@ function main() {
   assert(!menuParser.includes('OLLAMA_'), 'menu parser must not depend on Ollama');
 
   const classifier = read('infra/local/launchd/com.apizzamichigan.classifier.plist.template');
-  const classifierTwo = read('infra/local/launchd/com.apizzamichigan.classifier-2.plist.template');
-  for (const [name, text, workerId] of [
-    ['classifier', classifier, 'launchd-classify'],
-    ['classifier-2', classifierTwo, 'launchd-classify-2'],
-  ]) {
-    assert(text.includes('llm-classifier.mjs'), `${name} must run the LLM classifier`);
-    assert(text.includes(`--worker-id ${workerId}`), `${name} must declare worker id ${workerId}`);
-    assert(text.includes('<key>KeepAlive</key>'), `${name} must be self-healing with KeepAlive`);
-    assert(text.includes('<string>llama3.2:latest</string>'), `${name} must use the approved local model`);
-    assert(text.includes('<string>http://127.0.0.1:11435</string>'), `${name} must use the forwarded Ollama endpoint`);
-  }
+  assert(classifier.includes('llm-classifier.mjs'), 'classifier must run the LLM classifier');
+  assert(classifier.includes('--worker-id launchd-classify'), 'classifier must declare the primary worker id');
+  assert(classifier.includes('<key>KeepAlive</key>'), 'classifier must be self-healing with KeepAlive');
+  assert(classifier.includes('<string>llama3.2:latest</string>'), 'classifier must use the approved local model');
+  assert(classifier.includes('<string>http://127.0.0.1:11435</string>'), 'classifier must use the forwarded Ollama endpoint');
 
   const tunnel = read('infra/local/launchd/com.apizzamichigan.laptop-ollama-tunnel.plist.template');
   assert(tunnel.includes('<key>KeepAlive</key>'), 'laptop Ollama tunnel must be self-healing with KeepAlive');
   assert(tunnel.includes('ExitOnForwardFailure=yes'), 'laptop Ollama tunnel must fail fast when forwarding is unavailable');
   assert(tunnel.includes('ServerAliveInterval=30'), 'laptop Ollama tunnel must send SSH keepalives');
   assert(tunnel.includes('127.0.0.1:11435:127.0.0.1:11434'), 'laptop Ollama tunnel endpoint must remain stable');
+
+  const sync = read('infra/local/launchd/com.apizzamichigan.supabase-sync.plist.template');
+  assert(sync.includes('<key>ENABLE_LIFECYCLE_SYNC</key>'), 'Supabase sync must explicitly enable lifecycle publication');
+  assert(sync.includes('<string>1</string>'), 'Supabase sync lifecycle publication must be enabled');
 
   const gitignore = read('.gitignore');
   assert(gitignore.split('\n').some(line => line.trim() === '.env'), '.gitignore must protect .env');

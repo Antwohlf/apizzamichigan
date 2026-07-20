@@ -171,7 +171,11 @@ async function loadReviewedNewRows(client, args) {
     LEFT JOIN source_review_queue srq
       ON srq.entity_type = ps.entity_type
      AND srq.source = ps.source
-     AND srq.source_id = ps.source_id
+     AND ps.source_id = CASE
+       WHEN srq.source = 'osm' THEN regexp_replace(srq.source_id, '^osm:', '')
+       ELSE ps.source_id
+     END
+     AND srq.id = NULLIF(ps.data #>> '{review,queue_id}', '')::bigint
      AND srq.review_kind = 'likely_new'
     WHERE ${filters.join('\n      AND ')}
     ORDER BY ps.place_id

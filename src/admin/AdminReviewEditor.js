@@ -294,6 +294,7 @@ export default function AdminReviewEditor({
           accept="image/*,.heic,.heif"
           multiple
           onChange={handleFileInputChange}
+          aria-label="Choose review photos"
           style={{ display: 'none' }}
         />
       </div>

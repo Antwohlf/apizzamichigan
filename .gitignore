@@ -26,6 +26,7 @@ __pycache__/
 /scripts/.osm-id-cache.json
 /scripts/.job-queue.db
 /scripts/.job-queue.db-*
+/scripts/.job-queue.db.writer-lock/
 /scripts/.job-queue.db-shm
 /scripts/.job-queue.db-wal
 /scripts/.*-progress.json

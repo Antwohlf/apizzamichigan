@@ -18,6 +18,7 @@ import {
   safeExternalUrl,
   sourceAddress,
   canUpdateExactOsmPlace,
+  canRecordBusinessReplacement,
   sourceCoordinates,
   sourceLabel,
   sourcePhone,
@@ -53,6 +54,16 @@ const reviewEvidenceLabel = value => {
   return 'One detail agrees'
 }
 
+function useModalEscape(onCancel) {
+  useEffect(() => {
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onCancel])
+}
+
 const aiDecisionLabel = decision => ({
   same_place: 'Same place suggested',
   different_place: 'Different place suggested',
@@ -70,6 +81,7 @@ function ComparisonRow({ label, value, different }) {
 }
 
 function ConfirmationDialog({ row, busy, onCancel, onConfirm }) {
+  useModalEscape(onCancel)
   if (!row) return null
   return (
     <div className="admin-modal" role="presentation">
@@ -92,7 +104,7 @@ function ConfirmationDialog({ row, busy, onCancel, onConfirm }) {
         </p>
         <div className="admin-modal__actions">
           <button className="admin-button admin-button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy}>
+          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy} autoFocus>
             {busy ? 'Linking…' : 'Confirm same place'}
           </button>
         </div>
@@ -102,6 +114,7 @@ function ConfirmationDialog({ row, busy, onCancel, onConfirm }) {
 }
 
 function UpdateExistingDialog({ row, busy, onCancel, onConfirm }) {
+  useModalEscape(onCancel)
   if (!row) return null
   return (
     <div className="admin-modal" role="presentation">
@@ -117,14 +130,41 @@ function UpdateExistingDialog({ row, busy, onCancel, onConfirm }) {
           Update <strong>{row.nearest_place_name}</strong> to <strong>{row.source_name || row.source_id}</strong>?
           Both records use the same OpenStreetMap ID.
         </p>
+        {row.nearest_lifecycle_status ? (
+          <p>This place is marked {row.nearest_lifecycle_status}; it must remain historical and cannot be updated in place.</p>
+        ) : null}
         <p>
           This replaces the name and current source details, clears stale enrichment, and marks the place for fresh enrichment.
           It does not change the map record ID. This action is available only for unreviewed places without a rating or notes.
         </p>
         <div className="admin-modal__actions">
           <button className="admin-button admin-button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy}>
+          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy} autoFocus>
             {busy ? 'Updating…' : `Update to ${row.source_name || 'new business'}`}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function ReplacementDialog({ row, busy, onCancel, onConfirm }) {
+  useModalEscape(onCancel)
+  if (!row) return null
+  return (
+    <div className="admin-modal" role="presentation">
+      <button className="admin-scrim" type="button" onClick={onCancel} aria-label="Cancel business replacement" />
+      <section className="admin-modal__panel" role="dialog" aria-modal="true" aria-labelledby="replacement-title">
+        <h2 id="replacement-title">Record a business replacement?</h2>
+        <p>
+          Keep <strong>{row.nearest_place_name}</strong> as a historical place and move
+          <strong> {row.source_name || row.source_id}</strong> into the new-place workflow?
+        </p>
+        <p>The old place will be marked closed. You can then approve the new business separately.</p>
+        <div className="admin-modal__actions">
+          <button className="admin-button admin-button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy} autoFocus>
+            {busy ? 'Recording…' : 'Record replacement'}
           </button>
         </div>
       </section>
@@ -155,6 +195,7 @@ export default function AdminDataReviewPanel({ entity }) {
   const [notes, setNotes] = useState('')
   const [linkConfirmation, setLinkConfirmation] = useState(null)
   const [updateConfirmation, setUpdateConfirmation] = useState(null)
+  const [replacementConfirmation, setReplacementConfirmation] = useState(null)
   const [lastDecision, setLastDecision] = useState(null)
   const [history, setHistory] = useState({ open: false, loading: false, rows: [], error: '' })
   const [aiAssessment, setAiAssessment] = useState({ loading: false, data: null, error: '' })
@@ -363,6 +404,31 @@ export default function AdminDataReviewPanel({ entity }) {
     } finally {
       setBusy(false)
       setUpdateConfirmation(null)
+    }
+  }
+
+  const recordReplacement = async row => {
+    if (!row || busy) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/admin/source-review-queue/${row.id}/reclassify-replacement`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reviewerNotes: notes.trim() || null }),
+      })
+      if (!response.ok) throw new Error(await response.text() || 'The replacement could not be recorded.')
+      setMessage('Old place marked closed; new business moved to the approval queue.')
+      setLastDecision(null)
+      advanceAfter(row.id)
+      setRefreshKey(value => value + 1)
+    } catch (err) {
+      setError(err?.message || 'The replacement could not be recorded.')
+    } finally {
+      setBusy(false)
+      setReplacementConfirmation(null)
     }
   }
 
@@ -665,9 +731,16 @@ export default function AdminDataReviewPanel({ entity }) {
                     </button>
                   </>
                 ) : (
-                  <button className="admin-button admin-button--primary" type="button" onClick={() => setLinkConfirmation(selected)} disabled={busy}>
-                    Same place
-                  </button>
+                  <>
+                    <button className="admin-button admin-button--primary" type="button" onClick={() => setLinkConfirmation(selected)} disabled={busy}>
+                      Same place
+                    </button>
+                    {activeQueue.id === 'matches' && canRecordBusinessReplacement(selected) ? (
+                      <button className="admin-button" type="button" onClick={() => setReplacementConfirmation(selected)} disabled={busy}>
+                        Business replaced
+                      </button>
+                    ) : null}
+                  </>
                 )
               ) : null}
               {activeQueue.id === 'matches' ? (
@@ -788,6 +861,12 @@ export default function AdminDataReviewPanel({ entity }) {
         busy={busy}
         onCancel={() => setUpdateConfirmation(null)}
         onConfirm={() => updateExisting(updateConfirmation)}
+      />
+      <ReplacementDialog
+        row={replacementConfirmation}
+        busy={busy}
+        onCancel={() => setReplacementConfirmation(null)}
+        onConfirm={() => recordReplacement(replacementConfirmation)}
       />
     </div>
   )

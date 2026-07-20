@@ -40,6 +40,12 @@ and lower-priority evidence must not overwrite newer higher-priority evidence.
 The report's `eligible_rows` count is the operational intersection of each
 source's configured freshness window and minimum match confidence. Its
 confidence-band counts are diagnostic only; they do not authorize promotion.
+The report also includes `fresh_ratio_percent`, which measures current refresh
+coverage across the scoped evidence rows. A rotating source such as OSM can
+legitimately have many older rows while its regional tile cycle is still
+healthy; the operational alert therefore warns when a source has no fresh
+evidence or when stale coverage exceeds its configured ratio threshold, rather
+than treating the historical row count alone as a failure.
 The promotion CLI applies the same freshness, source-priority, match-method,
 and confidence rules again at query time, so a report cannot become a stale
 authorization to mutate canonical data.

@@ -139,6 +139,7 @@ function parseArgs(argv) {
     limit: 1000,
     sample: 20,
     includeNonPizza: false,
+    closedOnly: false,
     includeWeak: false,
     apply: false,
     reviewOutput: null,
@@ -158,6 +159,7 @@ function parseArgs(argv) {
     else if (arg === '--limit') out.limit = parseInt(argv[++i], 10);
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--include-non-pizza') out.includeNonPizza = true;
+    else if (arg === '--closed-only') out.closedOnly = true;
     else if (arg === '--include-weak') out.includeWeak = true;
     else if (arg === '--apply') out.apply = true;
     else if (arg === '--review-output') out.reviewOutput = argv[++i];
@@ -202,6 +204,7 @@ Options:
   --limit <n>               Maximum source rows to inspect (default 1000)
   --sample <n>              Detail rows to print per bucket (default 20)
   --include-non-pizza       Compare all active records, not just pizza-ish rows
+  --closed-only             Process only closed source evidence; skip active rows
   --include-weak            Include weak_spatial_name matches in import set
   --apply                   Upsert accepted matched records into place_sources
   --review-output <file>    Write ambiguous/new review candidates to JSON
@@ -408,7 +411,14 @@ function firstUrl(value) {
   return values[0] || value || null;
 }
 
-function normalizeSourceRow(row, sourceKey) {
+function isClosedDateValue(value) {
+  const text = String(value ?? '').trim();
+  if (!text || ['null', 'none', 'unknown', 'n/a', 'not available'].includes(text.toLowerCase())) return false;
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) || parsed <= Date.now();
+}
+
+export function normalizeSourceRow(row, sourceKey) {
   const config = SOURCE_CONFIGS[sourceKey];
   const map = caseMap(row);
   const lat = Number(valueFor(map, config.lat));
@@ -425,8 +435,7 @@ function normalizeSourceRow(row, sourceKey) {
   const closedValue = normalizeText(rawClosedValue);
   const flags = flattenStrings(valueFor(map, config.flags)).map(normalizeText);
   const hasClosedDate = ['all_the_places', 'fsq_os_places'].includes(sourceKey)
-    && rawClosedValue != null
-    && String(rawClosedValue).trim() !== '';
+    && isClosedDateValue(rawClosedValue);
 
   return {
     source: sourceKey,
@@ -448,7 +457,16 @@ function normalizeSourceRow(row, sourceKey) {
     confidence: Number(valueFor(map, config.confidence)),
     is_closed: hasClosedDate || Boolean(
       closedValue &&
-      ['closed', 'permanently closed', 'permanently_closed', 'inactive', 'out of business'].some(term => closedValue.includes(term))
+      [
+        'closed',
+        'permanently closed',
+        'permanently_closed',
+        'inactive',
+        'out of business',
+        'disused',
+        'abandoned',
+        'demolished',
+      ].some(term => closedValue.includes(term))
     ) || flags.some(flag => ['closed', 'delete', 'doesnt exist'].includes(flag)),
   };
 }
@@ -480,7 +498,31 @@ function isPizzaCandidate(candidate) {
   return PIZZA_TERMS.some(term => haystack.includes(term));
 }
 
-function matchMethod(distanceM, score) {
+export function normalizeSourcePhone(value) {
+  const digits = String(value || '').replace(/\D/g, '')
+  return digits.length >= 7 ? digits.slice(-10) : ''
+}
+
+export function normalizeSourceUrl(value) {
+  return String(value || '').trim().toLowerCase()
+    .replace(/^https?:\/\/(www\.)?/, '')
+    .replace(/\/+$/, '')
+}
+
+export function sourceIdentifierMatch(candidate, place) {
+  const sourcePhone = normalizeSourcePhone(candidate?.phone)
+  const placePhone = normalizeSourcePhone(place?.phone)
+  const sourceWebsite = normalizeSourceUrl(candidate?.website)
+  const placeWebsite = normalizeSourceUrl(place?.website_url)
+  const websiteMatches = Boolean(
+    sourceWebsite && placeWebsite && sourceWebsite === placeWebsite && sourceWebsite.includes('/')
+  )
+  const phoneMatches = Boolean(sourcePhone && placePhone && sourcePhone === placePhone)
+  return { website: websiteMatches, phone: phoneMatches, exact: websiteMatches || phoneMatches }
+}
+
+export function sourceMatchMethod(distanceM, score, identifierMatch = false) {
+  if (identifierMatch && distanceM <= 100) return 'exact_identifier_nearby'
   if (distanceM <= 25 && score >= 0.99) return 'exact_name_nearby';
   if (distanceM <= 75 && score >= 0.99) return 'strong_spatial_name';
   if (distanceM <= 50 && score >= 0.6) return 'strong_spatial_name';
@@ -503,11 +545,13 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
 function matchConfidence(match) {
   const distanceScore = Math.max(0, 1 - (match.distance_m / 100));
   const confidence = (match.name_score * 0.75) + (distanceScore * 0.25);
+  if (match.match_method === 'exact_identifier_nearby') return Math.max(0.9, confidence);
   return Math.max(0.0001, Math.min(1, confidence));
 }
 
 function acceptedForImport(match, { includeWeak }) {
   if (!match) return false;
+  if (match.match_method === 'exact_identifier_nearby') return true;
   if (match.match_method === 'exact_name_nearby') return true;
   if (match.match_method === 'strong_spatial_name') return true;
   return includeWeak && match.match_method === 'weak_spatial_name';
@@ -583,6 +627,8 @@ async function loadCanonicalPlaces(client, tableName, candidates, { maxDistanceM
         c.address,
         c.state,
         c.google_place_id,
+        c.website_url,
+        c.phone,
         c.lat::double precision AS lat,
         c.lng::double precision AS lng
       FROM ${tableName} c
@@ -636,6 +682,7 @@ function nearbyPlacesFromGrid(grid, candidate, { maxDistanceM, cellDegrees }) {
             ...place,
             distance_m: distanceM,
             name_score: nameScore(candidate.name, place.name),
+            identifier_match: sourceIdentifierMatch(candidate, place),
           });
         }
       }
@@ -650,7 +697,7 @@ function nearbyPlacesFromGrid(grid, candidate, { maxDistanceM, cellDegrees }) {
 function bestMatch(nearby) {
   if (!nearby.length) return null;
   return nearby
-    .map(row => ({ ...row, match_method: matchMethod(row.distance_m, row.name_score) }))
+    .map(row => ({ ...row, match_method: sourceMatchMethod(row.distance_m, row.name_score, row.identifier_match?.exact) }))
     .sort((a, b) => {
       const aGood = a.match_method === 'no_match' ? 0 : 1;
       const bGood = b.match_method === 'no_match' ? 0 : 1;
@@ -683,6 +730,7 @@ function sourceData(candidate) {
     country: candidate.country,
     website: candidate.website,
     phone: candidate.phone,
+    is_closed: Boolean(candidate.is_closed),
   };
 }
 
@@ -713,6 +761,7 @@ function sourceRecordData(candidate, match) {
     spider: candidate.spider,
     source_url: sourceUrl(candidate),
     confidence: Number.isFinite(candidate.confidence) ? candidate.confidence : null,
+    is_closed: Boolean(candidate.is_closed),
     matched_place: {
       id: match.id,
       name: match.name,
@@ -779,7 +828,7 @@ async function upsertPlaceSources(client, { args, config, importable }) {
       config.attribution,
       JSON.stringify(sourceRecordData(candidate, match)),
       matchConfidence(match),
-      match.match_method,
+      candidate.is_closed ? `closed_signal:${match.match_method}` : match.match_method,
     ]);
     written += result.rowCount;
   }
@@ -800,9 +849,10 @@ function reviewCandidate(kind, item) {
         id: match.id,
         name: match.name,
         google_place_id: match.google_place_id,
-        distance_m: Number(match.distance_m.toFixed(3)),
-        name_score: Number(match.name_score.toFixed(4)),
-        review_reason: match.match_method,
+      distance_m: Number(match.distance_m.toFixed(3)),
+      name_score: Number(match.name_score.toFixed(4)),
+      identifier_match: match.identifier_match || { website: false, phone: false, exact: false },
+      review_reason: match.match_method,
       },
     };
   }
@@ -850,9 +900,13 @@ async function main() {
   const scope = loadScopeConfig(args.scopeConfig);
   const rows = readRecords(args.input, args.limit);
   const normalized = rows.map(row => normalizeSourceRow(row, args.source));
-  const active = normalized.filter(candidate => candidate.name && candidate.lat !== null && candidate.lng !== null && !candidate.is_closed);
+  const usable = normalized.filter(candidate => candidate.name && candidate.lat !== null && candidate.lng !== null);
+  const active = args.closedOnly ? [] : usable.filter(candidate => !candidate.is_closed);
+  const closed = usable.filter(candidate => candidate.is_closed);
   const inScope = args.allowOutOfScope ? active : active.filter(candidate => isWithinScope(candidate, scope));
+  const closedInScope = args.allowOutOfScope ? closed : closed.filter(candidate => isWithinScope(candidate, scope));
   const candidates = args.includeNonPizza ? inScope : inScope.filter(isPizzaCandidate);
+  const closedCandidates = args.includeNonPizza ? closedInScope : closedInScope.filter(isPizzaCandidate);
 
   const client = new pg.Client(dbConfig());
   await client.connect();
@@ -862,13 +916,14 @@ async function main() {
   const unmatched = [];
   let rowsWritten = 0;
   let importable = [];
+  let closedEvidence = [];
   let canonicalRowsPrefetched = 0;
   let gridCellsBuilt = 0;
   let prefetchTileCount = 0;
   let prefetchQueryCount = 0;
 
   try {
-    const canonicalPrefetch = await loadCanonicalPlaces(client, tableName, candidates, {
+    const canonicalPrefetch = await loadCanonicalPlaces(client, tableName, [...candidates, ...closedCandidates], {
       maxDistanceM: args.maxDistanceM,
       tileDegrees: args.prefetchTileDegrees,
       batchSize: args.prefetchBatchSize,
@@ -895,13 +950,26 @@ async function main() {
       }
     }
 
+    // Closed source records are evidence only. Match them to an existing
+    // canonical place, but never change lifecycle status automatically.
+    for (const candidate of closedCandidates) {
+      const nearby = nearbyPlacesFromGrid(placeGrid, candidate, {
+        maxDistanceM: args.maxDistanceM,
+        cellDegrees: args.gridCellDegrees,
+      });
+      const best = bestMatch(nearby);
+      if (candidate.source_id && best && best.match_method !== 'no_match' && acceptedForImport(best, { includeWeak: false })) {
+        closedEvidence.push({ candidate, match: best });
+      }
+    }
+
     importable = matched.filter(({ candidate, match }) => (
       candidate.source_id &&
       acceptedForImport(match, { includeWeak: args.includeWeak })
     ));
 
     if (args.apply) {
-      rowsWritten = await upsertPlaceSources(client, { args, config, importable });
+      rowsWritten = await upsertPlaceSources(client, { args, config, importable: [...importable, ...closedEvidence] });
     }
   } finally {
     await client.end();
@@ -933,7 +1001,10 @@ async function main() {
 
   const counts = {
     inputRowsInspected: rows.length,
+    usableRows: usable.length,
     usableActiveRows: active.length,
+    closedRowsDetected: closed.length,
+    closedSignalsMatched: closedEvidence.length,
     outOfScopeRowsExcluded: active.length - inScope.length,
     candidatesCompared: candidates.length,
     canonicalRowsPrefetched,
@@ -964,7 +1035,10 @@ async function main() {
   console.log('## Counts');
   console.log(table(['metric', 'count'], [
     { metric: 'input rows inspected', count: counts.inputRowsInspected },
+    { metric: 'rows with usable name/coordinates', count: counts.usableRows },
     { metric: 'rows with usable name/coordinates and active status', count: counts.usableActiveRows },
+    { metric: 'closed source rows detected', count: counts.closedRowsDetected },
+    { metric: 'closed signals matched to existing places', count: counts.closedSignalsMatched },
     { metric: 'active rows excluded by geographic scope', count: counts.outOfScopeRowsExcluded },
     { metric: args.includeNonPizza ? 'active candidates compared' : 'pizza-ish active candidates', count: counts.candidatesCompared },
     { metric: 'canonical rows prefetched', count: counts.canonicalRowsPrefetched },

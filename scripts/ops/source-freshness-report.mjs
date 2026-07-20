@@ -84,6 +84,9 @@ try {
       evidence_rows: row?.evidence_rows || 0,
       fresh_rows: row?.fresh_rows || 0,
       stale_rows: row?.stale_rows || 0,
+      fresh_ratio_percent: row?.evidence_rows
+        ? Number(((Number(row.fresh_rows || 0) / Number(row.evidence_rows)) * 100).toFixed(1))
+        : 0,
       eligible_rows: row?.eligible_rows || 0,
       high_confidence_rows: row?.high_confidence_rows || 0,
       medium_confidence_rows: row?.medium_confidence_rows || 0,

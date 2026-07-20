@@ -104,6 +104,18 @@ describe('AdminDataReviewPanel', () => {
     })
   })
 
+  test('lets keyboard users cancel the link confirmation with Escape', async () => {
+    render(<AdminDataReviewPanel entity="pizza" />)
+    expect(await screen.findByRole('heading', { name: 'Source Pizza' })).toBeInTheDocument()
+
+    userEvent.click(screen.getByRole('button', { name: 'Same place' }))
+    expect(await screen.findByRole('dialog', { name: /confirm this is the same place/i })).toBeInTheDocument()
+    userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /confirm this is the same place/i })).not.toBeInTheDocument())
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/admin/source-review-queue/11', expect.objectContaining({ method: 'PATCH' }))
+  })
+
   test('offers an in-place business update for an unreviewed exact OSM match', async () => {
     const exactOsmRow = {
       ...queueRows[0],
@@ -131,6 +143,37 @@ describe('AdminDataReviewPanel', () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
         '/api/admin/source-review-queue/11/update-existing',
+        expect.objectContaining({ method: 'PATCH' })
+      )
+    })
+  })
+
+  test('offers a guarded replacement path for a reviewed exact OSM match', async () => {
+    const replacementRow = {
+      ...queueRows[0],
+      source_id: 'osm:way/11',
+      source_name: 'Homeslice Pizzeria',
+      nearest_current_google_place_id: 'osm:way/11',
+      nearest_status: 'visited',
+      nearest_rating: 9,
+      nearest_notes: 'Old visit history',
+    }
+    global.fetch.mockImplementation(async (url, options = {}) => {
+      if (String(url).startsWith('/api/admin/source-review-summary')) return response({ data: { queues: { matchExisting: 1 } } })
+      if (String(url).startsWith('/api/admin/source-review-queue?')) return response({ data: [replacementRow], total: 1 })
+      if (url === '/api/admin/source-review-queue/11/reclassify-replacement' && options.method === 'PATCH') return response({ data: { ...replacementRow, review_kind: 'likely_new' } })
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+
+    render(<AdminDataReviewPanel entity="pizza" />)
+    expect(await screen.findByRole('heading', { name: 'Homeslice Pizzeria' })).toBeInTheDocument()
+    userEvent.click(screen.getByRole('button', { name: 'Business replaced' }))
+    expect(await screen.findByRole('dialog', { name: /record a business replacement/i })).toBeInTheDocument()
+    userEvent.click(screen.getByRole('button', { name: 'Record replacement' }))
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/admin/source-review-queue/11/reclassify-replacement',
         expect.objectContaining({ method: 'PATCH' })
       )
     })

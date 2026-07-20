@@ -29,7 +29,7 @@ function parseArgs(argv) {
 const pgClient = new pg.Client({ host: 'localhost', database: 'pizza_enrichment', user: process.env.PGUSER || process.env.USER });
 await pgClient.connect();
 const { rows } = await pgClient.query(`
-  SELECT DISTINCT p.id
+  SELECT DISTINCT p.id, p.last_enriched_at
   FROM pizza_places p
   LEFT JOIN place_sources ps
     ON ps.entity_type='pizza'
@@ -43,8 +43,10 @@ const { rows } = await pgClient.query(`
   WHERE (ps.place_id IS NOT NULL OR srq.canonical_place_id IS NOT NULL)
     AND p.last_enriched_at IS NOT NULL
     AND (p.style IS NOT NULL OR p.price_range IS NOT NULL OR p.style_confidence IS NOT NULL)
-  ORDER BY p.id
-  LIMIT 250
+  -- Do not inspect the first canonical IDs only. New reviewed imports are
+  -- appended at the high end of the ID range and otherwise never reach the
+  -- reconciliation query.
+  ORDER BY p.last_enriched_at DESC, p.id DESC
 `);
 await pgClient.end();
 
@@ -54,19 +56,25 @@ const supabase = createClient(
 );
 const ids = rows.map(row => row.id);
 if (!ids.length) { console.log('reviewed-new Supabase reconciliation: no classified local rows'); process.exit(0); }
-const { data, error } = await supabase.from('pizza_places').select('id').in('id', ids);
-if (error) throw error;
-const present = new Set((data || []).map(row => Number(row.id)));
-const missing = ids.filter(id => !present.has(Number(id))).slice(0, options.limit);
+const present = new Set();
+for (let index = 0; index < ids.length; index += 500) {
+  const chunk = ids.slice(index, index + 500);
+  const { data, error } = await supabase.from('pizza_places').select('id').in('id', chunk);
+  if (error) throw error;
+  for (const row of data || []) present.add(Number(row.id));
+}
+const missingIds = ids.filter(id => !present.has(Number(id)));
+const missing = missingIds.slice(0, options.limit);
 const result = {
   candidate_count: ids.length,
-  missing_count: missing.length,
+  missing_count: missingIds.length,
+  selected_count: missing.length,
   missing_ids: missing,
   mode: options.apply ? 'apply' : 'dry-run',
 };
 if (options.json) console.log(JSON.stringify(result));
 else {
-  console.log(`reviewed-new Supabase reconciliation: ${ids.length} classified candidates, ${missing.length} missing`);
+  console.log(`reviewed-new Supabase reconciliation: ${ids.length} classified candidates, ${missingIds.length} missing`);
   if (missing.length) console.log(`missing ids: ${missing.join(',')}`);
 }
 if (!missing.length || !options.apply) process.exit(0);

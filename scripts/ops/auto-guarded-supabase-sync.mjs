@@ -109,7 +109,8 @@ try {
 
   const reconciliation = spawnSync(process.execPath, [
     'scripts/ops/reconcile-reviewed-new-supabase.mjs',
-    '25',
+    '250',
+    '--apply',
   ], {
     cwd: process.cwd(),
     stdio: 'inherit',
