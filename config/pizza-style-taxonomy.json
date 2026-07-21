@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "styles": [
+    "New York",
+    "New Haven / Connecticut",
+    "Chicago Deep Dish",
+    "Chicago Tavern",
+    "Detroit",
+    "Sicilian",
+    "Grandma",
+    "Neapolitan",
+    "Roman",
+    "California",
+    "St. Louis",
+    "Tavern",
+    "Standard Round",
+    "Other",
+    "Unknown"
+  ],
+  "legacy_aliases": {
+    "Traditional": "Standard Round",
+    "Standard": "Standard Round",
+    "Chicago": "Chicago Deep Dish"
+  }
+}

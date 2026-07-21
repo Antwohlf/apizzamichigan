@@ -17,18 +17,7 @@ import pg from 'pg'
 import 'dotenv/config'
 import { inferStyleFromName, inferPriceFromChain, isKnownChain } from '../../lib/style-inference.mjs'
 import { hasStyleEvidence } from '../../lib/style-evidence.mjs'
-
-const PIZZA_STYLES = [
-  'Traditional',
-  'New York',
-  'Chicago',
-  'Tavern',
-  'Detroit',
-  'Neapolitan',
-  'Sicilian',
-  'Roman',
-  'California'
-]
+import { PIZZA_STYLES, normalizePizzaStyle } from '../../lib/pizza-style-taxonomy.mjs'
 
 const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 
@@ -46,6 +35,9 @@ const OLLAMA_TEMPERATURE = process.env.OLLAMA_TEMPERATURE ? Number(process.env.O
 const OLLAMA_HEALTHCHECK_INTERVAL_MS = process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS
   ? parseInt(process.env.OLLAMA_HEALTHCHECK_INTERVAL_MS, 10)
   : 30000
+const OLLAMA_HEALTHCHECK_TIMEOUT_MS = process.env.OLLAMA_HEALTHCHECK_TIMEOUT_MS
+  ? parseInt(process.env.OLLAMA_HEALTHCHECK_TIMEOUT_MS, 10)
+  : 10000
 
 const OSM_TAG_KEYS = [
   'amenity',
@@ -76,9 +68,7 @@ function safeJsonParse(text) {
 }
 
 function normalizeStyle(style) {
-  if (!style) return null
-  const s = String(style).trim()
-  return PIZZA_STYLES.includes(s) ? s : null
+  return normalizePizzaStyle(style)
 }
 
 function normalizePrice(price) {
@@ -133,7 +123,7 @@ async function ollamaGenerate(prompt, { onController } = {}) {
 
 async function ollamaIsHealthy() {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 2000)
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTHCHECK_TIMEOUT_MS)
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: controller.signal })
     if (!res.ok) return { ok: false, error: `ollama HTTP ${res.status}` }

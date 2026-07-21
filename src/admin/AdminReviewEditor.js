@@ -139,12 +139,6 @@ export default function AdminReviewEditor({
     emitUpload(files)
   }
 
-  const handleDropzoneKeyDown = event => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    if (!uploading && remainingSlots > 0) handleBrowseClick()
-  }
-
   const handleCardDragStart = index => event => {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', String(index))
@@ -259,9 +253,6 @@ export default function AdminReviewEditor({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        onKeyDown={handleDropzoneKeyDown}
-        role="button"
-        tabIndex={0}
         aria-label={remainingSlots > 0 ? 'Upload review photos' : 'Photo limit reached'}
         aria-busy={uploading}
         style={dropzoneStyles}

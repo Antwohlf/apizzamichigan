@@ -1,3 +1,8 @@
+.leaflet-popup-pane {
+  /* Expanded popups must remain clickable when they overlap the map search controls. */
+  z-index: 1100;
+}
+
 .marker-popup {
   position: relative;
   pointer-events: none;

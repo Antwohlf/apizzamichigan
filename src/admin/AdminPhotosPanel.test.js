@@ -39,7 +39,7 @@ describe('AdminPhotosPanel', () => {
 
     await userEvent.clear(search)
     await userEvent.click(screen.getByRole('button', { name: /Ann Arbor Pizza/i }))
-    const picker = screen.getByRole('button', { name: 'Upload review photos' })
+    const picker = screen.getByRole('button', { name: 'Browse' })
     expect(picker).toBeInTheDocument()
     expect(screen.getByLabelText('Choose review photos')).toHaveAttribute('accept', 'image/*,.heic,.heif')
   })

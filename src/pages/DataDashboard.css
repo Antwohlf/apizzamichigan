@@ -126,7 +126,7 @@
 
 .stat-subtext {
   font-size: 0.75rem;
-  color: #6b7280;
+  color: #a1a1aa;
   margin-top: 0.25rem;
 }
 
@@ -139,13 +139,20 @@
   margin-bottom: 1.5rem;
 }
 
-.section h3 {
+.section h2 {
   font-size: 1rem;
   font-weight: 600;
   color: #e5e7eb;
   margin: 0 0 1rem;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid #2b2f31;
+}
+
+.section h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e5e7eb;
+  margin: 0 0 0.75rem;
 }
 
 /* Bar Chart */
@@ -281,7 +288,7 @@
   padding: 1rem;
 }
 
-.comparison-card h4 {
+.comparison-card h3 {
   font-size: 0.9rem;
   font-weight: 600;
   color: #d1d5db;
@@ -295,7 +302,7 @@
   gap: 1.5rem;
 }
 
-.top-states-grid h4 {
+.top-states-grid h3 {
   font-size: 0.9rem;
   font-weight: 600;
   color: #d1d5db;
@@ -367,7 +374,7 @@
   display: block;
   margin-top: 0.5rem;
   font-size: 0.8rem;
-  color: #6b7280;
+  color: #a1a1aa;
 }
 
 /* Rating Value */
@@ -439,7 +446,7 @@
 
 .quality-count {
   font-weight: 400;
-  color: #6b7280;
+  color: #a1a1aa;
   font-size: 0.8rem;
 }
 

@@ -73,7 +73,7 @@ function createStateIcon(site, count, showCounts = true, isLoading = false, isDi
   return L.divIcon({
     html: `
       <div style="position: relative; width: 44px; height: 44px; cursor: pointer;">
-        <img src="${icon}" style="width: 44px; height: 44px; opacity: ${opacity};" />
+        <img src="${icon}" alt="" aria-hidden="true" style="width: 44px; height: 44px; opacity: ${opacity};" />
         ${badgeHtml}
         ${spinnerHtml}
       </div>

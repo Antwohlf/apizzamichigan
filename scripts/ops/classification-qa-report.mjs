@@ -11,18 +11,7 @@ import 'dotenv/config'
 import { execFileSync } from 'child_process'
 import { inferPriceFromChain, inferStyleFromName, isKnownChain } from '../lib/style-inference.mjs'
 import { hasPizzaSignal, hasStyleEvidence } from '../lib/style-evidence.mjs'
-
-const PIZZA_STYLES = [
-  'Traditional',
-  'New York',
-  'Chicago',
-  'Tavern',
-  'Detroit',
-  'Neapolitan',
-  'Sicilian',
-  'Roman',
-  'California'
-]
+import { PIZZA_STYLES } from '../lib/pizza-style-taxonomy.mjs'
 
 const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 const CONFIDENCES = ['confirmed', 'inferred']

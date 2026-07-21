@@ -69,7 +69,7 @@ const createClusterIcon = (site, showCounts) => (cluster) => {
   return L.divIcon({
     html: `
       <div style="position: relative; width: 44px; height: 44px;">
-        <img src="${icon}" style="width: 44px; height: 44px;" />
+        <img src="${icon}" alt="" aria-hidden="true" style="width: 44px; height: 44px;" />
         ${badgeHtml}
       </div>
     `,

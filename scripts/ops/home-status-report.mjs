@@ -409,13 +409,18 @@ async function main() {
     launchdServiceReport('com.apizzamichigan.scraper'),
     launchdServiceReport('com.apizzamichigan.supabase-sync')
   ]
+  const schedulers = [
+    launchdServiceReport('com.apizzamichigan.source-pipeline'),
+    launchdServiceReport('com.apizzamichigan.classifier-reconciler'),
+    launchdServiceReport('com.apizzamichigan.menu-parser'),
+  ]
   const ollamaTunnel = ollamaTunnelReport()
   const syncLock = syncLockReport()
   const fsqSample = fsqSampleReport(root)
   const now = new Date().toISOString()
 
   if (args.has('--json')) {
-    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, ollamaTunnel, syncLock, fsqSample, processes }, null, 2))
+    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, schedulers, ollamaTunnel, syncLock, fsqSample, processes }, null, 2))
     return
   }
 
@@ -490,6 +495,17 @@ async function main() {
 
   console.log(`## Launchd Services`)
   console.log(table(['label', 'state', 'pid', 'runs', 'lastExitCode', 'runInterval', 'status'], launchd.map(service => ({
+    label: service.label,
+    state: service.state || '',
+    pid: service.pid || '',
+    runs: service.runs || '',
+    lastExitCode: service.lastExitCode || '',
+    runInterval: service.runInterval || '',
+    status: service.ok ? 'ok' : `failed: ${service.error}`
+  }))))
+  console.log(``)
+  console.log(`### Scheduled Jobs`)
+  console.log(table(['label', 'state', 'pid', 'runs', 'lastExitCode', 'runInterval', 'status'], schedulers.map(service => ({
     label: service.label,
     state: service.state || '',
     pid: service.pid || '',

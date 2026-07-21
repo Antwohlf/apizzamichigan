@@ -2,8 +2,14 @@
  * Style and price inference from restaurant names
  */
 
+import { normalizePizzaStyle } from './pizza-style-taxonomy.mjs'
+
 // Chain name to style mappings
 const CHAIN_STYLE_MAP = {
+  // St. Louis must precede the overlapping "louis pizza" Detroit key.
+  "st. louis pizza": 'St. Louis',
+  "st louis pizza": 'St. Louis',
+
   // Detroit Style (square, thick, crispy edges)
   "buddy's": 'Detroit',
   "buddy's pizza": 'Detroit',
@@ -21,76 +27,76 @@ const CHAIN_STYLE_MAP = {
   "blue pan": 'Detroit',
 
   // Chicago Style (deep dish)
-  "lou malnati's": 'Chicago',
-  "lou malnatis": 'Chicago',
-  "giordano's": 'Chicago',
-  "giordanos": 'Chicago',
-  "pequod's": 'Chicago',
-  "pequods": 'Chicago',
-  "gino's east": 'Chicago',
-  "ginos east": 'Chicago',
-  "chicago's pizza": 'Chicago',
-  "chicago pizza": 'Chicago',
-  "uno pizzeria": 'Chicago',
-  "due pizzeria": 'Chicago',
+  "lou malnati's": 'Chicago Deep Dish',
+  "lou malnatis": 'Chicago Deep Dish',
+  "giordano's": 'Chicago Deep Dish',
+  "giordanos": 'Chicago Deep Dish',
+  "pequod's": 'Chicago Deep Dish',
+  "pequods": 'Chicago Deep Dish',
+  "gino's east": 'Chicago Deep Dish',
+  "ginos east": 'Chicago Deep Dish',
+  "chicago's pizza": 'Chicago Deep Dish',
+  "chicago pizza": 'Chicago Deep Dish',
+  "uno pizzeria": 'Chicago Deep Dish',
+  "due pizzeria": 'Chicago Deep Dish',
 
   // National Chains (Traditional)
-  "little caesars": 'Traditional',
-  "little caesar's": 'Traditional',
-  "domino's": 'Traditional',
-  "dominos": 'Traditional',
-  "pizza hut": 'Traditional',
-  "papa john's": 'Traditional',
-  "papa johns": 'Traditional',
-  "marco's": 'Traditional',
-  "marcos pizza": 'Traditional',
-  "hungry howie's": 'Traditional',
-  "hungry howies": 'Traditional',
-  "papa murphy's": 'Traditional',
-  "papa murphys": 'Traditional',
-  "papa romano's": 'Traditional',
-  "papa romanos": 'Traditional',
-  "b.c. pizza": 'Traditional',
-  "bc pizza": 'Traditional',
-  "best choice pizza": 'Traditional',
-  "chuck e. cheese": 'Traditional',
-  "chuck e cheese": 'Traditional',
-  "cici's": 'Traditional',
-  "cicis pizza": 'Traditional',
+  "little caesars": 'Standard Round',
+  "little caesar's": 'Standard Round',
+  "domino's": 'Standard Round',
+  "dominos": 'Standard Round',
+  "pizza hut": 'Standard Round',
+  "papa john's": 'Standard Round',
+  "papa johns": 'Standard Round',
+  "marco's": 'Standard Round',
+  "marcos pizza": 'Standard Round',
+  "hungry howie's": 'Standard Round',
+  "hungry howies": 'Standard Round',
+  "papa murphy's": 'Standard Round',
+  "papa murphys": 'Standard Round',
+  "papa romano's": 'Standard Round',
+  "papa romanos": 'Standard Round',
+  "b.c. pizza": 'Standard Round',
+  "bc pizza": 'Standard Round',
+  "best choice pizza": 'Standard Round',
+  "chuck e. cheese": 'Standard Round',
+  "chuck e cheese": 'Standard Round',
+  "cici's": 'Standard Round',
+  "cicis pizza": 'Standard Round',
   "sbarro": 'New York',
-  "godfather's": 'Traditional',
-  "godfathers pizza": 'Traditional',
-  "fox's pizza": 'Traditional',
-  "foxs pizza": 'Traditional',
-  "round table": 'Traditional',
-  "simple simon's": 'Traditional',
-  "simple simons": 'Traditional',
-  "simple simon's pizza": 'Traditional',
-  "simple simons pizza": 'Traditional',
-  "mountain mike's": 'Traditional',
-  "pizza ranch": 'Traditional',
-  "toppers pizza": 'Traditional',
-  "donatos": 'Traditional',
-  "mod pizza": 'Traditional',
-  "blaze pizza": 'Traditional',
-  "pieology": 'Traditional',
-  "your pie": 'Traditional',
-  "&pizza": 'Traditional',
-  "larosa's": 'Traditional',
-  "larosas": 'Traditional',
-  "larosa's pizzeria": 'Traditional',
-  "larosas pizzeria": 'Traditional',
-  "sal's pizza": 'Traditional',
-  "sals pizza": 'Traditional',
+  "godfather's": 'Standard Round',
+  "godfathers pizza": 'Standard Round',
+  "fox's pizza": 'Standard Round',
+  "foxs pizza": 'Standard Round',
+  "round table": 'Standard Round',
+  "simple simon's": 'Standard Round',
+  "simple simons": 'Standard Round',
+  "simple simon's pizza": 'Standard Round',
+  "simple simons pizza": 'Standard Round',
+  "mountain mike's": 'Standard Round',
+  "pizza ranch": 'Standard Round',
+  "toppers pizza": 'Standard Round',
+  "donatos": 'Standard Round',
+  "mod pizza": 'Standard Round',
+  "blaze pizza": 'Standard Round',
+  "pieology": 'Standard Round',
+  "your pie": 'Standard Round',
+  "&pizza": 'Standard Round',
+  "larosa's": 'Standard Round',
+  "larosas": 'Standard Round',
+  "larosa's pizzeria": 'Standard Round',
+  "larosas pizzeria": 'Standard Round',
+  "sal's pizza": 'Standard Round',
+  "sals pizza": 'Standard Round',
 
   // Michigan regional chains
-  "cottage inn": 'Traditional',
-  "mancino's": 'Traditional',
-  "mancinos": 'Traditional',
-  "pizza house": 'Traditional',
-  "backroom pizza": 'Traditional',
-  "toarmina's": 'Traditional',
-  "toarminas": 'Traditional',
+  "cottage inn": 'Standard Round',
+  "mancino's": 'Standard Round',
+  "mancinos": 'Standard Round',
+  "pizza house": 'Standard Round',
+  "backroom pizza": 'Standard Round',
+  "toarmina's": 'Standard Round',
+  "toarminas": 'Standard Round',
 }
 
 // Keywords that suggest specific styles
@@ -102,10 +108,18 @@ const STYLE_KEYWORDS = {
   'square pan': 'Detroit',
 
   // Chicago
-  'chicago': 'Chicago',
-  'deep dish': 'Chicago',
-  'deep-dish': 'Chicago',
-  'stuffed pizza': 'Chicago',
+  'new haven': 'New Haven / Connecticut',
+  'new haven style': 'New Haven / Connecticut',
+  'connecticut style': 'New Haven / Connecticut',
+  'apizza': 'New Haven / Connecticut',
+
+  // Chicago regional styles
+  'chicago tavern': 'Chicago Tavern',
+  'chicago thin': 'Chicago Tavern',
+  'chicago': 'Chicago Deep Dish',
+  'deep dish': 'Chicago Deep Dish',
+  'deep-dish': 'Chicago Deep Dish',
+  'stuffed pizza': 'Chicago Deep Dish',
 
   // New York
   'new york': 'New York',
@@ -130,13 +144,19 @@ const STYLE_KEYWORDS = {
   // Sicilian
   'sicilian': 'Sicilian',
   'sicily': 'Sicilian',
-  'grandma style': 'Sicilian',
-  'grandma pizza': 'Sicilian',
+  'grandma': 'Grandma',
+  'grandma style': 'Grandma',
+  'grandma pizza': 'Grandma',
 
   // Roman
   'roman': 'Roman',
   'al taglio': 'Roman',
   'pizza al taglio': 'Roman',
+
+  // St. Louis
+  'st. louis': 'St. Louis',
+  'st louis': 'St. Louis',
+  'st-louis': 'St. Louis',
 
   // Tavern (Chicago thin)
   'tavern': 'Tavern',
@@ -230,7 +250,7 @@ export function inferStyleFromName(name, address = '') {
   for (const [chain, style] of Object.entries(CHAIN_STYLE_MAP)) {
     if (normalized === chain || normalized.startsWith(chain + ' ') || normalized.includes(chain)) {
       return {
-        style,
+        style: normalizePizzaStyle(style),
         confidence: 'high',
         source: 'chain_map',
         match: chain,
@@ -242,7 +262,7 @@ export function inferStyleFromName(name, address = '') {
   for (const [keyword, style] of Object.entries(STYLE_KEYWORDS)) {
     if (normalized.includes(keyword)) {
       return {
-        style,
+        style: normalizePizzaStyle(style),
         confidence: 'medium',
         source: 'keyword',
         match: keyword,
@@ -254,7 +274,7 @@ export function inferStyleFromName(name, address = '') {
   for (const [keyword, style] of Object.entries(STYLE_KEYWORDS)) {
     if (normalizedAddress.includes(keyword)) {
       return {
-        style,
+        style: normalizePizzaStyle(style),
         confidence: 'low',
         source: 'address_keyword',
         match: keyword,
@@ -321,10 +341,12 @@ export function inferStyleFromCategories(categories = []) {
   const categoryStr = categories.join(' ').toLowerCase()
 
   if (categoryStr.includes('detroit')) return { style: 'Detroit', confidence: 'medium', source: 'yelp_category' }
-  if (categoryStr.includes('chicago') || categoryStr.includes('deep dish')) return { style: 'Chicago', confidence: 'medium', source: 'yelp_category' }
+  if (categoryStr.includes('new haven') || categoryStr.includes('connecticut')) return { style: 'New Haven / Connecticut', confidence: 'medium', source: 'yelp_category' }
+  if (categoryStr.includes('chicago') || categoryStr.includes('deep dish')) return { style: 'Chicago Deep Dish', confidence: 'medium', source: 'yelp_category' }
   if (categoryStr.includes('neapolitan') || categoryStr.includes('wood-fired')) return { style: 'Neapolitan', confidence: 'medium', source: 'yelp_category' }
   if (categoryStr.includes('new york') || categoryStr.includes('ny style')) return { style: 'New York', confidence: 'medium', source: 'yelp_category' }
   if (categoryStr.includes('sicilian')) return { style: 'Sicilian', confidence: 'medium', source: 'yelp_category' }
+  if (categoryStr.includes('grandma')) return { style: 'Grandma', confidence: 'medium', source: 'yelp_category' }
 
   return { style: null, confidence: null, source: null }
 }

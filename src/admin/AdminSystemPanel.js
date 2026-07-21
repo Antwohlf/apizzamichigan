@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import AdminConfirmDialog from './AdminConfirmDialog'
 import { humanReadiness, sourceLabel } from './sourceReviewQueues'
 
 const PREVIEW_PAGE_SIZE = 10
@@ -18,51 +19,6 @@ const promotionPolicyRows = [
   ['Style and price', 'Classifier or editorial fields; source adapters do not overwrite them.'],
   ['Rating, notes, status, photos', 'Manual editorial fields only.'],
 ]
-
-function ImportConfirmation({ count, busy, onCancel, onConfirm }) {
-  if (!count) return null
-  return (
-    <div className="admin-modal" role="presentation">
-      <button className="admin-scrim" type="button" onClick={onCancel} aria-label="Cancel import" />
-      <section className="admin-modal__panel" role="dialog" aria-modal="true" aria-labelledby="import-confirm-title">
-        <h2 id="import-confirm-title">Import {formatCount(count)} approved places?</h2>
-        <p>
-          The duplicate check will run again. Only records that are still ready will be added to the local canonical map.
-          This does not publish anything to Supabase.
-        </p>
-        <div className="admin-modal__actions">
-          <button className="admin-button admin-button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy}>
-            {busy ? 'Importing…' : 'Import ready places'}
-          </button>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function LifecycleConfirmation({ row, busy, onCancel, onConfirm }) {
-  if (!row) return null
-  return (
-    <div className="admin-modal" role="presentation">
-      <button className="admin-scrim" type="button" onClick={onCancel} aria-label="Cancel lifecycle change" />
-      <section className="admin-modal__panel" role="dialog" aria-modal="true" aria-labelledby="lifecycle-confirm-title">
-        <h2 id="lifecycle-confirm-title">Mark this place closed?</h2>
-        <p>
-          Mark <strong>{row.name || 'this place'}</strong> as closed in the local map?
-          The source evidence and personal review history will be kept.
-        </p>
-        <p>This is a local editorial decision. It will be included in the next guarded Supabase sync.</p>
-        <div className="admin-modal__actions">
-          <button className="admin-button admin-button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="admin-button admin-button--primary" type="button" onClick={onConfirm} disabled={busy} autoFocus>
-            {busy ? 'Saving…' : 'Mark closed'}
-          </button>
-        </div>
-      </section>
-    </div>
-  )
-}
 
 export default function AdminSystemPanel({ entity }) {
   const [payload, setPayload] = useState(null)
@@ -533,15 +489,21 @@ export default function AdminSystemPanel({ entity }) {
         </>
       ) : null}
 
-      <ImportConfirmation
-        count={confirmCount}
-        busy={importBusy}
+      <AdminConfirmDialog
+        open={Boolean(confirmCount)}
+        title={`Import ${formatCount(confirmCount)} approved places?`}
+        message={'The duplicate check will run again. Only records that are still ready will be added to the local canonical map.\n\nThis does not publish anything to Supabase.'}
+        confirmLabel={importBusy ? 'Importing…' : 'Import ready places'}
         onCancel={() => setConfirmCount(0)}
         onConfirm={runImport}
       />
-      <LifecycleConfirmation
-        row={lifecycleConfirmation}
-        busy={lifecycleBusy}
+      <AdminConfirmDialog
+        open={Boolean(lifecycleConfirmation)}
+        title="Mark this place closed?"
+        message={lifecycleConfirmation
+          ? `Mark ${lifecycleConfirmation.name || 'this place'} as closed in the local map? The source evidence and personal review history will be kept.\n\nThis is a local editorial decision and will be included in the next guarded Supabase sync.`
+          : ''}
+        confirmLabel={lifecycleBusy ? 'Saving…' : 'Mark closed'}
         onCancel={() => setLifecycleConfirmation(null)}
         onConfirm={markClosed}
       />

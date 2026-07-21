@@ -28,6 +28,7 @@ let reviewPhotosTableAvailable = true
 let sourceReviewDecisionHistorySchemaReady = false
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
+const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD || 'invalid-admin-session-secret'
 const SUPABASE_URL =
   process.env.SUPABASE_URL ||
   process.env.REACT_APP_SUPABASE_URL ||
@@ -45,12 +46,12 @@ if (SUPABASE_URL && SERVICE_ROLE_KEY) {
   console.warn('[admin] Supabase service client not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.')
 }
 
-app.use(cookieParser())
+app.use(cookieParser(ADMIN_SESSION_SECRET))
 app.use(express.json({ limit: '12mb' }))
 app.set('trust proxy', true)
 
 function requireAdminAuth(req, res, next) {
-  if (!req.cookies?.[COOKIE_NAME]) {
+  if (req.signedCookies?.[COOKIE_NAME] !== '1') {
     return res.status(401).json({ error: 'Unauthorized' })
   }
   if (!serviceClient) {
@@ -1691,6 +1692,7 @@ app.post('/api/admin/login', (req, res) => {
   }
 
   res.cookie(COOKIE_NAME, '1', {
+    signed: true,
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
@@ -1700,13 +1702,13 @@ app.post('/api/admin/login', (req, res) => {
 })
 
 app.get('/api/admin/check', (req, res) => {
-  const authorized = Boolean(req.cookies?.[COOKIE_NAME])
+  const authorized = req.signedCookies?.[COOKIE_NAME] === '1'
   if (!authorized) return res.status(401).json({ authorized: false })
   return res.json({ authorized: true })
 })
 
 app.post('/api/admin/submitPlace', async (req, res) => {
-  if (!req.cookies?.[COOKIE_NAME]) {
+  if (req.signedCookies?.[COOKIE_NAME] !== '1') {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 

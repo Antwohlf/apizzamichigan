@@ -18,24 +18,34 @@ silently changing identity or editorial fields.
 
 ## Pizza Styles
 
-Values stored in `pizza_places.style`:
+Values stored in `pizza_places.style`. This is a single primary style, not a
+complete description of every format or topping. `style_confidence` records
+whether the classification was explicitly supported or inferred.
 
 | Style | Description |
 |-------|-------------|
-| Traditional | Classic American pizza, no specific regional style |
 | New York | Large, foldable slices with thin crust |
-| Chicago | Deep dish or stuffed pizza |
-| Tavern | Thin, crispy crust cut into squares (Midwest style) |
+| New Haven / Connecticut | Thin, charred apizza associated with New Haven and Connecticut |
+| Chicago Deep Dish | Deep dish or stuffed pizza |
+| Chicago Tavern | Thin, crisp Chicago tavern-style pizza |
 | Detroit | Thick, rectangular with caramelized cheese edges |
-| Neapolitan | Traditional Italian style, wood-fired, soft center |
 | Sicilian | Thick, rectangular with fluffy dough |
+| Grandma | Thin, rectangular East Coast pizza with a crisp base |
+| Neapolitan | Traditional Italian style, wood-fired, soft center |
 | Roman | Thin and crispy throughout, often sold by weight |
 | California | Innovative toppings, often gourmet/artisanal |
+| St. Louis | Thin, crisp, unleavened-style pizza commonly cut into squares |
+| Tavern | Thin, crispy pizza cut into squares when the regional identity is unclear |
+| Standard Round | Conventional round pizza with no stronger style evidence |
+| Other | A known style that does not yet have its own category |
+| Unknown | Not enough evidence to assign a primary style |
 
-The production classifier and UI currently accept only the nine styles listed
-above. Greek, St. Louis, New Haven, Coal-Fired, Wood-Fired, Grandma, and Bar
-are not valid stored values; treat them as future taxonomy proposals rather
-than writing them into `pizza_places.style`.
+The production classifier and UI currently accept only the controlled
+primary-style vocabulary above. Breakfast, frozen, white pizza, tomato pie,
+slice, pan, square, and similar descriptors are intentionally not primary
+styles; they are future format or category attributes. Legacy values are
+handled by an explicit migration map: `Traditional` becomes `Standard Round`,
+and generic `Chicago` becomes `Chicago Deep Dish`.
 
 ---
 
@@ -152,21 +162,21 @@ Plus: DC (District of Columbia), PR (Puerto Rico)
 
 | Chain | Style | Price |
 |-------|-------|-------|
-| Domino's | Traditional | $ |
-| Pizza Hut | Traditional | $ |
-| Little Caesars | Traditional | $ |
-| Papa John's | Traditional | $ |
-| B.C. Pizza | Traditional | $$ |
-| Fox's Pizza | Traditional | $$ |
-| Pizza Ranch | Traditional | $$ |
-| Simple Simon's Pizza | Traditional | $$ |
-| Sal's Pizza | Traditional | $$ |
+| Domino's | Standard Round | $ |
+| Pizza Hut | Standard Round | $ |
+| Little Caesars | Standard Round | $ |
+| Papa John's | Standard Round | $ |
+| B.C. Pizza | Standard Round | $$ |
+| Fox's Pizza | Standard Round | $$ |
+| Pizza Ranch | Standard Round | $$ |
+| Simple Simon's Pizza | Standard Round | $$ |
+| Sal's Pizza | Standard Round | $$ |
 | Jet's Pizza | Detroit | $$ |
 | Buddy's Pizza | Detroit | $$ |
-| Lou Malnati's | Chicago | $$ |
-| Giordano's | Chicago | $$ |
+| Lou Malnati's | Chicago Deep Dish | $$ |
+| Giordano's | Chicago Deep Dish | $$ |
 | Joe's Pizza | New York | $$ |
-| &pizza | Traditional | $$ |
+| &pizza | Standard Round | $$ |
 
 ### Taco Chains (sample)
 

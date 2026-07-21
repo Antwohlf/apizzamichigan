@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { pizzaStyles } from './data/pizzaStyles'
 import { TACO_TYPES } from './data/tacoTypes'
 import { geocodeAddress } from './lib/geocode'
@@ -29,21 +29,23 @@ export default function AdminSubmit() {
   const [geocoding, setGeocoding] = useState(false)
   const [message, setMessage] = useState('')
   const [photoPreviews, setPhotoPreviews] = useState([])
+  const authRequestVersionRef = useRef(0)
   const { open: openGlobalLoading, close: closeGlobalLoading, setVariant: setGlobalLoadingVariant } = useGlobalLoading()
 
   useEffect(() => {
     async function checkAuth() {
+      const requestVersion = authRequestVersionRef.current
       try {
         const res = await fetch('/api/admin/check', { credentials: 'include' })
         if (!res.ok) throw new Error('unauthorized')
         const data = await res.json()
-        if (data?.authorized) {
+        if (data?.authorized && requestVersion === authRequestVersionRef.current) {
           setIsAuthed(true)
         }
       } catch (err) {
-        setIsAuthed(false)
+        if (requestVersion === authRequestVersionRef.current) setIsAuthed(false)
       } finally {
-        setAuthChecked(true)
+        if (requestVersion === authRequestVersionRef.current) setAuthChecked(true)
       }
     }
     checkAuth()
@@ -56,6 +58,7 @@ export default function AdminSubmit() {
 
   const handleLogin = async e => {
     e.preventDefault()
+    authRequestVersionRef.current += 1
     setLoginError('')
     try {
       const res = await fetch('/api/admin/login', {
@@ -151,16 +154,17 @@ export default function AdminSubmit() {
 
   if (!authChecked) {
     return (
-      <div className="admin-shell">
+      <main className="admin-shell">
         <p>Checking admin access…</p>
-      </div>
+      </main>
     )
   }
 
   if (!isAuthed) {
     return (
-      <div className="admin-shell">
+      <main className="admin-shell">
         <form
+          key="login"
           onSubmit={handleLogin}
           style={{
             display: 'grid',
@@ -171,7 +175,7 @@ export default function AdminSubmit() {
             width: 320,
           }}
         >
-          <h2 style={{ textAlign: 'center', margin: 0 }}>Admin Access</h2>
+          <h1 style={{ textAlign: 'center', margin: 0, fontSize: '1.5rem' }}>Admin Access</h1>
           <p style={{ color: '#c7c7c7', fontSize: '0.9rem', margin: 0 }}>
             Enter the admin portal password to continue.
           </p>
@@ -191,13 +195,14 @@ export default function AdminSubmit() {
             Unlock
           </button>
         </form>
-      </div>
+      </main>
     )
   }
 
   return (
-    <div className="admin-shell" style={{ backgroundColor: '#181a1b' }}>
+    <main className="admin-shell" style={{ backgroundColor: '#181a1b' }}>
       <form
+        key="submit"
         onSubmit={handleSubmit}
         style={{
           display: 'grid',
@@ -205,10 +210,11 @@ export default function AdminSubmit() {
           background: '#202224',
           padding: '2rem',
           borderRadius: 10,
-          width: 'min(640px, 95vw)',
+          width: 'min(640px, calc(100vw - 2rem))',
+          boxSizing: 'border-box',
         }}
       >
-        <h2 style={{ margin: 0, color: '#f97316' }}>Submit a New Listing</h2>
+        <h1 style={{ margin: 0, color: '#f97316', fontSize: '1.5rem' }}>Submit a New Listing</h1>
         <div style={{ display: 'flex', gap: '1rem' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#fff' }}>
             <input type="radio" value="pizza" checked={form.entity === 'pizza'} onChange={handleEntityChange} />
@@ -220,12 +226,12 @@ export default function AdminSubmit() {
           </label>
         </div>
 
-        <input name="name" value={form.name} onChange={handleInputChange} placeholder="Name *" required style={inputStyle} />
-        <input name="address" value={form.address} onChange={handleInputChange} placeholder="Street Address *" required style={inputStyle} />
-        <input name="city" value={form.city} onChange={handleInputChange} placeholder="City" style={inputStyle} />
-        <input name="url" value={form.url} onChange={handleInputChange} placeholder="Website URL" style={inputStyle} />
+        <input aria-label="Name" name="name" value={form.name} onChange={handleInputChange} placeholder="Name *" required style={inputStyle} />
+        <input aria-label="Street address" name="address" value={form.address} onChange={handleInputChange} placeholder="Street Address *" required style={inputStyle} />
+        <input aria-label="City" name="city" value={form.city} onChange={handleInputChange} placeholder="City" style={inputStyle} />
+        <input aria-label="Website URL" name="url" value={form.url} onChange={handleInputChange} placeholder="Website URL" style={inputStyle} />
 
-        <select name="style" value={form.style} onChange={handleInputChange} required style={inputStyle}>
+        <select aria-label={form.entity === 'pizza' ? 'Pizza style' : 'Taco type'} name="style" value={form.style} onChange={handleInputChange} required style={inputStyle}>
           <option value="">{form.entity === 'pizza' ? 'Select Pizza Style *' : 'Select Taco Type *'}</option>
           {stylesForEntity.map(option => (
             <option key={option} value={option}>
@@ -235,6 +241,7 @@ export default function AdminSubmit() {
         </select>
 
         <input
+          aria-label="Rating"
           name="rating"
           value={form.rating}
           onChange={handleInputChange}
@@ -246,6 +253,7 @@ export default function AdminSubmit() {
           style={inputStyle}
         />
         <textarea
+          aria-label="Notes"
           name="notes"
           value={form.notes}
           onChange={handleInputChange}
@@ -266,6 +274,7 @@ export default function AdminSubmit() {
 
         <div style={{ display: 'flex', gap: '1rem' }}>
           <input
+            aria-label="Latitude"
             name="lat"
             value={form.lat}
             onChange={handleInputChange}
@@ -274,6 +283,7 @@ export default function AdminSubmit() {
             style={{ ...inputStyle, flex: 1 }}
           />
           <input
+            aria-label="Longitude"
             name="lng"
             value={form.lng}
             onChange={handleInputChange}
@@ -316,7 +326,7 @@ export default function AdminSubmit() {
             borderRadius: 4,
             border: 'none',
             background: '#f97316',
-            color: '#fff',
+            color: '#171917',
             fontWeight: 700,
             cursor: 'pointer',
           }}
@@ -328,7 +338,7 @@ export default function AdminSubmit() {
           )}
         </button>
       </form>
-    </div>
+    </main>
   )
 }
 

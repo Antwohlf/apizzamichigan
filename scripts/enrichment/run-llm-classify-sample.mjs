@@ -15,17 +15,7 @@
 import pg from 'pg'
 import 'dotenv/config'
 
-const PIZZA_STYLES = [
-  'Traditional',
-  'New York',
-  'Chicago',
-  'Tavern',
-  'Detroit',
-  'Neapolitan',
-  'Sicilian',
-  'Roman',
-  'California'
-]
+import { PIZZA_STYLES, normalizePizzaStyle } from '../lib/pizza-style-taxonomy.mjs'
 
 function parseArgs() {
   const args = process.argv.slice(2)
@@ -46,9 +36,7 @@ function safeJsonParse(text) {
 }
 
 function normalizeStyle(style) {
-  if (!style) return null
-  const s = String(style).trim()
-  return PIZZA_STYLES.includes(s) ? s : null
+  return normalizePizzaStyle(style)
 }
 
 function normalizePrice(price) {

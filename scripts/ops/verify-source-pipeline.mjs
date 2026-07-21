@@ -50,10 +50,10 @@ if (Number(config.sources.overture_places.tile_step) !== 1 || Number(config.sour
   throw new Error('Overture source pipeline must use bounded resumable tiles');
 }
 if (Number(config.sources.osm.tiles_per_run) !== 4
-  || Number(config.sources.osm.tiles_per_run_by_region?.MI) !== 8
-  || Number(config.sources.osm.tiles_per_run_by_region?.NY) !== 4
+  || Number(config.sources.osm.tiles_per_run_by_region?.MI) !== 12
+  || Number(config.sources.osm.tiles_per_run_by_region?.NY) !== 8
   || Number(config.sources.osm.tiles_per_run_by_region?.CA) !== 2
-  || Number(config.sources.osm.tiles_per_run_by_region?.TX) !== 4
+  || Number(config.sources.osm.tiles_per_run_by_region?.TX) !== 8
   || !runner.includes('tiles_per_run_by_region')) {
   throw new Error('OSM source pipeline must use the measured regional tile budgets');
 }
