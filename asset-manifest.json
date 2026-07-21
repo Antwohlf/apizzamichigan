@@ -1,17 +1,31 @@
 {
   "files": {
-    "main.css": "/static/css/main.138f0379.css",
-    "main.js": "/static/js/main.314e13c0.js",
-    "static/js/952.4e1b0442.chunk.js": "/static/js/952.4e1b0442.chunk.js",
-    "static/js/453.a12737c8.chunk.js": "/static/js/453.a12737c8.chunk.js",
+    "main.css": "/static/css/main.32ee74eb.css",
+    "main.js": "/static/js/main.e32d5288.js",
+    "static/css/677.9a536dcd.chunk.css": "/static/css/677.9a536dcd.chunk.css",
+    "static/js/677.74c0178c.chunk.js": "/static/js/677.74c0178c.chunk.js",
+    "static/js/952.90d892ea.chunk.js": "/static/js/952.90d892ea.chunk.js",
+    "static/js/833.d43e1f84.chunk.js": "/static/js/833.d43e1f84.chunk.js",
+    "static/js/453.cb25b2df.chunk.js": "/static/js/453.cb25b2df.chunk.js",
+    "static/js/940.64ebc967.chunk.js": "/static/js/940.64ebc967.chunk.js",
+    "static/media/marker-taco-gold.svg": "/static/media/marker-taco-gold.a0a100f9c0cae2a133f16aa12d52ca31.svg",
+    "static/media/marker-taco-grey.svg": "/static/media/marker-taco-grey.8a5c35d429420160c57a49be2f834a9c.svg",
+    "static/media/marker-taco-colored.svg": "/static/media/marker-taco-colored.f3e70e8681050b36aedb41718cf6de61.svg",
+    "static/media/marker-pizza-gold.svg": "/static/media/marker-pizza-gold.88435d07b5d4e7ab07ba77d3b18617a5.svg",
     "index.html": "/index.html",
-    "main.138f0379.css.map": "/static/css/main.138f0379.css.map",
-    "main.314e13c0.js.map": "/static/js/main.314e13c0.js.map",
-    "952.4e1b0442.chunk.js.map": "/static/js/952.4e1b0442.chunk.js.map",
-    "453.a12737c8.chunk.js.map": "/static/js/453.a12737c8.chunk.js.map"
+    "static/media/marker-pizza-colored.svg": "/static/media/marker-pizza-colored.f106430775fc368a970fc40e57aa2ca8.svg",
+    "static/media/marker-pizza-grey.svg": "/static/media/marker-pizza-grey.bd5a3e1533b8fc8eef7851f79774cad6.svg",
+    "main.32ee74eb.css.map": "/static/css/main.32ee74eb.css.map",
+    "main.e32d5288.js.map": "/static/js/main.e32d5288.js.map",
+    "677.9a536dcd.chunk.css.map": "/static/css/677.9a536dcd.chunk.css.map",
+    "677.74c0178c.chunk.js.map": "/static/js/677.74c0178c.chunk.js.map",
+    "952.90d892ea.chunk.js.map": "/static/js/952.90d892ea.chunk.js.map",
+    "833.d43e1f84.chunk.js.map": "/static/js/833.d43e1f84.chunk.js.map",
+    "453.cb25b2df.chunk.js.map": "/static/js/453.cb25b2df.chunk.js.map",
+    "940.64ebc967.chunk.js.map": "/static/js/940.64ebc967.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.138f0379.css",
-    "static/js/main.314e13c0.js"
+    "static/css/main.32ee74eb.css",
+    "static/js/main.e32d5288.js"
   ]
 }
