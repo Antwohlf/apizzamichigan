@@ -63,6 +63,14 @@ export class PopupController {
     }
   }
 
+  private setExpandedState(expanded: boolean) {
+    const container = isLeafletMap(this.map) || isMapboxMap(this.map)
+      ? this.map.getContainer?.()
+      : null
+    container?.classList.toggle('map-popup-expanded', expanded)
+    container?.parentElement?.classList.toggle('map-popup-expanded', expanded)
+  }
+
   private mount(target: PopupTarget) {
     if (!this.container) {
       this.init()
@@ -102,6 +110,7 @@ export class PopupController {
     }
     const prevTargetId = this.target?.id
     this.mode = 'expanded'
+    this.setExpandedState(true)
     this.mount(target)
     if (!this.container) return
     this.container.dataset.mode = 'expanded'
@@ -127,6 +136,7 @@ export class PopupController {
     const run = () => {
       this.mode = 'hidden'
       this.target = null
+      this.setExpandedState(false)
       if (this.container) {
         this.container.dataset.mode = 'hidden'
         teardownPopup(this.container)

@@ -18,6 +18,7 @@ import {
   autoPromotableSourceFields,
   sourcePromotionFieldPolicy,
 } from '../lib/source-promotion-policy.mjs';
+import { PIZZA_STYLES } from '../lib/pizza-style-taxonomy.mjs';
 
 const CONTRACT_DOC = 'docs/SOURCE_PROVENANCE_SCHEMA.md';
 const SOURCE_INPUTS_DOC = 'docs/SOURCE_INPUTS.md';
@@ -25,10 +26,7 @@ const DATA_SOURCES_DOC = 'docs/DATA_SOURCES.md';
 const DATA_DICTIONARY_DOC = 'docs/DATA_DICTIONARY.md';
 const OSM_EXPORTER = 'scripts/ops/export-osm-source.mjs';
 
-const CANONICAL_PIZZA_STYLES = [
-  'Traditional', 'New York', 'Chicago', 'Tavern', 'Detroit',
-  'Neapolitan', 'Sicilian', 'Roman', 'California',
-];
+const CANONICAL_PIZZA_STYLES = PIZZA_STYLES;
 const CANONICAL_PRICE_RANGES = ['$', '$$', '$$$', '$$$$'];
 
 function assert(condition, message) {
@@ -114,7 +112,7 @@ function main() {
   for (const price of CANONICAL_PRICE_RANGES) {
     assertIncludes(dictionary, `| ${price} |`, DATA_DICTIONARY_DOC);
   }
-  assertIncludes(dictionary, 'currently accept only the nine styles listed', DATA_DICTIONARY_DOC);
+  assertIncludes(dictionary, 'The production classifier and UI currently accept only the controlled', DATA_DICTIONARY_DOC);
 
   console.log('# Source Contract Docs Verification');
   console.log('');

@@ -27,6 +27,7 @@ export default function ReviewPhotoUploader({ onUploaded }) {
         type="file"
         accept="image/*"
         multiple
+        aria-label="Optional place photos"
         onChange={handleFileChange}
         style={{ color: 'var(--app-text)', background: 'transparent' }}
       />

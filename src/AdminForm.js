@@ -314,7 +314,7 @@ export default function AdminForm() {
   const { open: openGlobalLoading, close: closeGlobalLoading, setVariant: setGlobalLoadingVariant } = useGlobalLoading()
 
   const pizzaStylesSorted = useMemo(
-    () => ['Traditional', ...pizzaStyles.filter(style => style !== 'Traditional').sort()],
+    () => ['Unknown', ...pizzaStyles.filter(style => style !== 'Unknown').sort()],
     []
   )
   const tacoTypesSorted = useMemo(() => [...TACO_TYPES].sort(), [])

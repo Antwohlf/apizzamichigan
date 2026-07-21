@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Camera,
@@ -99,22 +99,26 @@ export default function AdminReviewsPage() {
   const [authChecked, setAuthChecked] = useState(false)
   const [isAuthed, setIsAuthed] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
+  const authRequestVersionRef = useRef(0)
   const view = currentView(location.pathname)
   const entity = searchParams.get('entity') === 'taco' ? 'taco' : 'pizza'
   const [title, subtitle] = VIEW_COPY[view]
 
   useEffect(() => {
     let cancelled = false
+    const requestVersion = authRequestVersionRef.current
     const checkAuth = async () => {
       try {
         const response = await fetch('/api/admin/check', { credentials: 'include' })
         if (!response.ok) throw new Error('Unauthorized')
         const payload = await response.json()
-        if (!cancelled) setIsAuthed(Boolean(payload?.authorized))
+        if (!cancelled && requestVersion === authRequestVersionRef.current) {
+          setIsAuthed(Boolean(payload?.authorized))
+        }
       } catch (err) {
-        if (!cancelled) setIsAuthed(false)
+        if (!cancelled && requestVersion === authRequestVersionRef.current) setIsAuthed(false)
       } finally {
-        if (!cancelled) setAuthChecked(true)
+        if (!cancelled && requestVersion === authRequestVersionRef.current) setAuthChecked(true)
       }
     }
     checkAuth()
@@ -128,6 +132,7 @@ export default function AdminReviewsPage() {
   }, [location.pathname])
 
   const login = async password => {
+    authRequestVersionRef.current += 1
     const response = await fetch('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

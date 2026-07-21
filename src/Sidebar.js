@@ -77,9 +77,9 @@ const Sidebar = ({
   }, [themeKey])
 
   return (
-    <div className="sidebar-container" role="complementary">
+    <div className="sidebar-container">
       <section className="filter-section" aria-label={theme.copy.styleLabel}>
-        <h3 className="filter-section__title">{theme.copy.styleLabel}</h3>
+        <h2 className="filter-section__title">{theme.copy.styleLabel}</h2>
         <div className="filter-section__options">
           {stylesForTheme.map(style => {
             const isSelected = selectedStyles.includes(style)
@@ -99,7 +99,7 @@ const Sidebar = ({
       </section>
 
       <section className="filter-section" aria-label="Price">
-        <h3 className="filter-section__title">Price</h3>
+        <h2 className="filter-section__title">Price</h2>
         <div className="filter-section__options">
           {['$', '$$', '$$$', '$$$$'].map(price => {
             const isSelected = selectedPrices.includes(price)
@@ -121,7 +121,7 @@ const Sidebar = ({
       <StatusFilter value={selectedStatuses} onChange={setSelectedStatuses} />
 
       <section className="filter-section" aria-label="Map Settings">
-        <h3 className="filter-section__title">Map Settings</h3>
+        <h2 className="filter-section__title">Map Settings</h2>
         <label
           style={{
             display: 'flex',

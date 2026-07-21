@@ -23,7 +23,7 @@
     "operational": ["created_at", "updated_at", "qa_status", "qa_schema_version"]
   },
   "allowed_values": {
-    "style": ["Traditional", "New York", "Chicago", "Tavern", "Detroit", "Neapolitan", "Sicilian", "Roman", "California"],
+    "style": ["New York", "New Haven / Connecticut", "Chicago Deep Dish", "Chicago Tavern", "Detroit", "Sicilian", "Grandma", "Neapolitan", "Roman", "California", "St. Louis", "Tavern", "Standard Round", "Other", "Unknown"],
     "price_range": ["$", "$$", "$$$", "$$$$"],
     "style_confidence": ["confirmed", "inferred"],
     "enrichment_status": ["pending", "enriched", "failed"],

@@ -1033,9 +1033,11 @@ function SiteContainer({ themeKey }) {
         style:
           themeKey === ThemeKeys.TACO
             ? place.type || place.style
-            : place.style === 'Standard'
-              ? 'Traditional'
-              : place.style,
+            : place.style === 'Standard' || place.style === 'Traditional'
+              ? 'Standard Round'
+              : place.style === 'Chicago'
+                ? 'Chicago Deep Dish'
+                : place.style,
         price: normalizedPrice,
         price_range: normalizedPriceRange,
         priceRange: normalizedPriceRange,
@@ -1529,7 +1531,7 @@ function SiteContainer({ themeKey }) {
   return (
     <div className="app-shell" style={themeStyles}>
       <div className="app-layout">
-        <div className="sidebar-wrapper">
+        <aside className="sidebar-wrapper sidebar-wrapper--filters" aria-label="Map filters">
           <Sidebar
             onFilterChange={handleFilterChange}
             themeKey={themeKey}
@@ -1539,9 +1541,9 @@ function SiteContainer({ themeKey }) {
             showAnthonysVisits={showAnthonysVisits}
             onAnthonysVisitsToggle={setShowAnthonysVisits}
           />
-        </div>
+        </aside>
 
-        <div className="main-content">
+        <main className="main-content">
           <SiteTitle title={theme.brandName} />
 
           <div className="view-toggle">
@@ -1623,9 +1625,9 @@ function SiteContainer({ themeKey }) {
               {switchLabel}
             </Link>
           </footer>
-        </div>
+        </main>
 
-        <div className="sidebar-wrapper">
+        <aside className="sidebar-wrapper sidebar-wrapper--recommendations" aria-label="Recommendations and statistics">
           <div className="sidebar-inner sidebar-inner--sticky">
             <StatsPanel table={isPizza ? 'pizza_places' : 'taco_places'} />
             <SuggestionForm
@@ -1636,7 +1638,7 @@ function SiteContainer({ themeKey }) {
             />
             <BugReportFab />
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   )

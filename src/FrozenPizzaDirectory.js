@@ -57,7 +57,7 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
       } else {
         const normalized = (data || []).map(p => ({
           ...p,
-          Type: p.Type === 'Standard' ? 'Traditional' : p.Type,
+          Type: p.Type === 'Standard' || p.Type === 'Traditional' ? 'Standard Round' : p.Type,
         }))
         if (normalized.length === 0 && themeKey === ThemeKeys.TACO) {
           setPizzas(frozenTacosFallback)

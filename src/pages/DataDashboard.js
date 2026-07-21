@@ -401,24 +401,24 @@ function OverviewTab({ pizzaStats, tacoStats }) {
       </div>
 
       <div className="section">
-        <h3>Coverage Comparison</h3>
+        <h2>Coverage Comparison</h2>
         <div className="comparison-grid">
           <div className="comparison-card">
-            <h4>Pizza Coverage</h4>
+            <h3>Pizza Coverage</h3>
             <StatusBreakdown {...pizzaStats} total={pizzaStats.total} />
           </div>
           <div className="comparison-card">
-            <h4>Taco Coverage</h4>
+            <h3>Taco Coverage</h3>
             <StatusBreakdown {...tacoStats} total={tacoStats.total} />
           </div>
         </div>
       </div>
 
       <div className="section">
-        <h3>Data Quality Comparison</h3>
+        <h2>Data Quality Comparison</h2>
         <div className="comparison-grid">
           <div className="comparison-card">
-            <h4>Pizza</h4>
+            <h3>Pizza</h3>
             <DataQualityCard
               label="Has Address"
               value={pizzaStats.withAddress}
@@ -427,7 +427,7 @@ function OverviewTab({ pizzaStats, tacoStats }) {
             />
           </div>
           <div className="comparison-card">
-            <h4>Taco</h4>
+            <h3>Taco</h3>
             <DataQualityCard
               label="Has Address"
               value={tacoStats.withAddress}
@@ -439,19 +439,19 @@ function OverviewTab({ pizzaStats, tacoStats }) {
       </div>
 
       <div className="section">
-        <h3>Geographic Reach</h3>
+        <h2>Geographic Reach</h2>
         <CountryBreakdown byCountry={combinedByCountry} accentColor="var(--app-accent)" />
       </div>
 
       <div className="section">
-        <h3>Top States (Combined)</h3>
+        <h2>Top States (Combined)</h2>
         <div className="top-states-grid">
           <div>
-            <h4>Pizza</h4>
+            <h3>Pizza</h3>
             <BarChart data={pizzaStats.byState.slice(0, 5)} accentColor="#f97316" />
           </div>
           <div>
-            <h4>Taco</h4>
+            <h3>Taco</h3>
             <BarChart data={tacoStats.byState.slice(0, 5)} accentColor="#b57c3b" />
           </div>
         </div>
@@ -476,39 +476,39 @@ function PizzaTab({ stats }) {
       </div>
 
       <div className="section">
-        <h3>Rating Analytics</h3>
+        <h2>Rating Analytics</h2>
         <div className="comparison-grid">
           <div className="comparison-card">
-            <h4>Rating Distribution</h4>
+            <h3>Rating Distribution</h3>
             <BarChart
               data={['1-2', '3-4', '5-6', '7-8', '9-10'].map((label, i) => [label, stats.ratingDistribution[i]])}
               accentColor="#facc15"
             />
           </div>
           <div className="comparison-card">
-            <h4>Best Rated Styles</h4>
+            <h3>Best Rated Styles</h3>
             <BestRatedStyles styles={stats.bestRatedStyles} accentColor="#f97316" />
           </div>
         </div>
       </div>
 
       <div className="section">
-        <h3>Pizza Style Distribution</h3>
+        <h2>Pizza Style Distribution</h2>
         <BarChart data={stats.distribution} accentColor="#f97316" />
       </div>
 
       <div className="section">
-        <h3>Price Breakdown</h3>
+        <h2>Price Breakdown</h2>
         <BarChart data={stats.byPrice} accentColor="#f97316" />
       </div>
 
       <div className="section">
-        <h3>Visit Status</h3>
+        <h2>Visit Status</h2>
         <StatusBreakdown {...stats} total={stats.total} />
       </div>
 
       <div className="section">
-        <h3>Data Quality</h3>
+        <h2>Data Quality</h2>
         <div className="quality-grid">
           <DataQualityCard
             label="Has Address (All Places)"
@@ -526,19 +526,19 @@ function PizzaTab({ stats }) {
       </div>
 
       <div className="section">
-        <h3>Geographic Reach ({countriesCount} {countriesCount === 1 ? 'country' : 'countries'})</h3>
+        <h2>Geographic Reach ({countriesCount} {countriesCount === 1 ? 'country' : 'countries'})</h2>
         <CountryBreakdown byCountry={stats.byCountry} accentColor="#f97316" />
       </div>
 
       <div className="section">
-        <h3>Top 10 Regions</h3>
+        <h2>Top 10 Regions</h2>
         <div className="comparison-grid">
           <div className="comparison-card">
-            <h4>By Place Count</h4>
+            <h3>By Place Count</h3>
             <BarChart data={stats.byState} accentColor="#f97316" />
           </div>
           <div className="comparison-card">
-            <h4>By Average Rating</h4>
+            <h3>By Average Rating</h3>
             <BestRatedRegions regions={stats.bestRatedRegions} accentColor="#f97316" />
           </div>
         </div>
@@ -546,7 +546,7 @@ function PizzaTab({ stats }) {
 
       {stats.byCity.length > 0 && (
         <div className="section">
-          <h3>Top 10 Cities</h3>
+          <h2>Top 10 Cities</h2>
           <BarChart data={stats.byCity} accentColor="#f97316" />
         </div>
       )}
@@ -570,39 +570,39 @@ function TacoTab({ stats }) {
       </div>
 
       <div className="section">
-        <h3>Rating Analytics</h3>
+        <h2>Rating Analytics</h2>
         <div className="comparison-grid">
           <div className="comparison-card">
-            <h4>Rating Distribution</h4>
+            <h3>Rating Distribution</h3>
             <BarChart
               data={['1-2', '3-4', '5-6', '7-8', '9-10'].map((label, i) => [label, stats.ratingDistribution[i]])}
               accentColor="#facc15"
             />
           </div>
           <div className="comparison-card">
-            <h4>Best Rated Types</h4>
+            <h3>Best Rated Types</h3>
             <BestRatedStyles styles={stats.bestRatedStyles} accentColor="#b57c3b" />
           </div>
         </div>
       </div>
 
       <div className="section">
-        <h3>Taco Type Distribution</h3>
+        <h2>Taco Type Distribution</h2>
         <BarChart data={stats.distribution} accentColor="#b57c3b" />
       </div>
 
       <div className="section">
-        <h3>Price Breakdown</h3>
+        <h2>Price Breakdown</h2>
         <BarChart data={stats.byPrice} accentColor="#b57c3b" />
       </div>
 
       <div className="section">
-        <h3>Visit Status</h3>
+        <h2>Visit Status</h2>
         <StatusBreakdown {...stats} total={stats.total} />
       </div>
 
       <div className="section">
-        <h3>Data Quality</h3>
+        <h2>Data Quality</h2>
         <div className="quality-grid">
           <DataQualityCard
             label="Has Address (All Places)"
@@ -620,19 +620,19 @@ function TacoTab({ stats }) {
       </div>
 
       <div className="section">
-        <h3>Geographic Reach ({countriesCount} {countriesCount === 1 ? 'country' : 'countries'})</h3>
+        <h2>Geographic Reach ({countriesCount} {countriesCount === 1 ? 'country' : 'countries'})</h2>
         <CountryBreakdown byCountry={stats.byCountry} accentColor="#b57c3b" />
       </div>
 
       <div className="section">
-        <h3>Top 10 Regions</h3>
+        <h2>Top 10 Regions</h2>
         <div className="comparison-grid">
           <div className="comparison-card">
-            <h4>By Place Count</h4>
+            <h3>By Place Count</h3>
             <BarChart data={stats.byState} accentColor="#b57c3b" />
           </div>
           <div className="comparison-card">
-            <h4>By Average Rating</h4>
+            <h3>By Average Rating</h3>
             <BestRatedRegions regions={stats.bestRatedRegions} accentColor="#b57c3b" />
           </div>
         </div>
@@ -640,7 +640,7 @@ function TacoTab({ stats }) {
 
       {stats.byCity.length > 0 && (
         <div className="section">
-          <h3>Top 10 Cities</h3>
+          <h2>Top 10 Cities</h2>
           <BarChart data={stats.byCity} accentColor="#b57c3b" />
         </div>
       )}

@@ -93,7 +93,11 @@ out center tags;
       try {
         const response = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': process.env.OSM_USER_AGENT || 'APizzaMichigan/1.0'
+          },
           body: `data=${encodeURIComponent(query)}`
         })
 

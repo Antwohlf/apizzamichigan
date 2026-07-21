@@ -9,11 +9,9 @@
 
 import pg from 'pg';
 import 'dotenv/config';
+import { PIZZA_STYLES } from '../lib/pizza-style-taxonomy.mjs';
 
-const STYLES = new Set([
-  'Traditional', 'New York', 'Chicago', 'Tavern', 'Detroit',
-  'Neapolitan', 'Sicilian', 'Roman', 'California'
-]);
+const STYLES = new Set(PIZZA_STYLES);
 
 function parseArgs(argv) {
   const args = { hours: 24, limit: 1000, apply: false, json: false };

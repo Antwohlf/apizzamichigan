@@ -17,6 +17,7 @@ import * as cheerio from 'cheerio'
 import fs from 'node:fs'
 import path from 'node:path'
 import 'dotenv/config'
+import { normalizeWebsiteUrl } from '../../lib/website-url.mjs'
 
 const CONCURRENT_FETCHES = 5
 
@@ -191,7 +192,9 @@ class WebScraper {
       host: 'localhost',
       database: 'pizza_enrichment',
       user: process.env.PGUSER || process.env.USER,
-      password: process.env.PGPASSWORD || ''
+      password: process.env.PGPASSWORD || '',
+      connectionTimeoutMillis: Number.parseInt(process.env.SCRAPE_DB_CONNECT_TIMEOUT_MS || '10000', 10),
+      query_timeout: Number.parseInt(process.env.SCRAPE_DB_QUERY_TIMEOUT_MS || '15000', 10),
     })
 
     await this.pgClient.connect()
@@ -240,10 +243,16 @@ class WebScraper {
    */
   async fetchWithTimeout(url) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
+    let timeoutId
+    const deadline = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort()
+        reject(new Error(`Scrape fetch timeout after ${FETCH_TIMEOUT}ms`))
+      }, FETCH_TIMEOUT)
+    })
 
     try {
-      const response = await fetch(url, {
+      const response = await Promise.race([fetch(url, {
         signal: controller.signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; PizzaBot/1.0; +https://apizzamichigan.com)',
@@ -251,9 +260,7 @@ class WebScraper {
           'Accept-Language': 'en-US,en;q=0.9'
         },
         redirect: 'follow'
-      })
-
-      clearTimeout(timeout)
+      }), deadline])
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
@@ -264,11 +271,14 @@ class WebScraper {
         throw new Error(`Non-HTML content: ${contentType}`)
       }
 
-      const html = await response.text()
+      // Some servers deliver headers promptly but never finish the body. The
+      // same deadline must cover response.text(), not just fetch().
+      const html = await Promise.race([response.text(), deadline])
       return { html, finalUrl: response.url, statusCode: response.status }
     } catch (error) {
-      clearTimeout(timeout)
       throw error
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 
@@ -408,7 +418,14 @@ class WebScraper {
       return
     }
 
-    const { website_url: url, state, style, price_range: priceRange, menu_data: menuData } = result.rows[0]
+    const { website_url: rawUrl, state, style, price_range: priceRange, menu_data: menuData } = result.rows[0]
+    const url = normalizeWebsiteUrl(rawUrl)
+
+    if (!url) {
+      this.queue.complete(job.id, { status: 'invalid_url', source_url: rawUrl })
+      this.stats.completed++
+      return
+    }
 
     // Skip cache if this job was explicitly requeued for a fresh retry
     const skipCache = job.data?.skipCache === 1

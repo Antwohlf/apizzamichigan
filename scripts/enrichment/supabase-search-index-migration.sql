@@ -52,3 +52,33 @@ CREATE INDEX IF NOT EXISTS idx_pizza_places_search_state
 CREATE INDEX IF NOT EXISTS idx_taco_places_search_state
   ON taco_places (state)
   WHERE state IS NOT NULL;
+
+-- Lifecycle fields are additive and may not exist on older deployments. Keep
+-- these indexes conditional so the migration remains safe during rollout.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'pizza_places' AND column_name = 'lifecycle_status'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_pizza_places_search_lifecycle_status ON pizza_places (lifecycle_status) WHERE lifecycle_status IS NOT NULL';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'pizza_places' AND column_name = 'lifecycle_replaced_by_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_pizza_places_search_replaced_by ON pizza_places (lifecycle_replaced_by_id) WHERE lifecycle_replaced_by_id IS NOT NULL';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'taco_places' AND column_name = 'lifecycle_status'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_taco_places_search_lifecycle_status ON taco_places (lifecycle_status) WHERE lifecycle_status IS NOT NULL';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'taco_places' AND column_name = 'lifecycle_replaced_by_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_taco_places_search_replaced_by ON taco_places (lifecycle_replaced_by_id) WHERE lifecycle_replaced_by_id IS NOT NULL';
+  END IF;
+END $$;

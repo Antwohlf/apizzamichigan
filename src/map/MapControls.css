@@ -11,6 +11,15 @@
   pointer-events: none;
 }
 
+/* Keep an expanded place popup dismissible when it overlaps these controls. */
+.map-popup-expanded .map-controls {
+  pointer-events: none;
+}
+
+.map-popup-expanded .map-controls * {
+  pointer-events: none;
+}
+
 .map-controls > * {
   pointer-events: auto;
 }

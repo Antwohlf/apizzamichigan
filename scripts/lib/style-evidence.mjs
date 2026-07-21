@@ -1,13 +1,19 @@
 export const STYLE_EVIDENCE = {
   Detroit: ['detroit'],
-  Chicago: ['chicago', 'deep dish', 'deep-dish', 'stuffed'],
+  'New Haven / Connecticut': ['new haven', 'connecticut', 'apizza'],
+  'Chicago Deep Dish': ['chicago', 'deep dish', 'deep-dish', 'stuffed'],
+  'Chicago Tavern': ['chicago tavern', 'chicago thin'],
   'New York': ['new york', 'ny style', 'ny-style', 'brooklyn'],
   Neapolitan: ['neapolitan', 'wood fired', 'wood-fired', 'brick oven', 'coal fired', 'napoletana', 'napoli'],
-  Sicilian: ['sicilian', 'grandma'],
+  Sicilian: ['sicilian'],
+  Grandma: ['grandma'],
   Roman: ['roman', 'al taglio', 'taglio'],
+  'St. Louis': ['st. louis', 'st louis', 'st-louis'],
   Tavern: ['tavern', 'party cut', 'thin crust', 'square cut'],
   California: ['california'],
-  Traditional: ['pizza', 'pizzeria', 'pizzaria', 'pizzería', 'pizzas', 'domino', 'pizza hut', 'papa john', 'little caesars', 'sbarro']
+  'Standard Round': ['pizza', 'pizzeria', 'pizzaria', 'pizzería', 'pizzas', 'domino', 'pizza hut', 'papa john', 'little caesars', 'sbarro'],
+  Other: [],
+  Unknown: []
 }
 
 export const PIZZA_SIGNAL_TERMS = [
@@ -50,6 +56,7 @@ export function hasAnyEvidence(text, terms) {
 
 export function hasStyleEvidence(row, style = row.style) {
   if (!style) return true
+  if (style === 'Other' || style === 'Unknown') return true
   const terms = STYLE_EVIDENCE[style] || []
   return terms.length ? hasAnyEvidence(evidenceText(row), terms) : false
 }

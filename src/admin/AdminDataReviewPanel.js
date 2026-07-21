@@ -771,7 +771,7 @@ export default function AdminDataReviewPanel({ entity }) {
 
       {queueOpen ? (
         <>
-          <button className="admin-scrim" type="button" onClick={() => setQueueOpen(false)} aria-label="Close queue" />
+          <button className="admin-scrim" type="button" onClick={() => setQueueOpen(false)} aria-label="Dismiss queue drawer" />
           <aside className="admin-drawer" aria-label="Current review queue">
             <div className="admin-drawer__header">
               <div>
@@ -812,7 +812,7 @@ export default function AdminDataReviewPanel({ entity }) {
 
       {filtersOpen ? (
         <>
-          <button className="admin-scrim" type="button" onClick={() => setFiltersOpen(false)} aria-label="Close filters" />
+          <button className="admin-scrim" type="button" onClick={() => setFiltersOpen(false)} aria-label="Dismiss filters drawer" />
           <aside className="admin-drawer" aria-label="Review filters">
             <div className="admin-drawer__header">
               <h2>Filters</h2>

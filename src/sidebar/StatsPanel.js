@@ -73,9 +73,9 @@ export function StatsPanel({ table = 'pizza_places' }) {
 
   return (
     <div style={{ marginBottom: '1rem' }}>
-      <h3 className="filter-section__title" style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+      <h2 className="filter-section__title" style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
         Stats
-      </h3>
+      </h2>
       <section
         style={{
           border: '1px solid var(--app-border)',

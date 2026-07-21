@@ -289,7 +289,7 @@
 .admin-button--primary {
   border-color: var(--admin-accent);
   background: var(--admin-accent);
-  color: #fff;
+  color: #171917;
 }
 
 .admin-button--primary:hover:not(:disabled) {
