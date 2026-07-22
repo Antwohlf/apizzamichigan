@@ -93,7 +93,7 @@ async function main() {
     `SELECT id, name, state, google_place_id, website_url, scrape_notes, osm_tags
      FROM pizza_places
      WHERE state = $1
-       AND scrape_method = 'fetch'
+       AND scrape_method IN ('fetch', 'browser')
      ORDER BY id ASC
      LIMIT $2`,
     [state, limit]

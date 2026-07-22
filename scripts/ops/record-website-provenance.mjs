@@ -11,7 +11,7 @@ const result = await client.query(`
                             'delivery', delivery, 'takeaway', takeaway, 'scrape_method', scrape_method),
          1.0, 'scraped_first_party', COALESCE(last_enriched_at, NOW()), NOW()
   FROM pizza_places
-  WHERE scrape_method = 'fetch'
+  WHERE scrape_method IN ('fetch', 'browser')
     AND website_url IS NOT NULL
     AND COALESCE(last_enriched_at, updated_at, NOW()) >= NOW() - ($1::text || ' hours')::interval
   ON CONFLICT (entity_type, source, source_id) DO UPDATE SET

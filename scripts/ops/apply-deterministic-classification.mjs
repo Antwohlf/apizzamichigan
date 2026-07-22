@@ -29,6 +29,7 @@ function parseIds(value) {
 function parseArgs(argv) {
   const args = {
     ids: [],
+    states: [],
     minPlaceId: null,
     maxPlaceId: null,
     idPrefix: null,
@@ -41,6 +42,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--ids') args.ids = parseIds(argv[++i]);
+    else if (arg === '--states') args.states = argv[++i].split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
     else if (arg === '--min-place-id') args.minPlaceId = parseInteger(argv[++i], '--min-place-id');
     else if (arg === '--max-place-id') args.maxPlaceId = parseInteger(argv[++i], '--max-place-id');
     else if (arg === '--id-prefix') args.idPrefix = argv[++i];
@@ -53,10 +55,12 @@ function parseArgs(argv) {
 
   const hasIds = args.ids.length > 0;
   const hasRange = Number.isFinite(args.minPlaceId) && Number.isFinite(args.maxPlaceId);
-  if (!args.help && !hasIds && !hasRange) {
-    throw new Error('Use --ids or both --min-place-id and --max-place-id.');
+  const hasStates = args.states.length > 0;
+  if (!args.help && !hasIds && !hasRange && !hasStates) {
+    throw new Error('Use --ids, --states, or both --min-place-id and --max-place-id.');
   }
-  if (hasIds && hasRange) throw new Error('Use --ids or an ID range, not both.');
+  if (hasIds && (hasRange || hasStates)) throw new Error('Use --ids, --states, or an ID range, not multiple selectors.');
+  if (hasRange && hasStates) throw new Error('Use --states or an ID range, not both.');
   if (hasRange && args.maxPlaceId < args.minPlaceId) throw new Error('--max-place-id must be >= --min-place-id.');
   if (!Number.isFinite(args.limit) || args.limit <= 0 || args.limit > 1000) {
     throw new Error('--limit must be between 1 and 1000.');
@@ -71,6 +75,7 @@ function printHelp() {
 
 Options:
   --ids <ids>              Exact local pizza_places ids
+  --states <a,b>           Optional uppercase state scope (for example MI,NY)
   --min-place-id <id>      Minimum local pizza_places id
   --max-place-id <id>      Maximum local pizza_places id
   --id-prefix <prefix>     Optional google_place_id prefix guard
@@ -129,7 +134,7 @@ async function fetchRows(client, args) {
   if (args.ids.length) {
     params.push(args.ids);
     clauses.push(`id = ANY($${params.length}::int[])`);
-  } else {
+  } else if (Number.isFinite(args.minPlaceId) && Number.isFinite(args.maxPlaceId)) {
     params.push(args.minPlaceId);
     clauses.push(`id >= $${params.length}`);
     params.push(args.maxPlaceId);
@@ -139,6 +144,11 @@ async function fetchRows(client, args) {
   if (args.idPrefix) {
     params.push(`${args.idPrefix}%`);
     clauses.push(`google_place_id LIKE $${params.length}`);
+  }
+
+  if (args.states.length) {
+    params.push(args.states);
+    clauses.push(`UPPER(COALESCE(state, '')) = ANY($${params.length}::text[])`);
   }
 
   params.push(args.limit);

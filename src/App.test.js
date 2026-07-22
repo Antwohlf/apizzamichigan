@@ -9,6 +9,7 @@ import App, {
   searchResultPriority,
   stateCodesForSearch,
   stateScopedNameTerms,
+  isAnthonysPick,
 } from './App'
 import { __mockFrom, __setMockTable } from './supabaseClient'
 
@@ -96,6 +97,13 @@ describe('App routing themes', () => {
 })
 
 describe('remoteSearchTerms', () => {
+  test('defines Anthony\'s Picks as rated 8 or higher', () => {
+    expect(isAnthonysPick({ rating: 8 })).toBe(true)
+    expect(isAnthonysPick({ rating: '9.5' })).toBe(true)
+    expect(isAnthonysPick({ rating: 7.9 })).toBe(false)
+    expect(isAnthonysPick({ rating: null })).toBe(false)
+  })
+
   test('keeps public search payload bounded to display and ranking fields', () => {
     expect(publicSearchSelect).toContain('name')
     expect(publicSearchSelect).toContain('brand')
@@ -104,12 +112,13 @@ describe('remoteSearchTerms', () => {
     expect(publicSearchSelect).toContain('lifecycle_replaced_by_id')
     expect(publicSearchSelect).not.toContain('osm_tags')
     expect(publicSearchSelect).not.toContain('scrape_notes')
-    expect(publicSearchSelect).not.toContain('website_url')
+    expect(publicSearchSelect).toContain('website_url')
+    expect(publicSearchSelect).toContain('phone')
   })
 
   test('uses only columns present in the canonical tables', () => {
     expect(remoteSearchableColumns('pizza_places')).toEqual([
-      'name', 'address', 'state', 'style', 'status', 'price_range', 'brand', 'operator',
+      'name', 'address', 'website_url', 'phone', 'state', 'style', 'status', 'price_range', 'brand', 'operator',
     ])
     expect(remoteSearchableColumns('taco_places')).not.toContain('city')
   })
@@ -278,6 +287,17 @@ describe('placeSearchRank', () => {
     expect(placeSearchRank(place, 'lindustrie')).toBeLessThan(3)
     expect(placeSearchRank(place, 'lindustrie'))
       .toBeLessThan(placeSearchRank(generic, 'lindustrie'))
+  })
+
+  test('ranks exact website and phone searches as strong identifiers', () => {
+    const place = {
+      name: 'Little Caesars',
+      website_url: 'https://littlecaesars.com/en-us/store/8742',
+      phone: '+1 209-466-5555',
+    }
+
+    expect(placeSearchRank(place, 'littlecaesars.com/en-us/store/8742')).toBeLessThan(2)
+    expect(placeSearchRank(place, '2094665555')).toBeLessThan(2)
   })
 
   test('treats common city shorthand as a location match', () => {

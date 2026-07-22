@@ -178,6 +178,7 @@ export default function AdminDataReviewPanel({ entity }) {
   const searchText = searchParams.get('q') || ''
   const sourceFilter = searchParams.get('source') || ''
   const stateFilter = searchParams.get('state') || ''
+  const focus = searchParams.get('focus') === 'all' ? 'all' : 'weekly'
   const selectedParam = searchParams.get('id') || ''
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -239,6 +240,7 @@ export default function AdminDataReviewPanel({ entity }) {
           status: 'pending',
           kind: activeQueue.kind,
           readiness: activeQueue.readiness,
+          focus,
           limit: String(PAGE_SIZE),
           offset: String(page * PAGE_SIZE),
         })
@@ -266,13 +268,13 @@ export default function AdminDataReviewPanel({ entity }) {
     return () => {
       cancelled = true
     }
-  }, [activeQueue.kind, activeQueue.readiness, entity, page, refreshKey, searchText, sourceFilter, stateFilter])
+  }, [activeQueue.kind, activeQueue.readiness, entity, focus, page, refreshKey, searchText, sourceFilter, stateFilter])
 
   useEffect(() => {
     setPage(0)
     setNotes('')
     setHistory({ open: false, loading: false, rows: [], error: '' })
-  }, [activeQueue.id, entity, searchText, sourceFilter, stateFilter])
+  }, [activeQueue.id, entity, focus, searchText, sourceFilter, stateFilter])
 
   const selectedIndex = useMemo(() => {
     const requestedIndex = rows.findIndex(row => String(row.id) === selectedParam)
@@ -572,6 +574,24 @@ export default function AdminDataReviewPanel({ entity }) {
           <List size={16} aria-hidden="true" />
           Queue
         </button>
+        <div className="admin-focus-switch" role="group" aria-label="Review workload">
+          <button
+            className={`admin-focus-switch__button${focus === 'weekly' ? ' is-active' : ''}`}
+            type="button"
+            aria-pressed={focus === 'weekly'}
+            onClick={() => { setPage(0); setParamValues({ focus: 'weekly', id: null }) }}
+          >
+            This week <span>50 max</span>
+          </button>
+          <button
+            className={`admin-focus-switch__button${focus === 'all' ? ' is-active' : ''}`}
+            type="button"
+            aria-pressed={focus === 'all'}
+            onClick={() => { setPage(0); setParamValues({ focus: 'all', id: null }) }}
+          >
+            Full queue
+          </button>
+        </div>
         <div className="admin-toolbar__spacer" />
         <span className="admin-progress">{total ? `${Math.min(progressNumber, total)} of ${formatCount(total)}` : `${formatCount(activeCount)} remaining`}</span>
       </div>

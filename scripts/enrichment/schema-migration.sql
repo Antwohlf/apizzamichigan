@@ -107,7 +107,7 @@ ALTER TABLE pizza_places
 
 ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS scrape_method TEXT
-    CHECK (scrape_method IN ('fetch', 'failed'));
+    CHECK (scrape_method IN ('fetch', 'browser', 'failed'));
 
 ALTER TABLE pizza_places
   ADD COLUMN IF NOT EXISTS scrape_notes TEXT;
@@ -213,7 +213,7 @@ ALTER TABLE taco_places
 
 ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS scrape_method TEXT
-    CHECK (scrape_method IN ('fetch', 'failed'));
+    CHECK (scrape_method IN ('fetch', 'browser', 'failed'));
 
 ALTER TABLE taco_places
   ADD COLUMN IF NOT EXISTS scrape_notes TEXT;

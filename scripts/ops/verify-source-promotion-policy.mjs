@@ -140,7 +140,7 @@ function main() {
   assert(SERVER.includes('SOURCE_CONTACT_PROMOTION_PREVIEW'), 'admin API should expose a promotion preview policy.');
   assert(SERVER.includes("fields: ['website_url', 'phone']"), 'admin promotion preview should include only website_url and phone.');
   assert(SERVER.includes("sources: ['official_website', 'osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata']"), 'admin promotion preview should use default source priority.');
-  assert(SERVER.includes("matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import']"), 'admin promotion preview should use default eligible match methods.');
+  assert(SERVER.includes("matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import', 'scraped_first_party']"), 'admin promotion preview should use default eligible match methods.');
   assert(SERVER.includes('minConfidence: 0.9'), 'admin promotion preview should require high-confidence evidence.');
   assert(SERVER.includes('promotionCandidates'), 'admin source provenance payload should include promotion candidate preview.');
   assert(ADMIN_PANEL.includes('Contact Promotion Candidates'), 'admin panel should show contact promotion candidates.');

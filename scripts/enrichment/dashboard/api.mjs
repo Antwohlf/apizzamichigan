@@ -57,10 +57,10 @@ export async function getStatus() {
   const pgStats = await pgClient.query(`
     SELECT
       COUNT(*) FILTER (WHERE state='MI') as mi_total,
-      COUNT(*) FILTER (WHERE state='MI' AND scrape_method='fetch') as mi_scraped,
+      COUNT(*) FILTER (WHERE state='MI' AND scrape_method IN ('fetch', 'browser')) as mi_scraped,
       COUNT(*) FILTER (WHERE state='MI' AND (style IS NOT NULL OR price_range IS NOT NULL)) as mi_classified,
       COUNT(*) FILTER (WHERE osm_tags IS NOT NULL) as osm_tags_total,
-      COUNT(*) FILTER (WHERE scrape_method='fetch') as scraped_total,
+      COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) as scraped_total,
       COUNT(*) FILTER (WHERE style IS NOT NULL) as style_total,
       COUNT(*) FILTER (WHERE price_range IS NOT NULL) as price_range_total
     FROM pizza_places

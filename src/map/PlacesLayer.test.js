@@ -10,13 +10,13 @@ describe('focusedPlaceZoom', () => {
     })).toBe(11)
   })
 
-  test('focuses off-screen selections at detail zoom even from city context', () => {
+  test('focuses off-screen selections at neighborhood context from city view', () => {
     expect(focusedPlaceZoom({
       currentZoom: 11,
       maxZoom: 18,
       isOutsideView: true,
       preserveZoomIfVisible: true,
-    })).toBe(15)
+    })).toBe(13)
   })
 
   test('zooms in from state-level context for off-screen selections', () => {
@@ -25,7 +25,7 @@ describe('focusedPlaceZoom', () => {
       maxZoom: 18,
       isOutsideView: true,
       preserveZoomIfVisible: true,
-    })).toBe(15)
+    })).toBe(13)
   })
 
   test('focuses zoomed-out selections enough to show the place', () => {
@@ -34,7 +34,7 @@ describe('focusedPlaceZoom', () => {
       maxZoom: 18,
       isOutsideView: false,
       preserveZoomIfVisible: true,
-    })).toBe(15)
+    })).toBe(13)
   })
 })
 

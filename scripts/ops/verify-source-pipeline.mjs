@@ -31,8 +31,8 @@ if (!config.sources.official_website.capabilities.includes('promote_contact')) {
 if (required.filter(key => config.sources[key].capabilities.includes('promote_contact')).length !== 1) {
   throw new Error('exactly one source may currently promote contact fields automatically');
 }
-if (config.limits.new_places_per_run !== 50 || config.limits.new_places_per_day !== 250) {
-  throw new Error('new-place caps must remain 50/run and 250/day');
+if (config.limits.new_places_per_run !== 50 || config.limits.new_places_per_day !== 250 || config.limits.classify_queue_jobs_per_region_per_run !== 50) {
+  throw new Error('new-place caps and classifier feeder cap must remain bounded');
 }
 if (config.sources.wikidata.auto_create || config.sources.official_website.auto_create) {
   throw new Error('enrichment-only sources cannot auto-create places');
@@ -86,7 +86,9 @@ if (!runner.includes("skipped: []") || !runner.includes("reason: 'cadence_not_du
 if (!wikidataSource.includes("btrim(COALESCE(brand_wikidata") || !wikidataSource.includes("btrim(qid) ~ '^Q[0-9]+$'")) {
   throw new Error('Wikidata exporter must extract canonical Q identifiers from place identity fields');
 }
-if (!runner.includes('sourceState.region_index') || !runner.includes('region_index: (Number(state.sources[source]?.region_index || 0) + 1) % config.regions.length')) {
+if (!runner.includes('sourceState.region_index')
+  || !runner.includes('state.sources[source]?.region_index')
+  || !runner.includes('(startingRegionIndex + regionOffset + 1) % regions.length')) {
   throw new Error('source runner must advance geographic cursors independently per source');
 }
 if (!runner.includes('selectOsmRegion') || !runner.includes('osmBacklog')) {
@@ -101,9 +103,12 @@ if (!runner.includes('SOURCE_PIPELINE_RUN_SCRAPER') || !runner.includes('managed
 if (!runner.includes('record-website-provenance.mjs')) {
   throw new Error('source runner must record website evidence after managed scraping');
 }
+if (!runner.includes('populate-classify-from-db.mjs') || !runner.includes("'--skip-existing'") || !runner.includes('classify_queue_jobs_per_region_per_run')) {
+  throw new Error('source runner must feed bounded MI/NY classifier jobs without duplicating existing queue work');
+}
 if (!runner.includes('auto-link-source-review-queue.mjs')
   || !runner.includes("'--exact-identifiers'")
-  || !runner.includes("'--min-exact-identifiers', '2'")
+  || !runner.includes("'--min-exact-identifiers', '3'")
   || !runner.includes("'--source-identity'")
   || !runner.includes("'--exact-source-id'")
   || !runner.includes("'--max-distance-m', '100'")) {

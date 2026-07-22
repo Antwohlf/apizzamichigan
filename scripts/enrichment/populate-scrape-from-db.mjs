@@ -82,7 +82,7 @@ async function main() {
 
   const clauses = [
     'website_url IS NOT NULL',
-    "(scrape_method IS NULL OR scrape_method != 'fetch')"
+    "(scrape_method IS NULL OR scrape_method NOT IN ('fetch', 'browser'))"
   ]
   const params = []
 

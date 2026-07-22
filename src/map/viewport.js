@@ -1,7 +1,9 @@
 export const DEFAULT_MAP_ZOOM = 6
 export const MIN_INDIVIDUAL_MARKERS_ZOOM = 7
 export const CITY_CONTEXT_ZOOM = 10
-export const FOCUSED_PLACE_ZOOM = 15
+// Keep a selected place in useful neighborhood context. Detail zoom belongs
+// to the photo viewer, not the map-selection transition.
+export const FOCUSED_PLACE_ZOOM = 13
 
 export function focusedPlaceZoom({
   currentZoom = DEFAULT_MAP_ZOOM,
