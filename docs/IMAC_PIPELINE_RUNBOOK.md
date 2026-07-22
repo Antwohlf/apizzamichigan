@@ -150,6 +150,11 @@ fields. The promotion rechecks freshness, confidence, source priority, and
 match method, and does not publish to Supabase. The limit is
 `config/source-pipeline.json` -> `limits.contact_promotions_per_run`.
 
+Each apply tick also feeds a small, deduplicated classifier batch for Michigan
+and New York. It skips any place that already has a classify job, including
+completed jobs, so the feeder advances through the missing-style/price backlog
+without duplicating work or creating a second classifier process.
+
 Each regional OSM export has a resumable manifest. The exporter refuses to
 reuse a manifest when the requested bounding box or tile step differs from the
 manifest metadata. This prevents an accidental retry for one region from
@@ -180,13 +185,15 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops
 ```
 
 For a bounded operator recovery, add `--force` to bypass source cadence while
-retaining the normal work-unit and new-place limits. Launchd does not use this
-flag, so scheduled runs remain cadence-controlled.
+retaining the normal work-unit and new-place limits. Use `--regions MI,NY` when
+the work should stay within the product's priority geography; without that
+option the runner uses all configured regions. Launchd does not use either
+operator-only flag, so scheduled runs remain cadence-controlled and global.
 
 The launchd template is the explicit apply path. It caps heavy work at four
 units per hour, strict new-place creation at 50 per run and 250 per day, and
 website scraping at 75 bounded jobs per run. OSM itself runs on an hourly
-cadence and processes two regions per scheduler run. The runner never starts
+cadence and processes its configured regional budget per scheduler run. The runner never starts
 concurrent top-level OSM workers; its hard runtime cap, request timeouts,
 endpoint failover, and resumable manifests keep the regional batch bounded
 when an Overpass provider is slow.
@@ -194,8 +201,8 @@ when an Overpass provider is slow.
 The template also sets bounded OSM timeouts: 90 seconds for the Overpass query,
 120 seconds for an HTTP request, and 180 seconds for a tile subprocess. A slow
 provider therefore fails over or checkpoints instead of holding the
-source-pipeline job indefinitely. The launchd job runs every 15 minutes. Every
-region uses two resumable tiles per run. Successful tiles remain usable when a run
+source-pipeline job indefinitely. The launchd job runs every 15 minutes. Each
+region uses its configured resumable-tile budget per run. Successful tiles remain usable when a run
 ends partially. A timed-out tile may be adaptively split through two bounded
 level before its remaining subtiles are checkpointed for the next scheduled
 attempt. This deliberately keeps a difficult tile from consuming the entire

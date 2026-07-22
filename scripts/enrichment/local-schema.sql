@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS pizza_places (
 
   enrichment_status TEXT DEFAULT 'pending' CHECK (enrichment_status IN ('pending', 'enriched', 'failed')),
   last_enriched_at TIMESTAMPTZ,
-  scrape_method TEXT CHECK (scrape_method IN ('fetch', 'failed')),
+  scrape_method TEXT CHECK (scrape_method IN ('fetch', 'browser', 'failed')),
   scrape_notes TEXT
 );
 
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS taco_places (
 
   enrichment_status TEXT DEFAULT 'pending' CHECK (enrichment_status IN ('pending', 'enriched', 'failed')),
   last_enriched_at TIMESTAMPTZ,
-  scrape_method TEXT CHECK (scrape_method IN ('fetch', 'failed')),
+  scrape_method TEXT CHECK (scrape_method IN ('fetch', 'browser', 'failed')),
   scrape_notes TEXT
 );
 

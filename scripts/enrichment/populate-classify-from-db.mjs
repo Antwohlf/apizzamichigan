@@ -35,7 +35,8 @@ function parseArgs() {
   const maxPlaceId = args.includes('--max-place-id') ? parseInt(args[args.indexOf('--max-place-id') + 1], 10) : null
   const priorityBoost = args.includes('--priority-boost') ? parseInt(args[args.indexOf('--priority-boost') + 1], 10) : 0
   const limit = args.includes('--limit') ? parseInt(args[args.indexOf('--limit') + 1], 10) : 200
-  return { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit }
+  const skipExisting = args.includes('--skip-existing')
+  return { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit, skipExisting }
 }
 
 function printHelp() {
@@ -50,6 +51,7 @@ Options:
   --max-place-id <id>       Maximum local place id
   --priority-boost <n>      Boost matching pending classify jobs after add
   --limit <n>               Maximum candidates to inspect (default 200)
+  --skip-existing           Skip places that already have any classify job
   --dry-run                 Count candidates without adding or boosting jobs
   --help                    Print this help and exit
 
@@ -60,7 +62,7 @@ classifier yet; use --type pizza explicitly in generated handoff commands.
 }
 
 async function main() {
-  const { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit } = parseArgs()
+  const { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit, skipExisting } = parseArgs()
   if (help) {
     printHelp()
     return
@@ -81,7 +83,8 @@ async function main() {
   const queue = dryRun ? null : getQueue()
 
   const clauses = [
-    `(scrape_method = 'fetch'
+    "NULLIF(BTRIM(google_place_id), '') IS NOT NULL",
+    `(scrape_method IN ('fetch', 'browser')
       OR osm_tags IS NOT NULL
       OR EXISTS (
         SELECT 1
@@ -120,6 +123,10 @@ async function main() {
   let limitSql = ''
   if (limit && Number.isFinite(limit)) {
     params.push(limit)
+    // Scan beyond the bounded write batch so existing jobs do not pin the
+    // feeder to the same first page forever.
+    const candidateLimit = skipExisting ? 10000 : limit
+    params[params.length - 1] = candidateLimit
     limitSql = `LIMIT $${params.length}`
   }
 
@@ -132,7 +139,11 @@ async function main() {
     params
   )
 
-  const jobs = rows.map((r) => ({
+  const existingIds = skipExisting && !dryRun
+    ? new Set(queue.db.prepare("SELECT osm_id FROM jobs WHERE job_type = 'classify'").all().map(row => row.osm_id))
+    : new Set()
+  const eligibleRows = skipExisting ? rows.filter(row => !existingIds.has(row.google_place_id)) : rows
+  const jobs = eligibleRows.slice(0, limit).map((r) => ({
     jobType: 'classify',
     osmId: r.google_place_id,
     placeType: type,
@@ -165,6 +176,7 @@ async function main() {
   }
 
   console.log(`Found ${rows.length} candidates`)
+  if (skipExisting) console.log(`Skipped ${rows.length - eligibleRows.length} places with existing classify jobs`)
   console.log(`Mode: ${dryRun ? 'dry-run' : 'apply'}`)
   console.log(`Added ${added} classify jobs to SQLite queue`)
   if (priorityBoost > 0) console.log(`Boosted ${boosted} pending classify jobs by ${priorityBoost}`)

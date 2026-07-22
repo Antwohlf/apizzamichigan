@@ -77,6 +77,13 @@ export default function AdminHomePanel({ entity, navigate }) {
     return [
       ...queueTasks,
       {
+        id: 'basic-fields',
+        title: 'Fill missing basic information',
+        detail: 'See which Michigan and New York places still need an address, contact detail, style, or price.',
+        count: summary?.basicFieldCoverage?.overall?.needsAttention,
+        path: `/admin/reviews/system?entity=${entity}#basic-coverage`,
+      },
+      {
         id: 'import',
         title: 'Import approved places',
         detail: 'Run the final duplicate check before adding approved places to the local map.',

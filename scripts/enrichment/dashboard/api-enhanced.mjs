@@ -158,7 +158,7 @@ export async function getEnhancedStatus() {
     SELECT
       COUNT(*) as total_places,
       COUNT(*) FILTER (WHERE osm_tags IS NOT NULL) as osm_tags_populated,
-      COUNT(*) FILTER (WHERE scrape_method='fetch') as scraped,
+      COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) as scraped,
       COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) as classified,
       COUNT(*) FILTER (WHERE style IS NOT NULL) as with_style,
       COUNT(*) FILTER (WHERE price_range IS NOT NULL) as with_price_range
@@ -170,7 +170,7 @@ export async function getEnhancedStatus() {
     SELECT
       COUNT(*) as total,
       COUNT(*) FILTER (WHERE osm_tags IS NOT NULL) as osm_tags_populated,
-      COUNT(*) FILTER (WHERE scrape_method='fetch') as scraped,
+      COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) as scraped,
       COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) as classified,
       COUNT(*) FILTER (WHERE menu_data IS NOT NULL) as with_menu_data
     FROM pizza_places
@@ -207,10 +207,10 @@ export async function getEnhancedStatus() {
       state,
       COUNT(*) as total,
       COUNT(*) FILTER (WHERE osm_tags IS NOT NULL) as osm_enriched,
-      COUNT(*) FILTER (WHERE scrape_method='fetch') as scraped,
+      COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) as scraped,
       COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) as classified,
       ROUND(100.0 * COUNT(*) FILTER (WHERE osm_tags IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as pct_osm,
-      ROUND(100.0 * COUNT(*) FILTER (WHERE scrape_method='fetch') / NULLIF(COUNT(*), 0), 1) as pct_scraped,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) / NULLIF(COUNT(*), 0), 1) as pct_scraped,
       ROUND(100.0 * COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as pct_classified
     FROM pizza_places
     WHERE state IS NOT NULL
@@ -236,10 +236,10 @@ export async function getEnhancedStatus() {
     SELECT
       COUNT(*) as total_with_osm,
       COUNT(*) FILTER (WHERE website_url IS NOT NULL) as with_website,
-      COUNT(*) FILTER (WHERE scrape_method='fetch') as scraped,
+      COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) as scraped,
       COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) as classified,
-      ROUND(100.0 * COUNT(*) FILTER (WHERE scrape_method='fetch') / NULLIF(COUNT(*) FILTER (WHERE website_url IS NOT NULL), 0), 1) as scrape_conversion,
-      ROUND(100.0 * COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) / NULLIF(COUNT(*) FILTER (WHERE scrape_method='fetch'), 0), 1) as classify_conversion
+      ROUND(100.0 * COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')) / NULLIF(COUNT(*) FILTER (WHERE website_url IS NOT NULL), 0), 1) as scrape_conversion,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL) / NULLIF(COUNT(*) FILTER (WHERE scrape_method IN ('fetch', 'browser')), 0), 1) as classify_conversion
     FROM pizza_places
   `)
 

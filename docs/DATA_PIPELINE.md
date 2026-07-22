@@ -33,8 +33,16 @@ values from fresh, high-confidence `place_sources` evidence, capped by
 editorial, classifier, or Supabase data.
 
 Current production rollout is classifier-first with guarded automated Supabase
-sync. OSM extraction, scraping, and menu parse remain manual/opt-in until their
-source and quality policies are tightened.
+sync. The iMac launchd source feeder refreshes Michigan and New York OSM tiles
+on a bounded cadence, records source evidence, and promotes only approved blank
+contact fields. Website scraping and menu parsing remain separately managed so
+they cannot create an unbounded second writer.
+
+The authenticated admin home exposes a regional basic-field coverage view for
+active Michigan and New York places. It reports missing address, website, phone,
+style, and price values without pretending that every gap is safe to fill
+automatically: contact blanks can use accepted evidence, while identity and
+editorial fields remain review- or classifier-owned.
 
 ## Supabase Sync Scope
 

@@ -76,6 +76,25 @@ const normalizeCount = value => {
   return Number.isFinite(number) ? number : 0
 }
 
+const buildBasicFieldCoverage = (totalRow = {}, stateRows = []) => {
+  const fields = ['address', 'website_url', 'phone', 'style', 'price_range']
+  const normalize = row => {
+    const total = normalizeCount(row?.total)
+    const missing = Object.fromEntries(fields.map(field => [field, normalizeCount(row?.[`missing_${field}`])]))
+    return {
+      total,
+      missing,
+      needsAttention: normalizeCount(row?.needs_attention),
+    }
+  }
+  return {
+    scope: ['MI', 'NY'],
+    fields,
+    overall: normalize(totalRow),
+    byState: Object.fromEntries(stateRows.map(row => [row.state, normalize(row)])),
+  }
+}
+
 const sourceReviewSignalCountSql = `(
   CASE WHEN NULLIF(source_data->>'address', '') IS NOT NULL OR NULLIF(source_data->>'addr:full', '') IS NOT NULL THEN 1 ELSE 0 END +
   CASE WHEN NULLIF(source_data->>'website', '') IS NOT NULL OR NULLIF(source_data->>'contact:website', '') IS NOT NULL THEN 1 ELSE 0 END +
@@ -713,7 +732,7 @@ const allowedSourceReviewScopes = new Set(['chain', 'independent'])
 const SOURCE_CONTACT_PROMOTION_PREVIEW = {
   sources: ['official_website', 'osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata'],
   fields: ['website_url', 'phone'],
-  matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import'],
+  matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import', 'scraped_first_party'],
   minConfidence: 0.9,
 }
 const SOURCE_REVIEW_ENTITY_TABLES = {
@@ -2050,6 +2069,52 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           AND table_name IN ('place_sources', 'source_review_queue')
       `)
       const tables = new Set(tableCheck.rows.map(row => row.table_name))
+      const placeTable = entity === 'taco' ? 'taco_places' : 'pizza_places'
+      const placeColumnResult = await client.query(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1
+      `, [placeTable])
+      const placeColumns = new Set(placeColumnResult.rows.map(row => row.column_name))
+      const coverageExpression = field => placeColumns.has(field)
+        ? `COUNT(*) FILTER (WHERE NULLIF(BTRIM(COALESCE(${field}::text, '')), '') IS NULL)::int AS missing_${field}`
+        : `0::int AS missing_${field}`
+      const missingCoverageCondition = ['address', 'website_url', 'phone', 'style', 'price_range']
+        .filter(field => placeColumns.has(field))
+        .map(field => `NULLIF(BTRIM(COALESCE(${field}::text, '')), '') IS NULL`)
+        .join(' OR ') || 'FALSE'
+      const coverageStateExpression = placeColumns.has('state') ? 'state' : "''"
+      const coverageResult = await client.query(`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE ${missingCoverageCondition})::int AS needs_attention,
+          ${coverageExpression('address')},
+          ${coverageExpression('website_url')},
+          ${coverageExpression('phone')},
+          ${coverageExpression('style')},
+          ${coverageExpression('price_range')}
+        FROM ${placeTable}
+        WHERE ${coverageStateExpression} IN ('MI', 'NY')
+          AND lower(COALESCE(status, '')) NOT LIKE 'closed%'
+          AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+      `)
+      const coverageByStateResult = await client.query(`
+        SELECT
+          ${coverageStateExpression} AS state,
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE ${missingCoverageCondition})::int AS needs_attention,
+          ${coverageExpression('address')},
+          ${coverageExpression('website_url')},
+          ${coverageExpression('phone')},
+          ${coverageExpression('style')},
+          ${coverageExpression('price_range')}
+        FROM ${placeTable}
+        WHERE ${coverageStateExpression} IN ('MI', 'NY')
+          AND lower(COALESCE(status, '')) NOT LIKE 'closed%'
+          AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+        GROUP BY ${coverageStateExpression}
+        ORDER BY ${coverageStateExpression}
+      `)
       if (!tables.has('source_review_queue')) {
         return {
           available: false,
@@ -2068,6 +2133,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           sourceRows: 0,
           linkedPlaces: 0,
           latestSourceUpdate: null,
+          basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows),
         }
       }
 
@@ -2193,6 +2259,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         sourceRows: normalizeCount(sourceTotals.source_rows),
         linkedPlaces: normalizeCount(sourceTotals.linked_places),
         latestSourceUpdate: sourceTotals.latest_source_update || null,
+        basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows),
       }
     })
 
@@ -2217,6 +2284,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         sourceRows: 0,
         linkedPlaces: 0,
         latestSourceUpdate: null,
+        basicFieldCoverage: buildBasicFieldCoverage(),
       },
     })
   }
@@ -2313,8 +2381,13 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   const scope = (req.query?.scope || '').toString().trim().slice(0, 20)
   const state = (req.query?.state || '').toString().trim().slice(0, 40)
   const search = (req.query?.search || '').toString().trim().slice(0, 120)
+  const focus = (req.query?.focus || 'weekly').toString().trim().toLowerCase()
   const limit = safeInteger(req.query?.limit, 50, { min: 1, max: 100 })
   const offset = safeInteger(req.query?.offset, 0, { min: 0, max: 1000000 })
+
+  if (!['weekly', 'all'].includes(focus)) {
+    return res.status(400).json({ error: 'Invalid source review focus.' })
+  }
 
   if (!allowedSourceReviewStatuses.has(status)) {
     return res.status(400).json({ error: 'Invalid source review status.' })
@@ -2401,8 +2474,11 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
         LEFT JOIN ${tableName} decision_place ON decision_place.id = srq.canonical_place_id
         WHERE ${where}
       `, values)
-      const total = countResult.rows[0]?.total || 0
-      values.push(limit, offset)
+      const fullTotal = countResult.rows[0]?.total || 0
+      const total = focus === 'weekly' ? Math.min(fullTotal, 50) : fullTotal
+      const remaining = Math.max(0, total - offset)
+      const effectiveLimit = Math.min(limit, remaining)
+      values.push(effectiveLimit, offset)
       const rows = await client.query(`
         SELECT
           srq.id,
@@ -2476,7 +2552,7 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
         OFFSET $${values.length}
       `, values)
 
-      return { available: true, data: rows.rows, total }
+      return { available: true, data: rows.rows, total, focus }
     })
 
     return res.json(payload)

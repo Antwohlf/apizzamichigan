@@ -19,6 +19,8 @@ const Sidebar = ({
   onClusterCountsToggle,
   showAnthonysVisits = false,
   onAnthonysVisitsToggle,
+  showAnthonysPicks = false,
+  onAnthonysPicksToggle,
 }) => {
   const { theme } = useTheme()
 
@@ -153,6 +155,23 @@ const Sidebar = ({
             type="checkbox"
             checked={showAnthonysVisits}
             onChange={e => onAnthonysVisitsToggle?.(e.target.checked)}
+            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+          />
+        </label>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.5rem 0',
+            cursor: 'pointer',
+          }}
+        >
+          <span style={{ fontSize: '0.9rem', color: 'var(--app-text)' }}>Anthony&apos;s Picks (8+)</span>
+          <input
+            type="checkbox"
+            checked={showAnthonysPicks}
+            onChange={e => onAnthonysPicksToggle?.(e.target.checked)}
             style={{ width: '18px', height: '18px', cursor: 'pointer' }}
           />
         </label>

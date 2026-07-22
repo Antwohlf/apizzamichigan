@@ -191,6 +191,7 @@ function main() {
     '--ids <ids>',
     '--ids ${idList}',
   ], 'reviewed-new classify queue handoff');
+  assert(POPULATE_CLASSIFY.includes("NULLIF(BTRIM(google_place_id), '') IS NOT NULL"), 'classify queue population must exclude canonical rows without a source identifier');
 
   includesAll(ADMIN, [
     'Recommended Queue Order',

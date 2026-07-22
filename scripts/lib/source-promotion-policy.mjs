@@ -15,7 +15,7 @@ export const SOURCE_PROMOTION_DEFAULTS = {
     'wikidata',
   ],
   fields: ['website_url', 'phone'],
-  matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import'],
+  matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import', 'scraped_first_party'],
   minConfidence: 0.9,
   limit: 50,
   maxUpdates: 50,

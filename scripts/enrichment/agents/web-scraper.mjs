@@ -14,6 +14,7 @@
 import { getQueue } from '../queue.mjs'
 import pg from 'pg'
 import * as cheerio from 'cheerio'
+import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import path from 'node:path'
 import 'dotenv/config'
@@ -26,6 +27,14 @@ const CONCURRENT_FETCHES = 5
 // - Can be overridden per-run via env.
 const FETCH_TIMEOUT = Number.parseInt(process.env.SCRAPE_FETCH_TIMEOUT_MS || '30000', 10) // ms
 const FETCH_DELAY = Number.parseInt(process.env.SCRAPE_FETCH_DELAY_MS || '500', 10)      // ms between jobs
+const BROWSER_TIMEOUT = Number.parseInt(process.env.SCRAPE_BROWSER_TIMEOUT_MS || '30000', 10)
+const BROWSER_DOMAINS = new Set(
+  (process.env.SCRAPE_BROWSER_FALLBACK_DOMAINS || '')
+    .split(',')
+    .map(domain => domain.trim().toLowerCase())
+    .filter(Boolean)
+)
+const BROWSER_EXECUTABLE = process.env.SCRAPE_BROWSER_EXECUTABLE_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 // Retry policy
 // - Still retries HTTP 5xx.
@@ -282,6 +291,48 @@ class WebScraper {
     }
   }
 
+  shouldUseBrowserFallback(url) {
+    if (BROWSER_DOMAINS.size === 0) return false
+    try {
+      const hostname = new URL(url).hostname.toLowerCase()
+      return [...BROWSER_DOMAINS].some(domain => hostname === domain || hostname.endsWith(`.${domain}`))
+    } catch {
+      return false
+    }
+  }
+
+  async fetchWithBrowser(url) {
+    const browser = await chromium.launch({
+      executablePath: BROWSER_EXECUTABLE,
+      headless: true,
+      args: ['--disable-gpu', '--no-first-run', '--no-default-browser-check']
+    })
+    try {
+      const page = await browser.newPage({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36 APizzaMichigan/1.0',
+        extraHTTPHeaders: {
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9'
+        }
+      })
+      const response = await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: BROWSER_TIMEOUT
+      })
+      if (response && response.status() >= 400) {
+        throw new Error(`HTTP ${response.status()}`)
+      }
+      await page.waitForTimeout(Math.min(1500, Math.max(0, BROWSER_TIMEOUT - 500)))
+      return {
+        html: await page.content(),
+        finalUrl: page.url(),
+        statusCode: response?.status() || 200
+      }
+    } finally {
+      await browser.close()
+    }
+  }
+
   /**
    * Extract data from HTML
    */
@@ -472,6 +523,7 @@ class WebScraper {
 
     // Fetch the website (with retry for transient errors)
     let lastError = null
+    let browserAttempted = false
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const { html, finalUrl, statusCode } = await this.fetchWithTimeout(url)
@@ -499,6 +551,22 @@ class WebScraper {
       } catch (error) {
         lastError = error
         const msg = String(error?.message || error)
+
+        // Browser rendering is deliberately opt-in and limited to configured domains.
+        if (!browserAttempted && this.shouldUseBrowserFallback(url)) {
+          browserAttempted = true
+          try {
+            const browserResult = await this.fetchWithBrowser(url)
+            const extracted = this.extractFromHtml(browserResult.html, browserResult.finalUrl)
+            await this.saveToCache(url, browserResult.finalUrl, browserResult.statusCode, extracted)
+            await this.updateDb(job.osmId, job.placeType, extracted, 'browser')
+            this.queue.complete(job.id, { ...extracted, scrape_method: 'browser' })
+            this.stats.completed++
+            return
+          } catch (browserError) {
+            lastError = new Error(`Browser fallback failed: ${browserError.message}`)
+          }
+        }
 
         // If it's a permanent/expected block/deadlink for now, don't keep retrying.
         if (isCantScrapeErrorMessage(msg)) {
@@ -538,7 +606,7 @@ class WebScraper {
   /**
    * Update database with scraped data
    */
-  async updateDb(osmId, placeType, data) {
+  async updateDb(osmId, placeType, data, scrapeMethod = 'fetch') {
     if (!data) return
 
     const table = placeType === 'pizza' ? 'pizza_places' : 'taco_places'
@@ -548,7 +616,7 @@ class WebScraper {
       SET
         phone = COALESCE($2, phone),
         menu_url = COALESCE($4, menu_url),
-        scrape_method = 'fetch',
+        scrape_method = $5,
         scrape_notes = $3,
         last_enriched_at = NOW()
       WHERE google_place_id = $1
@@ -556,7 +624,8 @@ class WebScraper {
       osmId,
       data.phone,
       JSON.stringify(data),
-      data.menu_url || null
+      data.menu_url || null,
+      scrapeMethod
     ])
   }
 

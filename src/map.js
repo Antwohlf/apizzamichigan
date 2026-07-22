@@ -79,6 +79,7 @@ const Map = ({
   onStateClick,
   flyToLocation,
   forceIndividualMarkers = false,
+  resetKey,
 }) => {
   const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
@@ -98,6 +99,7 @@ const Map = ({
           stateAggregates={stateAggregates}
           onStateClick={onStateClick}
           flyToLocation={flyToLocation}
+          resetKey={resetKey}
           forceIndividualMarkers={forceIndividualMarkers}
         />
         {/* Render ZoomButton directly inside MapContainer */}

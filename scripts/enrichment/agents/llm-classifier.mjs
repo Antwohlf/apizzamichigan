@@ -367,7 +367,7 @@ class LlmClassifier {
     }
 
     // Require scraped signal for LLM (avoid guessing from name only)
-    if (row.scrape_method !== 'fetch' && !row.osm_tags && !row.source_evidence?.length) {
+    if (!['fetch', 'browser'].includes(row.scrape_method) && !row.osm_tags && !row.source_evidence?.length) {
       this.queue.complete(job.id, { skipped: 'no_signal' })
       this.stats.completed++
       return

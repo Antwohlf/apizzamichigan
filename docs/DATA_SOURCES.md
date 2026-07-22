@@ -36,6 +36,24 @@ without allowing a new source to silently gain write authority.
 | Manual/admin input | Editorial source | Highest-trust source for reviewed places, corrections, photos, notes, status, and curated lists. |
 | User suggestions | Pending input | Suggestions are not canonical until approved by admin/editorial flow. |
 
+### Website Fetch Strategy
+
+Official websites are fetched with a normal HTTP client first. A browser-rendered
+fallback is available only for explicitly configured domains where the ordinary
+request fails transiently. It uses the existing Chrome installation on the
+worker machine, makes one bounded attempt, and records `scrape_method=browser`
+when it succeeds. It is disabled by default and must be enabled with:
+
+```bash
+SCRAPE_BROWSER_FALLBACK_DOMAINS=cpk.com,pizzahut.com \
+SCRAPE_BROWSER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+This fallback is for JavaScript-heavy or selectively served first-party pages;
+it is not a mechanism for bypassing access controls, robots rules, or rate
+limits. Dead links, DNS failures, and explicit block responses remain recorded
+without repeated browser attempts.
+
 ## Non-Ingestion Sources
 
 | Source | Policy |

@@ -25,6 +25,7 @@ const ENTITY_TABLES = {
 function parseArgs(argv) {
   const args = {
     entity: SOURCE_PROMOTION_DEFAULTS.entity,
+    states: [],
     sources: [...SOURCE_PROMOTION_DEFAULTS.sources],
     fields: [...SOURCE_PROMOTION_DEFAULTS.fields],
     matchMethods: [...SOURCE_PROMOTION_DEFAULTS.matchMethods],
@@ -37,6 +38,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--entity') args.entity = argv[++i];
+    else if (arg === '--states') args.states = argv[++i].split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
     else if (arg === '--sources') args.sources = argv[++i].split(',').map(value => value.trim()).filter(Boolean);
     else if (arg === '--fields') args.fields = argv[++i].split(',').map(value => value.trim()).filter(Boolean);
     else if (arg === '--match-methods') args.matchMethods = argv[++i].split(',').map(value => value.trim()).filter(Boolean);
@@ -71,12 +73,13 @@ function printHelp() {
 
 Options:
   --entity <pizza|taco>          Canonical table to update (default pizza)
+  --states <a,b>                 Optional uppercase state scope (for example MI,NY)
   --sources <a,b>                Source priority order
                                  (default osm,all_the_places)
   --fields <a,b>                 Fields to promote: website_url,phone
                                  (default website_url,phone)
   --match-methods <a,b>          Eligible match methods
-                                 (default exact_name_nearby,strong_spatial_name,imported_primary,reviewed_link,reviewed_new_import)
+                                 (default includes scraped_first_party for official websites)
   --min-confidence <n>           Minimum source match confidence, 0-1
                                  (default 0.9)
   --limit <n>                    Candidate sample size to print (default 50)
@@ -208,8 +211,11 @@ async function loadEvidenceRows(client, args) {
       AND ps.retrieved_at >= NOW() - make_interval(days => CASE ps.source ${freshnessCase} ELSE 365 END)
       AND (${blankFieldClauses.join(' OR ')})
       AND (${sourceKeyClauses.join(' OR ')})
+      ${args.states.length ? 'AND UPPER(COALESCE(p.state, \'\')) = ANY($5::text[])' : ''}
     ORDER BY p.id, array_position($2::text[], ps.source), ps.match_confidence DESC NULLS LAST
-  `, [args.entity, args.sources, args.matchMethods, args.minConfidence]);
+  `, args.states.length
+    ? [args.entity, args.sources, args.matchMethods, args.minConfidence, args.states]
+    : [args.entity, args.sources, args.matchMethods, args.minConfidence]);
 
   return result.rows;
 }

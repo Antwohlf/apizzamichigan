@@ -248,9 +248,10 @@ use incompatible variants, such as Papa Murphy's ATP rows named "Pizza Takeout &
 Delivery" or "Domino's Pizza" source rows nearest to "Domino's".
 
 Exact identifier mode is limited to all_the_places by default and requires an
-exact official store URL plus at least one corroborating identifier and nearby
-location. It is intended for deterministic official-chain links, not generic
-fuzzy matching.
+exact official store URL plus the configured number of corroborating identifiers
+and nearby location. Production runs use all three core identifiers (address,
+phone, and store-specific URL). It is intended for deterministic official-chain
+links, not generic fuzzy matching.
 
 Source-identity mode is limited to Wikidata brand identities. It only links an
 unreviewed canonical place when the source QID matches the canonical brand QID,

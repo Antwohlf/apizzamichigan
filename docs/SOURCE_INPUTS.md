@@ -515,7 +515,8 @@ report/spider at a time.
 
 Official-chain rows with exact independent identifiers do not need manual review.
 Use exact-identifier mode when the source address, phone, store-specific URL, and
-nearest canonical location all agree:
+nearest canonical location all agree. The recurring pipeline requires all three
+identifiers; it never changes the canonical display name:
 
 ```bash
 node scripts/ops/auto-link-source-review-queue.mjs \

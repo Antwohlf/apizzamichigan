@@ -190,6 +190,8 @@ const writeSearchCache = (key, rows) => {
 export const remoteSearchableColumns = table => [
   'name',
   'address',
+  'website_url',
+  'phone',
   'state',
   'style',
   'status',
@@ -205,6 +207,8 @@ export const publicSearchSelect = [
   'lat',
   'lng',
   'address',
+  'website_url',
+  'phone',
   'google_place_id',
   'state',
   'status',
@@ -393,6 +397,8 @@ const searchablePlaceText = place => normalizeSearchText([
   place?.brand,
   place?.operator,
   place?.address,
+  place?.website_url,
+  place?.phone,
   place?.city,
   place?.state,
   place?.style,
@@ -593,6 +599,8 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
   const compactName = compactSearchText(place?.name)
   const compactQuery = compactSearchText(query)
   const address = normalizeSearchText(place?.address)
+  const website = compactSearchText(place?.website_url)
+  const phone = compactSearchText(place?.phone)
   const cityState = normalizeSearchText([place?.city, place?.state].filter(Boolean).join(' '))
   const stateCode = normalizeSearchText(place?.state).toUpperCase()
   const locationText = normalizeSearchText([place?.address, place?.city, place?.state].filter(Boolean).join(' '))
@@ -617,6 +625,8 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
 
   if (name === query) return 0
   if (compactName === compactQuery) return 0.5
+  if (website && website.includes(compactQuery)) return 1.25
+  if (phone && compactQuery.length >= 4 && phone.includes(compactQuery)) return 1.25
   if (name.startsWith(query)) return 1
   if (compactName.startsWith(compactQuery)) return 1.5
   if (name.includes(query)) return 2
@@ -864,6 +874,11 @@ const computeFavorited = (place = {}, normalizedStatus = 'visited') => {
   return normalizedStatus === 'golden'
 }
 
+export const isAnthonysPick = (place = {}) => {
+  const rating = Number(place.rating)
+  return Number.isFinite(rating) && rating >= 8
+}
+
 const computePlaceType = (place = {}, fallback) => {
   for (const field of PLACE_TYPE_FIELDS) {
     const value = place[field]
@@ -894,6 +909,7 @@ function SiteContainer({ themeKey }) {
   const [mapError, setMapError] = useState(null)
   const [showClusterCounts, setShowClusterCounts] = useState(true)
   const [showAnthonysVisits, setShowAnthonysVisits] = useState(false)
+  const [showAnthonysPicks, setShowAnthonysPicks] = useState(false)
   const [anthonysCountsByState, setAnthonysCountsByState] = useState({})
 
   // Search and Near Me state
@@ -1369,6 +1385,8 @@ function SiteContainer({ themeKey }) {
         nextPlace = { ...nextPlace, _distance: distance }
       }
 
+      if (showAnthonysPicks && !isAnthonysPick(place)) return matches
+
       // Style, price, status filters
       const placeStatus = place.status || 'visited'
       const isExplicitAnthonyVisit = isAnthonyReviewedPlace(place)
@@ -1389,17 +1407,18 @@ function SiteContainer({ themeKey }) {
     }
 
     return results
-  }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits])
+  }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits, showAnthonysPicks])
 
   const shouldDimUnloadedAggregates = useMemo(() => {
     return (
       filters.styles?.length > 0 ||
       filters.prices?.length > 0 ||
       (filters.statuses?.length > 0 && filters.statuses.length < 3) ||
+      showAnthonysPicks ||
       searchQuery.trim().length > 0 ||
       nearMeActive
     )
-  }, [filters, searchQuery, nearMeActive])
+  }, [filters, searchQuery, nearMeActive, showAnthonysPicks])
 
   const filteredCountByState = useMemo(() => {
     return filteredPlaces.reduce((acc, place) => {
@@ -1540,6 +1559,8 @@ function SiteContainer({ themeKey }) {
             onClusterCountsToggle={setShowClusterCounts}
             showAnthonysVisits={showAnthonysVisits}
             onAnthonysVisitsToggle={setShowAnthonysVisits}
+            showAnthonysPicks={showAnthonysPicks}
+            onAnthonysPicksToggle={setShowAnthonysPicks}
           />
         </aside>
 
@@ -1604,7 +1625,7 @@ function SiteContainer({ themeKey }) {
                       onStateClick={handleStateClick}
                       flyToLocation={flyToLocation}
                       forceIndividualMarkers={Boolean(searchQuery.trim()) || nearMeActive}
-                      resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}`}
+                      resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}-${showAnthonysPicks ? 'anthonys-picks' : 'all-places'}`}
                     />
                   </Suspense>
                 </div>

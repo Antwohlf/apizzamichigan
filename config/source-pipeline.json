@@ -13,6 +13,7 @@
     "new_places_per_day": 250,
     "website_jobs_per_run": 75,
     "contact_promotions_per_run": 50,
+    "classify_queue_jobs_per_region_per_run": 50,
     "candidate_rows_per_source": 5000
   },
   "sources": {

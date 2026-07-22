@@ -168,6 +168,8 @@ out center tags;
       address: this.buildAddress(tags),
       hours: tags.opening_hours ? { raw: tags.opening_hours } : null,
       cuisine: tags.cuisine,
+      isClosed: ['yes', 'true', '1'].includes(String(tags.disused || tags.abandoned || '').trim().toLowerCase())
+        || Boolean(tags['was:amenity'] || tags['end_date']),
 
       osmTags: this.buildOsmTags(tags)
     }
@@ -202,7 +204,8 @@ out center tags;
       'outdoor_seating', 'indoor_seating',
       'wheelchair',
       'brand', 'brand:wikidata', 'operator', 'operator:wikidata',
-      'addr:housenumber', 'addr:street', 'addr:city', 'addr:state', 'addr:postcode'
+      'addr:housenumber', 'addr:street', 'addr:city', 'addr:state', 'addr:postcode',
+      'disused', 'abandoned', 'was:amenity', 'end_date'
     ]
 
     for (const k of also) {
@@ -233,6 +236,16 @@ out center tags;
    */
   async updateDb(placeType, data) {
     const table = placeType === 'pizza' ? 'pizza_places' : 'taco_places'
+
+    const currentResult = await this.pgClient.query(`
+      SELECT id, name, address, phone, website_url, lifecycle_status
+      FROM ${table}
+      WHERE google_place_id = $1
+    `, [data.osmId])
+    const current = currentResult.rows[0]
+    if (!current) return false
+
+    await this.recordMeaningfulChange(placeType, current, data)
 
     const result = await this.pgClient.query(`
       UPDATE ${table}
@@ -296,6 +309,59 @@ out center tags;
     ])
 
     return result.rowCount > 0
+  }
+
+  async recordMeaningfulChange(placeType, current, data) {
+    const normalize = value => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+    const changed = []
+    if (data.name && normalize(data.name) !== normalize(current.name)) changed.push('name')
+    if (data.address && normalize(data.address) !== normalize(current.address)) changed.push('address')
+    if (data.isClosed) changed.push('possible_closure')
+    if (!changed.length) return
+
+    const queueExists = await this.pgClient.query(`SELECT to_regclass('public.source_review_queue') IS NOT NULL AS exists`)
+    if (!queueExists.rows[0]?.exists) return
+
+    const sourceData = {
+      name: data.name || null,
+      lat: data.lat,
+      lng: data.lng,
+      address: data.address || null,
+      phone: data.phone || null,
+      website: data.website || null,
+      is_closed: Boolean(data.isClosed),
+      osm_tags: data.osmTags || {},
+    }
+    const reason = `osm_change:${changed.join(',')}`
+    await this.pgClient.query(`
+      INSERT INTO source_review_queue (
+        entity_type, review_kind, source, source_id, source_name, source_url,
+        source_data, nearest_place_id, nearest_google_place_id,
+        nearest_place_name, nearest_distance_m, nearest_name_score,
+        review_reason, status, updated_at
+      ) VALUES ($1, 'ambiguous', 'osm', $2, $3, $4, $5::jsonb, $6, $2, $7, 0, 1, $8, 'pending', NOW())
+      ON CONFLICT (entity_type, source, source_id, review_kind) DO UPDATE SET
+        source_name = EXCLUDED.source_name,
+        source_url = EXCLUDED.source_url,
+        source_data = EXCLUDED.source_data,
+        nearest_place_id = EXCLUDED.nearest_place_id,
+        nearest_google_place_id = EXCLUDED.nearest_google_place_id,
+        nearest_place_name = EXCLUDED.nearest_place_name,
+        nearest_distance_m = EXCLUDED.nearest_distance_m,
+        nearest_name_score = EXCLUDED.nearest_name_score,
+        review_reason = EXCLUDED.review_reason,
+        updated_at = NOW()
+      WHERE source_review_queue.status = 'pending'
+    `, [
+      placeType,
+      data.osmId,
+      data.name || null,
+      data.website || null,
+      JSON.stringify(sourceData),
+      current.id,
+      current.name,
+      reason,
+    ])
   }
 
   /**

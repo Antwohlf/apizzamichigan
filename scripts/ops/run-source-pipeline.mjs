@@ -14,16 +14,17 @@ const NODE = process.execPath;
 const OSM_PIPELINE_TIMEOUT_MS = Number.parseInt(process.env.OSM_PIPELINE_TIMEOUT_MS || '', 10) || 1200000;
 
 function args(argv) {
-  const out = { apply: false, source: 'all', maxWorkUnits: 2, maxNewPlaces: 5, json: false, force: false };
+  const out = { apply: false, source: 'all', regions: null, maxWorkUnits: 2, maxNewPlaces: 5, json: false, force: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--apply') out.apply = true;
     else if (argv[i] === '--dry-run') out.apply = false;
     else if (argv[i] === '--source') out.source = argv[++i];
+    else if (argv[i] === '--regions') out.regions = argv[++i].split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
     else if (argv[i] === '--max-work-units') out.maxWorkUnits = Number(argv[++i]);
     else if (argv[i] === '--max-new-places') out.maxNewPlaces = Number(argv[++i]);
     else if (argv[i] === '--force') out.force = true;
     else if (argv[i] === '--json') out.json = true;
-    else if (argv[i] === '--help') { console.log('Usage: node scripts/ops/run-source-pipeline.mjs [--dry-run|--apply] [--source key|all] [--max-work-units n] [--max-new-places n] [--force] [--json]'); process.exit(0); }
+    else if (argv[i] === '--help') { console.log('Usage: node scripts/ops/run-source-pipeline.mjs [--dry-run|--apply] [--source key|all] [--regions MI,NY] [--max-work-units n] [--max-new-places n] [--force] [--json]'); process.exit(0); }
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   if (!Number.isInteger(out.maxWorkUnits) || out.maxWorkUnits < 1) throw new Error('Invalid --max-work-units');
@@ -190,7 +191,9 @@ function runAdapter(source, region, output, config, state) {
       '--entity', config.entity,
       '--source', source,
       ...(source === 'osm' ? ['--exact-source-id'] : ['--exact-identifiers']),
-      ...(source === 'all_the_places' || source === 'fsq_os_places' ? ['--min-exact-identifiers', '2'] : []),
+      // Automatic linking is deliberately conservative: the trusted official
+      // website, normalized address, and normalized phone must all agree.
+      ...(source === 'all_the_places' || source === 'fsq_os_places' ? ['--min-exact-identifiers', '3'] : []),
       ...(source === 'wikidata' ? ['--source-identity'] : []),
       '--max-distance-m', '100',
       '--limit', '100',
@@ -243,9 +246,28 @@ function promoteContactFields(config, apply) {
   return output.slice(-2000);
 }
 
+function populateClassifierQueue(config, apply) {
+  if (!apply || config.entity !== 'pizza') return 'disabled';
+  const limit = Number(config.limits.classify_queue_jobs_per_region_per_run || 50);
+  const outputs = [];
+  for (const state of ['MI', 'NY']) {
+    outputs.push(run(NODE, [
+      'scripts/enrichment/populate-classify-from-db.mjs',
+      '--state', state,
+      '--limit', String(limit),
+      '--skip-existing',
+    ], { timeout: 180000 }).slice(-1200));
+  }
+  return outputs.join('\n');
+}
+
 const options = args(process.argv);
 const config = loadJson(CONFIG_PATH, null);
 if (!config) throw new Error(`Missing ${CONFIG_PATH}`);
+const regions = options.regions?.length
+  ? config.regions.filter(region => options.regions.includes(String(region.key).toUpperCase()))
+  : config.regions;
+if (!regions.length) throw new Error(`No configured regions matched --regions ${options.regions.join(',')}`);
 if (!acquireLock()) { console.log('source pipeline already running; exiting'); process.exit(0); }
 const now = Date.now();
 const state = loadJson(STATE_PATH, { sources: {}, region_index: 0, last_run: null });
@@ -273,8 +295,8 @@ try {
     const rotationThreshold = Number(config.sources[source]?.failure_rotation_threshold || 0);
     if (rotationThreshold > 0
       && Number(sourceState.consecutive_failures || 0) >= rotationThreshold
-      && config.regions.length > 1) {
-      sourceState.region_index = (Number(sourceState.region_index || 0) + 1) % config.regions.length;
+      && regions.length > 1) {
+      sourceState.region_index = (Number(sourceState.region_index || 0) + 1) % regions.length;
       sourceState.consecutive_failures = 0;
       sourceState.last_error = `${sourceState.last_error || 'source failure'}\nRotated to next region before retry after ${rotationThreshold} consecutive failures; prior region remains resumable.`;
       state.sources[source] = sourceState;
@@ -283,8 +305,8 @@ try {
       ? Number(sourceState.region_index)
       : 0;
     const region = source === 'osm'
-      ? selectOsmRegion(config.regions, config.sources.osm, regionIndex)
-      : config.regions[regionIndex % config.regions.length];
+      ? selectOsmRegion(regions, config.sources.osm, regionIndex)
+      : regions[regionIndex % regions.length];
     try {
       const sourceConfig = config.sources[source];
       if (!sourceConfig?.capabilities?.includes('enrich_evidence')) {
@@ -306,7 +328,7 @@ try {
         const result = runAtp(region, config, state.sources, options.apply, config.sources[source].spiders_per_run || 3);
         report.work_units.push({ source, region: region.key, spiders: result?.selected || [] });
         if (options.apply) {
-          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--min-exact-identifiers', '2', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 }).slice(-2000);
+          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--min-exact-identifiers', '3', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 }).slice(-2000);
         }
         for (const spider of result?.selected || []) {
           processNew(resolve(ROOT, 'reports/source-review', `${spider}-review.json`), source, config, options.apply, options.maxNewPlaces);
@@ -315,7 +337,7 @@ try {
           ...(state.sources[source] || {}),
           last_success: new Date().toISOString(),
           spider_index: (Number(state.sources[source]?.spider_index || 0) + (result?.selected?.length || 0)),
-          region_index: (Number(state.sources[source]?.region_index || 0) + 1) % config.regions.length,
+          region_index: (Number(state.sources[source]?.region_index || 0) + 1) % regions.length,
         };
       } else {
         assertSourceCapabilities(source, sourceConfig, ['match_existing', 'enrich_evidence']);
@@ -326,7 +348,7 @@ try {
         ));
         const startingRegionIndex = Number(sourceState.region_index || 0);
         for (let regionOffset = 0; regionOffset < regionsPerRun; regionOffset += 1) {
-          const region = config.regions[(startingRegionIndex + regionOffset) % config.regions.length];
+          const region = regions[(startingRegionIndex + regionOffset) % regions.length];
           const output = resolve(ROOT, 'data/source-inputs', `${source}-${region.key}-${now}-${regionOffset}.json`);
           mkdirSync(dirname(output), { recursive: true });
           const paths = runAdapter(source, region, output, { ...config, apply: options.apply }, state);
@@ -334,7 +356,7 @@ try {
           processNew(paths.report, source, config, options.apply, options.maxNewPlaces);
           state.sources[source] = {
             ...(state.sources[source] || {}),
-            region_index: (startingRegionIndex + regionOffset + 1) % config.regions.length,
+            region_index: (startingRegionIndex + regionOffset + 1) % regions.length,
           };
           workUnits += 1;
         }
@@ -358,8 +380,8 @@ try {
       const failures = Number(state.sources[source].consecutive_failures || 0) + 1;
       const rotationThreshold = Number(config.sources[source]?.failure_rotation_threshold || 0);
       state.sources[source].consecutive_failures = failures;
-      if (rotationThreshold > 0 && failures >= rotationThreshold && config.regions.length > 1) {
-        state.sources[source].region_index = (Number(state.sources[source].region_index || 0) + 1) % config.regions.length;
+      if (rotationThreshold > 0 && failures >= rotationThreshold && regions.length > 1) {
+        state.sources[source].region_index = (Number(state.sources[source].region_index || 0) + 1) % regions.length;
         state.sources[source].consecutive_failures = 0;
         state.sources[source].last_error = `${message.slice(-4500)}\nRotated to next region after ${failures} consecutive failures; prior region remains resumable.`;
       }
@@ -371,9 +393,12 @@ try {
   if (options.apply && workUnits > 0) {
     report.contact_promotion = promoteContactFields(config, options.apply);
   }
+  if (options.apply) {
+    report.classifier_queue = populateClassifierQueue(config, options.apply);
+  }
   // Keep the legacy aggregate cursor for older status tooling, but derive
   // actual work selection from each source's cursor above.
-  if (workUnits) state.region_index = (state.region_index + 1) % config.regions.length;
+  if (workUnits) state.region_index = (state.region_index + 1) % regions.length;
   state.last_run = new Date().toISOString();
   if (options.apply) saveJson(STATE_PATH, state);
   report.finished_at = new Date().toISOString();

@@ -23,11 +23,13 @@ const promotionPolicyRows = [
 export default function AdminSystemPanel({ entity }) {
   const [payload, setPayload] = useState(null)
   const [lifecycle, setLifecycle] = useState(null)
+  const [basicFieldCoverage, setBasicFieldCoverage] = useState(null)
   const [lifecycleKind, setLifecycleKind] = useState('replacements')
   const [lifecycleCandidates, setLifecycleCandidates] = useState(null)
   const [lifecycleLoading, setLifecycleLoading] = useState(false)
   const [lifecycleOpen, setLifecycleOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#lifecycle-quality')
   const [importOpen, setImportOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#approved-import')
+  const [basicCoverageOpen, setBasicCoverageOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#basic-coverage')
   const [preflight, setPreflight] = useState(null)
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -60,6 +62,7 @@ export default function AdminSystemPanel({ entity }) {
           setPayload(provenancePayload?.data || null)
           setPreflight(null)
           setLifecycle(summaryPayload?.data?.lifecycle || null)
+          setBasicFieldCoverage(summaryPayload?.data?.basicFieldCoverage || null)
         }
       } catch (err) {
         if (!cancelled) setError(err?.message || 'System details could not be loaded.')
@@ -202,6 +205,52 @@ export default function AdminSystemPanel({ entity }) {
 
       {!loading && payload ? (
         <>
+          <details
+            className="admin-system-section"
+            id="basic-coverage"
+            open={basicCoverageOpen}
+            onToggle={event => setBasicCoverageOpen(event.currentTarget.open)}
+          >
+            <summary>
+              <strong>Basic information coverage</strong>
+              <span>{formatCount(basicFieldCoverage?.overall?.needsAttention)} places need attention</span>
+            </summary>
+            <div className="admin-system-section__body">
+              <p className="admin-system-copy">
+                Active places in Michigan and New York with at least one missing basic field. Source updates can fill contact blanks automatically; identity changes still require review.
+              </p>
+              <div className="admin-stat-grid">
+                <div><strong>{formatCount(basicFieldCoverage?.overall?.total)}</strong><span>Places checked</span></div>
+                <div><strong>{formatCount(basicFieldCoverage?.overall?.missing?.address)}</strong><span>Missing address</span></div>
+                <div><strong>{formatCount(basicFieldCoverage?.overall?.missing?.website_url)}</strong><span>Missing website</span></div>
+                <div><strong>{formatCount(basicFieldCoverage?.overall?.missing?.phone)}</strong><span>Missing phone</span></div>
+                <div><strong>{formatCount(basicFieldCoverage?.overall?.missing?.style)}</strong><span>Missing style</span></div>
+                <div><strong>{formatCount(basicFieldCoverage?.overall?.missing?.price_range)}</strong><span>Missing price</span></div>
+              </div>
+              <div className="admin-table-wrap" style={{ marginTop: 16 }}>
+                <table className="admin-table">
+                  <caption className="admin-sr-only">Basic information coverage by state</caption>
+                  <thead><tr><th>Area</th><th>Places</th><th>Need attention</th><th>Missing website</th><th>Missing phone</th><th>Missing style</th><th>Missing price</th></tr></thead>
+                  <tbody>
+                    {['MI', 'NY'].map(state => {
+                      const row = basicFieldCoverage?.byState?.[state]
+                      return (
+                        <tr key={state}>
+                          <td>{state === 'MI' ? 'Michigan' : 'New York'}</td>
+                          <td>{formatCount(row?.total)}</td>
+                          <td>{formatCount(row?.needsAttention)}</td>
+                          <td>{formatCount(row?.missing?.website_url)}</td>
+                          <td>{formatCount(row?.missing?.phone)}</td>
+                          <td>{formatCount(row?.missing?.style)}</td>
+                          <td>{formatCount(row?.missing?.price_range)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
           <details
             className="admin-system-section"
             id="lifecycle-quality"
