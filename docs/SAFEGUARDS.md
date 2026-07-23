@@ -55,6 +55,33 @@ ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/stale-worker-cleanu
 If a stale processing job exists, inspect it first. Do not recover or fail jobs
 blindly.
 
+## Local Recovery Backups
+
+The iMac has a bounded local backup job for the two stateful components that
+cannot be reconstructed quickly: local Postgres and the SQLite enrichment
+queue. It writes a timestamped directory under `backups/` with a custom
+`pg_dump`, a consistent SQLite snapshot, and `manifest.json` checksums. The
+scheduled launchd template retains seven runs and does not contact Supabase.
+
+Read-only preview:
+
+```bash
+node scripts/ops/create-local-backup.mjs --dry-run
+```
+
+Manual run:
+
+```bash
+node scripts/ops/create-local-backup.mjs --retention 7
+```
+
+Backups are machine-local and ignored by git. Copy completed run directories
+to separate storage if they are intended to protect against machine loss.
+Restore Postgres into a new database first with `pg_restore`; restoring over
+the live database is destructive and requires explicit approval. Restore the
+queue only with all workers stopped, and handle its `-wal` and `-shm` files as
+one SQLite state set.
+
 ## Sync Guardrail
 
 The recurring sync service must use the guarded wrapper:

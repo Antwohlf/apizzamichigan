@@ -20,7 +20,9 @@ import {
   DEFAULT_MAP_ZOOM,
   FOCUSED_PLACE_ZOOM,
   MIN_INDIVIDUAL_MARKERS_ZOOM,
+  clusterFitOptions,
   focusedPlaceZoom,
+  isPlaceViewportFocused,
   lightboxRestoreViewport,
 } from './viewport'
 
@@ -376,6 +378,15 @@ export function PlacesLayer({
     [map]
   )
 
+  const handleClusterClick = useCallback((event) => {
+    const cluster = event?.layer
+    if (!map || !cluster || typeof cluster.getBounds !== 'function' || typeof map.fitBounds !== 'function') return
+    const bounds = cluster.getBounds()
+    if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return
+
+    map.fitBounds(bounds, clusterFitOptions())
+  }, [map])
+
   useEffect(() => {
     if (!map) return
     if (map.doubleClickZoom?.disable) {
@@ -425,7 +436,12 @@ export function PlacesLayer({
           lastFocusedPlaceRef.current &&
           lastFocusedPlaceRef.current.id === targetPlace.id &&
           lastFocusedPlaceRef.current.lat === targetPlace.lat &&
-          lastFocusedPlaceRef.current.lng === targetPlace.lng
+          lastFocusedPlaceRef.current.lng === targetPlace.lng &&
+          isPlaceViewportFocused({
+            center: typeof map.getCenter === 'function' ? map.getCenter() : null,
+            zoom: typeof map.getZoom === 'function' ? map.getZoom() : DEFAULT_ZOOM,
+            place: targetPlace,
+          })
 
         if (!alreadyFocused) {
           flyToPlace(coords[0], coords[1], { duration: 0.85, preserveZoomIfVisible: true })
@@ -624,6 +640,8 @@ export function PlacesLayer({
           chunkedLoading
           maxClusterRadius={80}
           spiderfyOnMaxZoom
+          zoomToBoundsOnClick={false}
+          onClick={handleClusterClick}
           showCoverageOnHover={false}
           iconCreateFunction={createClusterIcon(site, showClusterCounts)}
         >

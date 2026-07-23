@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTheme } from './themes/ThemeProvider'
 import { ThemeKeys } from './themes/siteTheme'
 import { pizzaStyles } from './data/pizzaStyles'
@@ -24,9 +24,16 @@ const Sidebar = ({
 }) => {
   const { theme } = useTheme()
 
-  const [selectedStyles, setSelectedStyles] = useState([])
-  const [selectedPrices, setSelectedPrices] = useState([])
-  const [selectedStatuses, setSelectedStatuses] = useState(new Set())
+  const [selectedStyles, setSelectedStyles] = useState(() => (
+    Array.isArray(filters?.styles) ? filters.styles : []
+  ))
+  const [selectedPrices, setSelectedPrices] = useState(() => (
+    Array.isArray(filters?.prices) ? filters.prices : []
+  ))
+  const [selectedStatuses, setSelectedStatuses] = useState(() => new Set(
+    Array.isArray(filters?.statuses) ? filters.statuses : ALL_STATUS_VALUES
+  ))
+  const hasMountedRef = useRef(false)
 
   const stylesForTheme = themeKey === ThemeKeys.TACO ? TACO_TYPES : pizzaStyles
 
@@ -73,6 +80,10 @@ const Sidebar = ({
   }, [selectedStyles, selectedPrices, selectedStatuses, onFilterChange])
 
   useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true
+      return
+    }
     setSelectedStyles([])
     setSelectedPrices([])
     setSelectedStatuses(new Set())

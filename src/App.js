@@ -552,6 +552,19 @@ const statusQueryTerms = {
   lifecycle: ['closed', 'historical', 'replaced'],
 }
 
+export const readPublicMapQuery = search => {
+  const params = new URLSearchParams(search || '')
+  const statusValues = (params.get('status') || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(value => DEFAULT_STATUSES.includes(value))
+  return {
+    query: params.get('q') || '',
+    statuses: [...new Set(statusValues)],
+    anthonysPicks: ['1', 'true', 'yes'].includes(String(params.get('picks') || '').toLowerCase()),
+  }
+}
+
 const normalizedPlaceStatus = place =>
   String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
 
@@ -565,9 +578,11 @@ const termMatchesPlaceStatus = (term, place) => {
   if (statusQueryTerms.reviewed.includes(term)) return status.startsWith('visited') || status.startsWith('golden')
   if (statusQueryTerms.suggestion.includes(term)) return status.startsWith('unvisited')
   if (statusQueryTerms.lifecycle.includes(term)) {
-    const lifecycle = String(place?.lifecycleStatus || place?.statusRaw || '').trim().toLowerCase()
-    if (term === 'historical') return lifecycle.startsWith('closed') && place?.rating != null
-    return lifecycle.startsWith('closed') || lifecycle.startsWith('replaced')
+    const lifecycle = normalizeLifecycleStatus(place?.lifecycleStatus || place?.lifecycle_status || place?.statusRaw)
+    if (term === 'historical') return Boolean(lifecycle)
+    if (term === 'closed') return lifecycle === 'closed'
+    if (term === 'replaced') return lifecycle === 'replaced'
+    return Boolean(lifecycle)
   }
   return false
 }
@@ -903,17 +918,27 @@ const computeMarkerIconUrl = (place = {}) => {
 }
 
 function SiteContainer({ themeKey }) {
-  const [filters, setFilters] = useState({ styles: [], prices: [], statuses: [] })
+  // Seed public state from the URL during the first render. Reading it in an
+  // effect allowed the URL-sync effect below to erase a shared search before
+  // the state update landed.
+  const initialPublicQuery = React.useRef(
+    readPublicMapQuery(typeof window === 'undefined' ? '' : window.location.search)
+  ).current
+  const [filters, setFilters] = useState(() => ({
+    styles: [],
+    prices: [],
+    statuses: initialPublicQuery.statuses,
+  }))
   const [view, setView] = useState('map')
   const [mapLoading, setMapLoading] = useState(true)
   const [mapError, setMapError] = useState(null)
   const [showClusterCounts, setShowClusterCounts] = useState(true)
   const [showAnthonysVisits, setShowAnthonysVisits] = useState(false)
-  const [showAnthonysPicks, setShowAnthonysPicks] = useState(false)
+  const [showAnthonysPicks, setShowAnthonysPicks] = useState(initialPublicQuery.anthonysPicks)
   const [anthonysCountsByState, setAnthonysCountsByState] = useState({})
 
   // Search and Near Me state
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchQuery, setSearchQuery] = useState(initialPublicQuery.query)
   const [searchPlaces, setSearchPlaces] = useState([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState(null)
@@ -937,20 +962,6 @@ function SiteContainer({ themeKey }) {
   const handleFilterChange = useCallback(next => setFilters(next), [])
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const statusParam = params.get('status')
-    if (statusParam) {
-      const next = statusParam
-        .split(',')
-        .map(v => v.trim())
-        .filter(v => DEFAULT_STATUSES.includes(v))
-      if (next.length) {
-        setFilters(prev => ({ ...prev, statuses: next }))
-      }
-    }
-  }, [])
-
-  useEffect(() => {
     document.body.style.backgroundColor = theme.palette.bg
     document.body.style.color = theme.palette.text
   }, [theme])
@@ -963,10 +974,20 @@ function SiteContainer({ themeKey }) {
     } else {
       params.delete('status')
     }
+    if (searchQuery.trim()) {
+      params.set('q', searchQuery.trim())
+    } else {
+      params.delete('q')
+    }
+    if (showAnthonysPicks) {
+      params.set('picks', '1')
+    } else {
+      params.delete('picks')
+    }
     const next = params.toString()
     const newUrl = next ? `${window.location.pathname}?${next}` : window.location.pathname
     window.history.replaceState({}, '', newUrl)
-  }, [filters.statuses])
+  }, [filters.statuses, searchQuery, showAnthonysPicks])
 
   useEffect(() => {
     const pageTitle = isPizza
@@ -1363,12 +1384,11 @@ function SiteContainer({ themeKey }) {
     const searchLower = normalizeSearchText(searchQuery)
     const searchTerms = searchLower.split(/\s+/).filter(Boolean)
     const sourcePlaces = searchLower ? searchPlaces : allLoadedPlaces
-    const lifecycleSearch = searchTerms.some(term => statusQueryTerms.lifecycle.includes(term))
-
     let results = sourcePlaces.reduce((matches, place) => {
       let nextPlace = place
-      const isHistorical = place.lifecycleStatus === 'closed' && place.rating != null
-      if (place.lifecycleStatus && !isHistorical && !lifecycleSearch) return matches
+      // Historical records stay out of the default map, but any explicit
+      // search should be able to find an old name or replacement record.
+      if (place.lifecycleStatus && !searchTerms.length) return matches
       // Search filter
       if (searchTerms.length > 0) {
         const searchRank = placeSearchRank(place, searchLower, searchTerms)

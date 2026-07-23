@@ -12,7 +12,7 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { execFileSync } from 'child_process';
-import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
+import { readIdCheckpoint, readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
   FILL_IF_NULL_COLS,
   LIFECYCLE_COLS,
@@ -38,6 +38,7 @@ function parseArgs(argv) {
     changedSinceHours: null,
     onlyClassified: false,
     checkpointPath: null,
+    reconcile: false,
     json: false,
   };
 
@@ -50,6 +51,7 @@ function parseArgs(argv) {
     else if (arg === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
     else if (arg === '--only-classified') out.onlyClassified = true;
     else if (arg === '--checkpoint') out.checkpointPath = argv[++i];
+    else if (arg === '--reconcile') out.reconcile = true;
     else if (arg === '--json') out.json = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-readiness-report.mjs [options]
@@ -61,6 +63,7 @@ Options:
   --changed-since-hours <n>   Only inspect rows enriched in the last n hours
   --only-classified           Only inspect rows with style/price classification output
   --checkpoint <path>         Resume from a last_enriched_at + id checkpoint
+  --reconcile                 Use an ID-based checkpoint and scan all eligible rows
   --sample <n>                Rows per detail table (default 10)
   --json                      Emit JSON instead of Markdown
 `);
@@ -72,6 +75,10 @@ Options:
 
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (out.ids.length && out.checkpointPath) throw new Error('--ids cannot be combined with --checkpoint');
+  if (out.reconcile && out.ids.length) throw new Error('--reconcile cannot be combined with --ids');
+  if (out.reconcile && (out.changedSinceHours !== null || out.onlyClassified)) {
+    throw new Error('--reconcile cannot be combined with --changed-since-hours or --only-classified');
+  }
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
@@ -188,10 +195,12 @@ async function main() {
   await client.connect();
 
   try {
-    const checkpointAfter = readSyncCheckpoint(options.checkpointPath);
+    const checkpointAfter = options.reconcile
+      ? readIdCheckpoint(options.checkpointPath)
+      : readSyncCheckpoint(options.checkpointPath);
     const selector = {
       ...options,
-      checkpointMode: Boolean(options.checkpointPath),
+      checkpointMode: Boolean(options.checkpointPath) && !options.reconcile,
       checkpointAfter,
     };
     const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
@@ -314,9 +323,11 @@ async function main() {
     console.log('');
     console.log(`Generated: ${result.generatedAt}`);
     console.log(`Repo: \`${root}\``);
-    console.log(`Batch: ids=${options.ids.length ? options.ids.join(',') : 'none'}, start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, checkpoint=${options.checkpointPath || 'none'}`);
+    console.log(`Batch: ids=${options.ids.length ? options.ids.join(',') : 'none'}, start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, reconcile=${options.reconcile}, checkpoint=${options.checkpointPath || 'none'}`);
     if (checkpointAfter) {
-      console.log(`Checkpoint after: ${checkpointAfter.lastEnrichedAt} / id=${checkpointAfter.id}`);
+      console.log(options.reconcile
+        ? `Reconciliation checkpoint after: id=${checkpointAfter.lastId}`
+        : `Checkpoint after: ${checkpointAfter.lastEnrichedAt} / id=${checkpointAfter.id}`);
     }
     console.log('');
     console.log('## Summary');

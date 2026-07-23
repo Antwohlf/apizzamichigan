@@ -21,6 +21,9 @@ function parseArgs(argv) {
     sample: 10,
     insertMissingReviewedNew: false,
     apply: false,
+    reconcile: false,
+    concurrency: parseInt(process.env.APIZZA_SYNC_CONCURRENCY || '1', 10),
+    bulkRpc: /^(1|true|yes)$/i.test(String(process.env.APIZZA_SYNC_BULK_RPC || '').trim()),
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -30,6 +33,9 @@ function parseArgs(argv) {
     else if (arg === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (arg === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
     else if (arg === '--checkpoint') out.checkpoint = argv[++i];
+    else if (arg === '--reconcile') out.reconcile = true;
+    else if (arg === '--concurrency') out.concurrency = parseInt(argv[++i], 10);
+    else if (arg === '--bulk-rpc') out.bulkRpc = true;
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--insert-missing-reviewed-new') out.insertMissingReviewedNew = true;
     else if (arg === '--apply') out.apply = true;
@@ -42,11 +48,14 @@ Options:
   --batch <n>        Batch size (default 50)
   --max-batches <n>  Maximum write batches (default 1)
   --checkpoint <p>   Checkpoint path (default scripts/.supabase-sync-checkpoint.json)
+  --reconcile         Reconcile all eligible rows after an ID checkpoint
   --sample <n>       Readiness sample size (default 10)
   --insert-missing-reviewed-new
                       With --ids, insert missing rows only when local
                       place_sources proves reviewed_new_import
   --apply            Perform the bounded write after all gates pass
+  --concurrency <n> Run independent Supabase writes concurrently
+  --bulk-rpc        Apply updates through the installed low-I/O batch RPC
 `);
       process.exit(0);
     } else {
@@ -58,9 +67,11 @@ Options:
   if (out.ids.length && out.checkpoint !== 'scripts/.supabase-sync-checkpoint.json') {
     throw new Error('--ids cannot be combined with --checkpoint');
   }
+  if (out.reconcile && out.ids.length) throw new Error('--reconcile cannot be combined with --ids');
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches <= 0) throw new Error('Invalid --max-batches');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
+  if (!Number.isInteger(out.concurrency) || out.concurrency <= 0) throw new Error('Invalid --concurrency');
   return out;
 }
 
@@ -73,11 +84,11 @@ function parseIds(value) {
   return [...new Set(ids)];
 }
 
-function run(command, args, { json = false } = {}) {
+function run(command, args, { json = false, timeout = 120000 } = {}) {
   const stdout = execFileSync(command, args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 120000,
+    timeout,
   }).trim();
 
   if (!json) return stdout;
@@ -104,9 +115,12 @@ function syncArgs(options, { dryRun = false } = {}) {
     'scripts/sync-local-to-supabase.mjs',
     '--batch', String(options.batch),
     '--max-batches', String(options.maxBatches),
+    '--concurrency', String(options.concurrency),
   ];
   if (options.ids.length) {
     args.push('--ids', options.ids.join(','));
+  } else if (options.reconcile) {
+    args.push('--reconcile', '--checkpoint', options.checkpoint);
   } else {
     args.push(
       '--changed-since-hours', String(options.hours),
@@ -116,6 +130,7 @@ function syncArgs(options, { dryRun = false } = {}) {
   }
   if (dryRun) args.push('--dry-run');
   if (options.insertMissingReviewedNew) args.push('--insert-missing-reviewed-new');
+  if (options.bulkRpc) args.push('--bulk-rpc');
   return args;
 }
 
@@ -170,6 +185,7 @@ async function main() {
   console.log(`Scope: ${options.ids.length ? `ids=${options.ids.join(',')}` : `last ${options.hours}h classified checkpoint window`}`);
   console.log(`Batch: ${options.batch}, max_batches=${options.maxBatches}`);
   console.log(`Checkpoint: ${options.ids.length ? 'none (id-scoped)' : options.checkpoint}`);
+  if (options.reconcile) console.log('Mode: ID-based reconciliation');
   console.log(`Insert missing reviewed-new: ${options.insertMissingReviewedNew ? 'yes' : 'no'}`);
 
   step('Health Gate');
@@ -206,6 +222,8 @@ async function main() {
     '--json',
     ...(options.ids.length
       ? ['--ids', options.ids.join(',')]
+      : options.reconcile
+        ? ['--reconcile', '--checkpoint', options.checkpoint]
       : ['--changed-since-hours', String(options.hours), '--only-classified', '--checkpoint', options.checkpoint]),
   ], { json: true });
   console.log(`state=${readiness.state}, would_update=${readiness.totals.wouldUpdate}, missing=${readiness.totals.missingSupabaseRows}, protected_conflicts=${readiness.totals.protectedFieldConflicts}`);
@@ -223,13 +241,16 @@ async function main() {
   if (readiness.totals.protectedFieldConflicts > 0) {
     console.log(`Protected field conflicts will be skipped without overwrite: ${readiness.totals.protectedFieldConflicts}`);
   }
-  if (readiness.totals.wouldUpdate === 0 && readiness.totals.missingSupabaseRows === 0) {
+  // Reconciliation must scan past protected/already-current rows so its ID
+  // checkpoint can advance to later rows that may still need updates.
+  if (!options.reconcile && readiness.totals.wouldUpdate === 0 && readiness.totals.missingSupabaseRows === 0) {
     console.log('No rows to update; stopping cleanly.');
     return;
   }
 
   step('Dry Run');
-  const dryRunOutput = run(NODE, syncArgs(options, { dryRun: true }));
+  const syncTimeout = options.reconcile ? 600000 : 120000;
+  const dryRunOutput = run(NODE, syncArgs(options, { dryRun: true }), { timeout: syncTimeout });
   console.log(dryRunOutput);
 
   if (!options.apply) {
@@ -239,7 +260,7 @@ async function main() {
   }
 
   step('Write');
-  const writeOutput = run(NODE, syncArgs(options));
+  const writeOutput = run(NODE, syncArgs(options), { timeout: syncTimeout });
   console.log(writeOutput);
 
   step('Post Health Gate');

@@ -22,6 +22,7 @@ const REQUIRED_SCRIPTS = [
   'scripts/enrichment/agents/web-scraper.mjs',
   'scripts/enrichment/slowlane/menu-parse-worker.mjs',
   'scripts/ops/process-reviewed-new-batch.mjs',
+  'scripts/ops/create-local-backup.mjs',
 ];
 
 function assert(condition, message) {
@@ -46,14 +47,14 @@ function main() {
   const templates = readdirSync(LAUNCHD_DIR)
     .filter(name => name.endsWith('.plist.template'))
     .sort();
-  assert(templates.length >= 5, `expected launchd templates, found ${templates.length}`);
+  assert(templates.length >= 6, `expected launchd templates, found ${templates.length}`);
 
   for (const name of templates) {
     const text = readFileSync(join(LAUNCHD_DIR, name), 'utf8');
     assert(text.includes('<key>Label</key>'), `${name} is missing Label`);
     assert(text.includes('<key>ProgramArguments</key>'), `${name} is missing ProgramArguments`);
     assert(text.includes('<key>RunAtLoad</key>'), `${name} is missing RunAtLoad`);
-    assert(text.includes('<key>KeepAlive</key>') || text.includes('<key>StartInterval</key>'), `${name} needs KeepAlive or StartInterval`);
+    assert(text.includes('<key>KeepAlive</key>') || text.includes('<key>StartInterval</key>') || text.includes('<key>StartCalendarInterval</key>'), `${name} needs KeepAlive, StartInterval, or StartCalendarInterval`);
     assert(!/(FSQ_PLACES_TOKEN|HF_TOKEN|SUPABASE_SERVICE_ROLE|PGPASSWORD)\s*=/.test(text), `${name} contains a credential assignment`);
   }
 
@@ -79,6 +80,11 @@ function main() {
   const sync = read('infra/local/launchd/com.apizzamichigan.supabase-sync.plist.template');
   assert(sync.includes('<key>ENABLE_LIFECYCLE_SYNC</key>'), 'Supabase sync must explicitly enable lifecycle publication');
   assert(sync.includes('<string>1</string>'), 'Supabase sync lifecycle publication must be enabled');
+
+  const backup = read('infra/local/launchd/com.apizzamichigan.backup.plist.template');
+  assert(backup.includes('create-local-backup.mjs'), 'backup service must run the local backup job');
+  assert(backup.includes('--retention 7'), 'backup service must retain seven runs');
+  assert(backup.includes('<key>StartCalendarInterval</key>'), 'backup service must run on a calendar schedule');
 
   const gitignore = read('.gitignore');
   assert(gitignore.split('\n').some(line => line.trim() === '.env'), '.gitignore must protect .env');

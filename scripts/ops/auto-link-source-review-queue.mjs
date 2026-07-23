@@ -201,8 +201,8 @@ function parseArgs(argv) {
   if (!Number.isFinite(args.maxDistanceM) || args.maxDistanceM <= 0) {
     throw new Error('Invalid --max-distance-m.');
   }
-  if (!Number.isInteger(args.minExactIdentifiers) || args.minExactIdentifiers < 2 || args.minExactIdentifiers > 3) {
-    throw new Error('Invalid --min-exact-identifiers. Use 2 or 3.');
+  if (!Number.isInteger(args.minExactIdentifiers) || args.minExactIdentifiers !== 3) {
+    throw new Error('Invalid --min-exact-identifiers. Exact identifier mode requires all 3 identifiers.');
   }
   if (!Number.isFinite(args.limit) || args.limit <= 0) throw new Error('Invalid --limit.');
 
@@ -228,8 +228,8 @@ Options:
   --min-name-score <n>           Minimum nearest_name_score, 0-1 (default 0.98)
   --max-distance-m <n>           Maximum nearest distance in meters (default 100)
   --brand-rules                  Also include explicit report/brand rules
-  --exact-identifiers            Require an exact official store URL and nearby location
-  --min-exact-identifiers <n>    Require 2 or 3 matching identifiers in exact mode (default 3)
+  --exact-identifiers            Require exact address, phone, store URL, and nearby location
+  --min-exact-identifiers <n>    Compatibility flag; exact mode requires 3 (default 3)
   --exact-source-id              Require an exact OSM source ID and unchanged source name
   --source-identity              Require an exact Wikidata brand identity and nearby location
   --ids <ids>                    Exact reviewed source_review_queue ids to link

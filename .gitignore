@@ -32,6 +32,7 @@ __pycache__/
 /scripts/.*-progress.json
 /scripts/.status_hourly.json
 /scripts/.supabase-sync-checkpoint*.json
+/scripts/.supabase-reconcile-checkpoint*.json
 /scripts/.source-pipeline-state.json
 /scripts/.source-pipeline-last-report.json
 /scripts/.fsq-venv/
@@ -43,6 +44,7 @@ __pycache__/
 # OpenClaw / cron / watchdog local artifacts
 /logs/
 /reports/
+/backups/
 /.openclaw/
 /.status/
 /.cron_status/

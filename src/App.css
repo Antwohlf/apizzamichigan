@@ -291,8 +291,8 @@ body {
 
 .zoom-button {
   position: absolute;
-  bottom: 24px;
-  right: 10px;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  right: max(10px, env(safe-area-inset-right));
   z-index: 1000;
 }
 
@@ -326,6 +326,19 @@ body {
 @media (max-width: 1024px) {
   .app-layout {
     flex-direction: column;
+  }
+
+  /* On smaller screens the map is the primary task; filters follow it. */
+  .main-content {
+    order: 1;
+  }
+
+  .sidebar-wrapper--filters {
+    order: 2;
+  }
+
+  .sidebar-wrapper--recommendations {
+    order: 3;
   }
 
   .sidebar-wrapper {
@@ -373,8 +386,8 @@ body {
   }
 
   .map-or-directory {
-    height: min(70vh, 540px);
-    min-height: 420px;
+    height: min(70svh, 540px);
+    min-height: clamp(360px, 60svh, 420px);
   }
 }
 .admin-shell {

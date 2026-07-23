@@ -378,8 +378,8 @@
 @media (max-width: 640px) {
   .map-controls {
     left: 50px;
-    right: 8px;
-    top: 8px;
+    right: max(8px, env(safe-area-inset-right));
+    top: max(8px, env(safe-area-inset-top));
   }
 
   .map-controls-row {
@@ -400,6 +400,10 @@
   .map-results-dropdown {
     width: 100%;
     max-width: 100%;
+  }
+
+  .map-results-list {
+    max-height: min(360px, 42svh);
   }
 
   .map-results-summary-row {

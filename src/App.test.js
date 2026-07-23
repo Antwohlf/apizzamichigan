@@ -5,6 +5,7 @@ import App, {
   remoteSearchTerms,
   remoteSearchableColumns,
   publicSearchSelect,
+  readPublicMapQuery,
   normalizeLifecycleStatus,
   searchResultPriority,
   stateCodesForSearch,
@@ -94,9 +95,27 @@ describe('App routing themes', () => {
     const cta = screen.getByRole('link', { name: /check out apizzamichigan/i })
     expect(cta).toHaveAttribute('href', '/')
   })
+
+  test('preserves shareable search state on the first render', async () => {
+    window.history.pushState({}, '', '/?q=Anthony%27s%20Pizza&status=visited,golden&picks=1')
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: /a pizza michigan/i })
+
+    expect(window.location.search).toBe('?q=Anthony%27s+Pizza&status=visited%2Cgolden&picks=1')
+  })
 })
 
 describe('remoteSearchTerms', () => {
+  test('restores shareable map search and Picks state from the URL', () => {
+    expect(readPublicMapQuery('?q=Anthony%27s%20Pizza&status=visited,golden&picks=1')).toEqual({
+      query: "Anthony's Pizza",
+      statuses: ['visited', 'golden'],
+      anthonysPicks: true,
+    })
+  })
+
   test('defines Anthony\'s Picks as rated 8 or higher', () => {
     expect(isAnthonysPick({ rating: 8 })).toBe(true)
     expect(isAnthonysPick({ rating: '9.5' })).toBe(true)
@@ -249,6 +268,18 @@ describe('placeSearchRank', () => {
     }
 
     expect(placeSearchRank(historical, 'historical pizza', ['historical', 'pizza'])).toBeLessThan(99)
+  })
+
+  test('treats replaced and demolished records as historical search results too', () => {
+    for (const lifecycleStatus of ['replaced', 'demolished']) {
+      expect(placeSearchRank({
+        name: 'Former Pizza Place',
+        lifecycleStatus,
+        status: 'unvisited',
+        city: 'Detroit',
+        state: 'MI',
+      }, 'historical pizza', ['historical', 'pizza'])).toBeLessThan(99)
+    }
   })
   test('prioritizes mixed name and location matches', () => {
     const query = 'pizza hut detroit'

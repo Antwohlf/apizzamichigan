@@ -1,4 +1,5 @@
 export const SUPABASE_SYNC_TARGET_TABLE = 'pizza_places';
+export const SUPABASE_BULK_SYNC_RPC = 'apply_pizza_places_sync_batch';
 
 // The public schema stores compact region codes. Keep the full source address
 // intact, but map the one current international subdivision that exceeds the
@@ -149,6 +150,7 @@ export function normalizeSyncSelectorOptions(options = {}) {
     ),
     changedSinceHours: options.changedSinceHours ?? null,
     onlyClassified: Boolean(options.onlyClassified),
+    reconcile: Boolean(options.reconcile),
     checkpointMode: ids.length ? false : checkpointMode,
     checkpointAfter: ids.length ? null : checkpointAfter,
   };
@@ -166,6 +168,9 @@ export function localSyncSelect(options = {}) {
   if (selector.ids.length) {
     params.push(selector.ids);
     filters.unshift(`id = ANY($${params.length}::int[])`);
+  } else if (selector.reconcile) {
+    params.push(selector.checkpointAfter?.lastId ?? selector.startAfter);
+    filters.unshift(`id > $${params.length}`);
   } else if (selector.checkpointMode) {
     filters.push('last_enriched_at is not null');
   } else {
@@ -178,7 +183,7 @@ export function localSyncSelect(options = {}) {
     filters.push(`last_enriched_at >= now() - ($${params.length}::text || ' hours')::interval`);
   }
 
-  if (selector.checkpointAfter) {
+  if (selector.checkpointAfter && !selector.reconcile) {
     params.push(selector.checkpointAfter.lastEnrichedAt);
     const tsParam = params.length;
     params.push(selector.checkpointAfter.id);
@@ -192,7 +197,7 @@ export function localSyncSelect(options = {}) {
 
   params.push(selector.batch);
   const limitParam = params.length;
-  const orderBy = selector.checkpointMode ? 'last_enriched_at asc, id asc' : 'id asc';
+  const orderBy = selector.checkpointMode && !selector.reconcile ? 'last_enriched_at asc, id asc' : 'id asc';
 
   const sql = `
         select

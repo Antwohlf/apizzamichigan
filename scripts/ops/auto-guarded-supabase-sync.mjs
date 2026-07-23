@@ -20,6 +20,10 @@ function parseArgs(argv) {
     checkpoint: process.env.APIZZA_SYNC_CHECKPOINT || 'scripts/.supabase-sync-checkpoint.json',
     sample: process.env.APIZZA_SYNC_SAMPLE || '10',
     insertMissingReviewedNew: process.env.APIZZA_SYNC_INSERT_MISSING_REVIEWED_NEW === 'true',
+    reconcileCheckpoint: process.env.APIZZA_SYNC_RECONCILE_CHECKPOINT || 'scripts/.supabase-reconcile-checkpoint.json',
+    reconcileBatch: process.env.APIZZA_SYNC_RECONCILE_BATCH || process.env.APIZZA_SYNC_BATCH || '100',
+    reconcileMaxBatches: process.env.APIZZA_SYNC_RECONCILE_MAX_BATCHES || '5',
+    concurrency: process.env.APIZZA_SYNC_CONCURRENCY || '1',
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -117,9 +121,11 @@ try {
     env: process.env,
     timeout: 1200000,
   });
-  if (reconciliation.error) throw reconciliation.error;
-  if (reconciliation.status !== 0) {
-    throw new Error(`reviewed-new reconciliation failed with status ${reconciliation.status ?? 1}`);
+  if (reconciliation.error || reconciliation.status !== 0) {
+    // This optional source-import pre-step must not suppress the main sync.
+    // The guarded sync below has its own health/readiness gates and will stop
+    // safely when Supabase itself is unavailable.
+    console.warn(`reviewed-new reconciliation warning: ${reconciliation.error?.message || `status ${reconciliation.status ?? 1}`}`);
   }
   const result = spawnSync(process.execPath, [
     'scripts/ops/guarded-supabase-sync.mjs',
@@ -128,6 +134,7 @@ try {
     '--max-batches', options.maxBatches,
     '--checkpoint', options.checkpoint,
     '--sample', options.sample,
+    '--concurrency', options.concurrency,
     '--apply',
     ...(options.insertMissingReviewedNew ? ['--insert-missing-reviewed-new'] : []),
   ], {
@@ -138,6 +145,25 @@ try {
 
   if (result.error) throw result.error;
   exitCode = result.status ?? 1;
+
+  if (exitCode === 0) {
+    const reconciliation = spawnSync(process.execPath, [
+      'scripts/ops/guarded-supabase-sync.mjs',
+      '--reconcile',
+      '--checkpoint', options.reconcileCheckpoint,
+      '--batch', options.reconcileBatch,
+      '--max-batches', options.reconcileMaxBatches,
+      '--sample', options.sample,
+      '--concurrency', options.concurrency,
+      '--apply',
+    ], {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+      env: process.env,
+    });
+    if (reconciliation.error) throw reconciliation.error;
+    exitCode = reconciliation.status ?? 1;
+  }
 } finally {
   releaseLock();
 }
