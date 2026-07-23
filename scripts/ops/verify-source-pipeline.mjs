@@ -8,6 +8,7 @@ const plist = readFileSync('infra/local/launchd/com.apizzamichigan.source-pipeli
 const runner = readFileSync('scripts/ops/run-source-pipeline.mjs', 'utf8');
 const osmSource = readFileSync('scripts/ops/export-osm-source.mjs', 'utf8');
 const osmTiles = readFileSync('scripts/ops/export-osm-tiles.mjs', 'utf8');
+const osmExtractor = readFileSync('scripts/enrichment/agents/osm-extractor.mjs', 'utf8');
 const wikidataSource = readFileSync('scripts/ops/export-wikidata-source.mjs', 'utf8');
 const required = ['osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata', 'official_website'];
 const CAPABILITIES = ['discover', 'match_existing', 'enrich_evidence', 'promote_contact'];
@@ -116,7 +117,11 @@ if (!runner.includes('auto-link-source-review-queue.mjs')
 }
 const autoLink = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
 if (!autoLink.includes('if (!args.exactIdentifiers)')
-  || !autoLink.includes('Exact-identifier automation must not inherit')) {
+  || !autoLink.includes('Exact-identifier automation must not inherit')
+  || !autoLink.includes('args.minExactIdentifiers !== 3')
+  || !autoLink.includes('sourceAddress')
+  || !autoLink.includes('sourcePhone')
+  || !autoLink.includes('sourceWebsite')) {
   throw new Error('exact-identifier auto-link mode must exclude broad spatial/name matches');
 }
 if (!autoLink.includes('--exact-source-id') || !autoLink.includes('exactSourceId')) {
@@ -128,6 +133,13 @@ if (!websiteProvenance.includes("CONCAT('place:', id)")) {
 }
 if (!osmSource.includes('OVERPASS_QUERY_TIMEOUT_SECONDS') || !osmSource.includes('OVERPASS_REQUEST_TIMEOUT_MS') || !osmSource.includes('fetchWithHardTimeout') || !osmSource.includes('controller.abort()') || !osmTiles.includes('OSM_TILE_TIMEOUT_MS') || !osmTiles.includes('OSM_RETRY_COOLDOWN_MS') || !osmTiles.includes('next_retry_at') || !osmTiles.includes('deferred_tiles') || !osmTiles.includes('orderedTiles') || !osmTiles.includes('retryPriority') || !osmTiles.includes('time(?:d\\s*out|out)') || !osmTiles.includes('Split only the failed tile') || !osmTiles.includes('resumeSubtiles') || !osmTiles.includes('depth >= 1') || !osmTiles.includes('Manifest bbox mismatch') || !osmTiles.includes('Manifest step mismatch')) {
   throw new Error('OSM refresh must expose bounded timeouts and one-level adaptive tile recovery');
+}
+if (!osmExtractor.includes("tags['disused:amenity']")
+  || !osmExtractor.includes("tags['abandoned:amenity']")
+  || !osmExtractor.includes("tags['demolished:amenity']")
+  || !osmExtractor.includes('recordMeaningfulChange')
+  || !osmExtractor.includes('osm_change:')) {
+  throw new Error('OSM deep extraction must preserve closure and replacement evidence');
 }
 if (!runner.includes('OSM_PIPELINE_TIMEOUT_MS') || !runner.includes('1200000')) {
   throw new Error('OSM parent stage must expose a 20-minute bounded timeout');

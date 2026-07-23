@@ -18,6 +18,18 @@ export function readSyncCheckpoint(path) {
   };
 }
 
+export function readIdCheckpoint(path) {
+  if (!path || !existsSync(path)) return null;
+  const parsed = JSON.parse(readFileSync(path, 'utf8'));
+  if (!Number.isFinite(Number(parsed?.last_id))) {
+    throw new Error(`Invalid ID sync checkpoint: ${path}`);
+  }
+  return {
+    lastId: Number(parsed.last_id),
+    source: path,
+  };
+}
+
 export function checkpointFromRow(row) {
   if (!row?.last_enriched_at || !Number.isFinite(Number(row.id))) return null;
   const preciseLastEnrichedAt = row.sync_checkpoint_last_enriched_at || row.last_enriched_at;
@@ -26,6 +38,15 @@ export function checkpointFromRow(row) {
       ? preciseLastEnrichedAt
       : new Date(preciseLastEnrichedAt).toISOString(),
     id: Number(row.id),
+    saved_at: new Date().toISOString(),
+  };
+}
+
+export function idCheckpointFromRow(row) {
+  if (!Number.isFinite(Number(row?.id))) return null;
+  return {
+    mode: 'id',
+    last_id: Number(row.id),
     saved_at: new Date().toISOString(),
   };
 }

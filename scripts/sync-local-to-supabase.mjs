@@ -20,11 +20,14 @@ import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import {
   checkpointFromRow,
+  idCheckpointFromRow,
+  readIdCheckpoint,
   readSyncCheckpoint,
   writeSyncCheckpoint,
 } from './lib/supabase-sync-checkpoint.mjs';
 import {
   SUPABASE_SYNC_TARGET_TABLE,
+  SUPABASE_BULK_SYNC_RPC,
   buildSupabasePayload,
   assertSupabaseSyncTableBoundary,
   localSyncSelectParams,
@@ -45,6 +48,9 @@ function parseArgs(argv) {
     onlyClassified: false,
     insertMissingReviewedNew: false,
     checkpointPath: null,
+    reconcile: false,
+    concurrency: parseInt(process.env.APIZZA_SYNC_CONCURRENCY || '1', 10),
+    bulkRpc: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -58,6 +64,9 @@ function parseArgs(argv) {
     else if (a === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
     else if (a === '--changed-since-hours') out.changedSinceHours = parseFloat(argv[++i]);
     else if (a === '--checkpoint') out.checkpointPath = argv[++i];
+    else if (a === '--reconcile') out.reconcile = true;
+    else if (a === '--concurrency') out.concurrency = parseInt(argv[++i], 10);
+    else if (a === '--bulk-rpc') out.bulkRpc = true;
     else if (a === '--help') {
       console.log(`Usage: node scripts/sync-local-to-supabase.mjs [options]
 
@@ -72,6 +81,9 @@ Options:
                               With --ids, insert missing Supabase rows only when
                               local place_sources proves reviewed_new_import
   --checkpoint <path>         Resume/save a last_enriched_at + id checkpoint
+  --reconcile                 Scan all eligible local rows after an ID checkpoint
+  --concurrency <n>           Run independent Supabase writes concurrently (env APIZZA_SYNC_CONCURRENCY)
+  --bulk-rpc                  Apply updates through the guarded database-side batch RPC
   --dry-run                   Print what would happen, do not write to Supabase
   --verbose                   Extra logging
 `);
@@ -80,8 +92,13 @@ Options:
   }
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (out.ids.length && out.checkpointPath) throw new Error('--ids cannot be combined with --checkpoint');
+  if (out.reconcile && out.ids.length) throw new Error('--reconcile cannot be combined with --ids');
+  if (out.reconcile && (out.changedSinceHours !== null || out.onlyClassified)) {
+    throw new Error('--reconcile cannot be combined with --changed-since-hours or --only-classified');
+  }
   if (!Number.isFinite(out.startAfter) || out.startAfter < 0) throw new Error('Invalid --start-after');
   if (!Number.isFinite(out.maxBatches) || out.maxBatches < 0) throw new Error('Invalid --max-batches');
+  if (!Number.isInteger(out.concurrency) || out.concurrency <= 0) throw new Error('Invalid --concurrency');
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
     throw new Error('Invalid --changed-since-hours');
   }
@@ -140,6 +157,20 @@ async function supabaseRequest(operation, label, attempts = 4) {
   throw lastError;
 }
 
+async function runConcurrent(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function consume() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, consume));
+  return results;
+}
+
 async function insertSupabaseRow(sb, payload) {
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
@@ -166,9 +197,22 @@ async function insertSupabaseRow(sb, payload) {
   throw new Error(`Supabase insert failed for id=${payload.id}`);
 }
 
+async function applyBulkSupabaseUpdates(sb, updates) {
+  const result = await supabaseRequest(
+    () => sb.rpc(SUPABASE_BULK_SYNC_RPC, { p_rows: updates }),
+    `bulk update rows=${updates.length}`,
+  );
+  const updatedCount = Number(result?.data?.updated_count);
+  if (!Number.isInteger(updatedCount) || updatedCount !== updates.length) {
+    throw new Error(`Bulk sync updated ${Number.isFinite(updatedCount) ? updatedCount : 'an unknown number of'} rows; expected ${updates.length}`);
+  }
+  return updatedCount;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const env = loadEnvLocal();
+  const bulkRpc = args.bulkRpc || /^(1|true|yes)$/i.test(String(env.APIZZA_SYNC_BULK_RPC || process.env.APIZZA_SYNC_BULK_RPC || '').trim());
   assertSupabaseSyncTableBoundary();
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
@@ -189,8 +233,12 @@ async function main() {
   const client = new pg.Client(dbConfig);
   await client.connect();
 
+  if (bulkRpc) console.log(`[sync] bulk RPC enabled: ${SUPABASE_BULK_SYNC_RPC}`);
+
   let cursor = args.startAfter;
-  let checkpointAfter = readSyncCheckpoint(args.checkpointPath);
+  let checkpointAfter = args.reconcile
+    ? readIdCheckpoint(args.checkpointPath)
+    : readSyncCheckpoint(args.checkpointPath);
   let batchNum = 0;
   let totalUpdates = 0;
   let totalInserts = 0;
@@ -205,7 +253,8 @@ async function main() {
       const selector = {
         ...args,
         startAfter: cursor,
-        checkpointMode: Boolean(args.checkpointPath),
+        checkpointMode: Boolean(args.checkpointPath) && !args.reconcile,
+        reconcile: args.reconcile,
         checkpointAfter,
       };
       const { rows: localRows } = await client.query(localSyncSelectSql(selector), localSyncSelectParams(selector));
@@ -288,60 +337,84 @@ async function main() {
         if (args.verbose && inserts.length) {
           console.log('sample insert payload:', JSON.stringify(inserts[0], null, 2));
         }
-        const nextCheckpoint = checkpointFromRow(localRows[localRows.length - 1]);
+        const nextCheckpoint = args.reconcile
+          ? idCheckpointFromRow(localRows[localRows.length - 1])
+          : checkpointFromRow(localRows[localRows.length - 1]);
         if (args.checkpointPath && nextCheckpoint) {
-          checkpointAfter = {
-            lastEnrichedAt: nextCheckpoint.last_enriched_at,
-            id: nextCheckpoint.id,
-            source: args.checkpointPath,
-          };
+          checkpointAfter = args.reconcile
+            ? { lastId: nextCheckpoint.last_id, source: args.checkpointPath }
+            : {
+              lastEnrichedAt: nextCheckpoint.last_enriched_at,
+              id: nextCheckpoint.id,
+              source: args.checkpointPath,
+            };
         }
         if (args.ids.length) break;
         continue;
       }
 
       if (!updates.length && !inserts.length) {
+        const nextCheckpoint = args.reconcile
+          ? idCheckpointFromRow(localRows[localRows.length - 1])
+          : checkpointFromRow(localRows[localRows.length - 1]);
+        if (args.checkpointPath && nextCheckpoint) {
+          writeSyncCheckpoint(args.checkpointPath, nextCheckpoint);
+          checkpointAfter = args.reconcile
+            ? { lastId: nextCheckpoint.last_id, source: args.checkpointPath }
+            : {
+              lastEnrichedAt: nextCheckpoint.last_enriched_at,
+              id: nextCheckpoint.id,
+              source: args.checkpointPath,
+            };
+        }
         console.log(`[ok] batch ${batchNum}: nothing to update or insert (local_rows=${localRows.length}, cursor=${cursor})`);
         if (args.ids.length) break;
         continue;
       }
 
-      let inserted = 0;
-      for (const payload of inserts) {
+      const insertResults = await runConcurrent(inserts, args.concurrency, async payload => {
         const data = await insertSupabaseRow(sb, payload);
         if (!data?.length) {
           throw new Error(`Supabase insert returned no row for id=${payload.id}`);
         }
-        inserted++;
-      }
+        return data;
+      });
 
-      let updated = 0;
-      for (const payload of updates) {
-        const { id, ...fields } = payload;
-        const { data } = await supabaseRequest(
-          () => sb
-            .from(SUPABASE_SYNC_TARGET_TABLE)
-            .update(fields)
-            .eq('id', id)
-            .select('id'),
-          `update id=${id}`,
-        );
-        if (!data?.length) {
-          throw new Error(`Supabase update matched no rows for id=${id}`);
-        }
-        updated++;
-      }
+      const updateResults = bulkRpc && updates.length
+        ? [await applyBulkSupabaseUpdates(sb, updates)]
+        : await runConcurrent(updates, args.concurrency, async payload => {
+          const { id, ...fields } = payload;
+          const { data } = await supabaseRequest(
+            () => sb
+              .from(SUPABASE_SYNC_TARGET_TABLE)
+              .update(fields)
+              .eq('id', id)
+              .select('id'),
+            `update id=${id}`,
+          );
+          if (!data?.length) {
+            throw new Error(`Supabase update matched no rows for id=${id}`);
+          }
+          return data;
+        });
+
+      const inserted = insertResults.length;
+      const updated = bulkRpc && updates.length ? updateResults[0] : updateResults.length;
 
       totalUpdates += updated;
       totalInserts += inserted;
-      const nextCheckpoint = checkpointFromRow(localRows[localRows.length - 1]);
+      const nextCheckpoint = args.reconcile
+        ? idCheckpointFromRow(localRows[localRows.length - 1])
+        : checkpointFromRow(localRows[localRows.length - 1]);
       if (args.checkpointPath && nextCheckpoint) {
         writeSyncCheckpoint(args.checkpointPath, nextCheckpoint);
-        checkpointAfter = {
-          lastEnrichedAt: nextCheckpoint.last_enriched_at,
-          id: nextCheckpoint.id,
-          source: args.checkpointPath,
-        };
+        checkpointAfter = args.reconcile
+          ? { lastId: nextCheckpoint.last_id, source: args.checkpointPath }
+          : {
+            lastEnrichedAt: nextCheckpoint.last_enriched_at,
+            id: nextCheckpoint.id,
+            source: args.checkpointPath,
+          };
       }
       console.log(`[ok] batch ${batchNum}: updated=${updated} inserted=${inserted} local_rows=${localRows.length} cursor=${cursor}`);
       if (args.ids.length) break;

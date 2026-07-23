@@ -6,6 +6,12 @@ Run the read-only lifecycle report against local Postgres:
 npm run lifecycle-report -- --entity pizza --limit 100
 ```
 
+By default, the report is scoped to the active regions in the entity
+configuration (`MI`, `NY`, `CA`, and `TX` for pizza). This keeps legacy imports
+outside the current product scope from inflating the operational worklist. To
+audit a specific scope, pass `--states MI,NY`; to deliberately include every
+state and historical region, pass `--all-states`.
+
 The `--limit` value only limits the example rows returned in each section.
 The JSON report's `totals` object contains the full counts, so a value of 100
 in a sample is not a claim that only 100 rows exist.

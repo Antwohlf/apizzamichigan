@@ -77,6 +77,66 @@
   font-weight: 800;
 }
 
+.place-detail__lifecycle {
+  margin: 1.25rem 0;
+  padding: 0.9rem 1rem;
+  border-left: 4px solid var(--detail-accent, var(--app-accent));
+  background: color-mix(in srgb, var(--detail-accent, #f97316) 12%, transparent);
+}
+
+.place-detail__lifecycle strong {
+  display: block;
+}
+
+.place-detail__lifecycle p {
+  margin: 0.3rem 0 0;
+  color: var(--app-text-muted);
+}
+
+.place-detail__replacement {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin-top: 0.65rem;
+}
+
+.place-detail__replacement strong {
+  color: var(--app-text);
+}
+
+.place-detail__replacement a {
+  margin-top: 0.55rem;
+  color: var(--detail-accent, var(--app-accent));
+  font-weight: 700;
+}
+
+.place-detail__lifecycle--replaced {
+  border-left-color: #f59e0b;
+}
+
+.place-detail__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.45rem 1rem;
+  margin: 1.25rem 0 0;
+  color: var(--app-text-muted);
+}
+
+.place-detail__facts dt {
+  font-weight: 700;
+  color: var(--app-text);
+}
+
+.place-detail__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.place-detail__facts a {
+  color: var(--detail-accent, var(--app-accent));
+}
+
 .place-detail__actions {
   display: flex;
   flex-wrap: wrap;
@@ -96,6 +156,33 @@
 }
 
 @media (max-width: 640px) {
+  .place-detail {
+    padding: 0.75rem;
+  }
+
+  .place-detail__header {
+    align-items: flex-start;
+  }
+
+  .place-detail__back {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .place-detail__eyebrow {
+    max-width: 45%;
+    text-align: right;
+  }
+
+  .place-detail__card {
+    padding: 1rem;
+  }
+
+  .place-detail h1 {
+    font-size: 2rem;
+  }
+
   .place-detail__hero {
     display: block;
   }
@@ -103,5 +190,29 @@
   .place-detail__badges {
     justify-content: flex-start;
     margin-top: 1rem;
+  }
+
+  .place-detail__replacement {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .place-detail__replacement a {
+    margin-top: 0.15rem;
+  }
+
+  .place-detail__facts {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+
+  .place-detail__facts dd {
+    margin-bottom: 0.55rem;
+  }
+
+  .place-detail__actions {
+    display: grid;
+    gap: 0.65rem;
   }
 }

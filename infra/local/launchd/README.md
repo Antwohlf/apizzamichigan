@@ -111,3 +111,40 @@ Operate:
 launchctl print "gui/$(id -u)/com.apizzamichigan.menu-parser"
 tail -f /tmp/apizzamichigan/menu-parser.log
 ```
+
+## Local Backup Service
+
+The backup job creates a machine-local recovery bundle containing a custom
+`pg_dump` of `pizza_enrichment`, a consistent snapshot of the SQLite queue,
+and a checksum manifest. It retains seven completed runs and never contacts
+Supabase. Backups are ignored by git and should be copied to separate storage
+for protection from disk failure.
+
+Preview the paths without writing anything:
+
+```bash
+node scripts/ops/create-local-backup.mjs --dry-run
+```
+
+Install the daily 03:30 service:
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.backup.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.backup.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.backup.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.backup.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.backup"
+```
+
+Run one manually when the local database and all workers are healthy:
+
+```bash
+node scripts/ops/create-local-backup.mjs --retention 7
+```
+
+Each run contains `manifest.json` with file sizes and SHA-256 checksums. To
+restore Postgres, prefer restoring into a separate database first with
+`pg_restore --no-owner --no-acl --dbname <new_database> <dump>`. Replacing the
+queue snapshot is destructive: stop every worker, remove any queue WAL/SHM
+files, replace the database file, and only then restart services.

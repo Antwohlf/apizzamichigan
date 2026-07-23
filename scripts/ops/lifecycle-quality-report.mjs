@@ -19,10 +19,32 @@ const limitArg = process.argv.includes('--limit')
   ? Number(process.argv[process.argv.indexOf('--limit') + 1])
   : 100
 const json = process.argv.includes('--json')
+const allStates = process.argv.includes('--all-states')
+const stateArgIndex = process.argv.indexOf('--states')
+const explicitStates = (stateArgIndex >= 0 ? process.argv[stateArgIndex + 1] : process.env.LIFECYCLE_REPORT_STATES || '')
+  .split(',')
+  .map(value => value.trim().toUpperCase())
+  .filter(Boolean)
 const tables = { pizza: 'pizza_places', taco: 'taco_places' }
 
 if (!tables[entityArg]) throw new Error('Invalid --entity. Use pizza or taco.')
 if (!Number.isInteger(limitArg) || limitArg < 1 || limitArg > 500) throw new Error('Invalid --limit. Use 1-500.')
+
+function readJson(path) {
+  if (!existsSync(path)) return null
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+const pipeline = readJson(resolve(process.cwd(), 'config/source-pipeline.json'))
+const entityProfiles = readJson(resolve(process.cwd(), 'config/entity-profiles.json'))
+const configuredStates = pipeline?.entity === entityArg
+  ? (pipeline.regions || []).map(region => String(region.key).toUpperCase())
+  : (entityProfiles?.profiles?.[entityArg]?.regions || []).map(region => String(region).toUpperCase())
+const states = allStates ? [] : (explicitStates.length ? explicitStates : configuredStates)
 
 function readEnvFile(path) {
   if (!existsSync(path)) return {}
@@ -60,6 +82,7 @@ try {
     entity: entityArg,
     generated_at: new Date().toISOString(),
     read_only: true,
+    scope: states.length ? { states } : { states: 'all' },
     available,
     replacements: [],
     closed_or_stale: [],
@@ -95,9 +118,10 @@ try {
         AND srq.source_id = p.google_place_id
         AND lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))
           <> lower(regexp_replace(coalesce(p.name, ''), '[^a-z0-9]+', ' ', 'g'))
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($3::text[])" : ''}
       ORDER BY srq.id
       LIMIT $2
-    `, [entityArg, limitArg])
+      `, states.length ? [entityArg, limitArg, states] : [entityArg, limitArg])
     report.replacements = replacements.rows
 
     const replacementTotal = await client.query(`
@@ -111,7 +135,8 @@ try {
         AND srq.source_id = p.google_place_id
         AND lower(regexp_replace(coalesce(srq.source_name, ''), '[^a-z0-9]+', ' ', 'g'))
           <> lower(regexp_replace(coalesce(p.name, ''), '[^a-z0-9]+', ' ', 'g'))
-    `, [entityArg])
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
+    `, states.length ? [entityArg, states] : [entityArg])
     report.totals.replacements = Number(replacementTotal.rows[0]?.total || 0)
   }
 
@@ -147,9 +172,10 @@ try {
           ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($3::text[])" : ''}
       ORDER BY latest_source.retrieved_at
-      LIMIT $2
-    `, [entityArg, limitArg])
+        LIMIT $2
+      `, states.length ? [entityArg, limitArg, states] : [entityArg, limitArg])
     report.closed_or_stale = stale.rows
 
     const staleTotal = await client.query(`
@@ -173,7 +199,8 @@ try {
           ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
-    `, [entityArg])
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
+    `, states.length ? [entityArg, states] : [entityArg])
     report.totals.stale_evidence = Number(staleTotal.rows[0]?.total || 0)
 
     const stalePlaceTotal = await client.query(`
@@ -197,7 +224,8 @@ try {
           ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
-    `, [entityArg])
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
+    `, states.length ? [entityArg, states] : [entityArg])
     report.totals.stale_places = Number(stalePlaceTotal.rows[0]?.total || 0)
 
     const closedSignals = await client.query(`
@@ -218,9 +246,10 @@ try {
       WHERE lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         AND latest_source.data->>'is_closed' = 'true'
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($3::text[])" : ''}
       ORDER BY latest_source.retrieved_at DESC NULLS LAST
       LIMIT $2
-    `, [entityArg, limitArg])
+    `, states.length ? [entityArg, limitArg, states] : [entityArg, limitArg])
     report.closed_signals = closedSignals.rows
 
     const closedSignalTotal = await client.query(`
@@ -237,7 +266,8 @@ try {
       WHERE lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         AND latest_source.data->>'is_closed' = 'true'
-    `, [entityArg])
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
+    `, states.length ? [entityArg, states] : [entityArg])
     report.totals.closed_signals = Number(closedSignalTotal.rows[0]?.total || 0)
 
     const conflicts = await client.query(`
@@ -248,6 +278,7 @@ try {
                lower(regexp_replace(coalesce(name, ''), '[^a-z0-9]+', ' ', 'g')) AS normalized_name
         FROM ${table}
         WHERE lat IS NOT NULL AND lng IS NOT NULL
+          ${states.length ? "AND UPPER(COALESCE(state, '')) = ANY($2::text[])" : ''}
       )
       SELECT a.id AS first_place_id, a.name AS first_name,
              b.id AS second_place_id, b.name AS second_name,
@@ -264,7 +295,7 @@ try {
         AND a.normalized_name <> b.normalized_name
       ORDER BY a.id, b.id
       LIMIT $1
-    `, [limitArg])
+    `, states.length ? [limitArg, states] : [limitArg])
     report.same_location_conflicts = conflicts.rows
 
     const conflictTotal = await client.query(`
@@ -275,6 +306,7 @@ try {
                lower(regexp_replace(coalesce(name, ''), '[^a-z0-9]+', ' ', 'g')) AS normalized_name
         FROM ${table}
         WHERE lat IS NOT NULL AND lng IS NOT NULL
+          ${states.length ? "AND UPPER(COALESCE(state, '')) = ANY($1::text[])" : ''}
       )
       SELECT COUNT(*)::int AS total
       FROM candidates a
@@ -285,7 +317,7 @@ try {
         AND ABS(a.lat - b.lat) < 0.00015
         AND ABS(a.lng - b.lng) < 0.00015
         AND a.normalized_name <> b.normalized_name
-    `)
+    `, states.length ? [states] : [])
     report.totals.same_location_conflicts = Number(conflictTotal.rows[0]?.total || 0)
 
     const chains = await client.query(`
@@ -296,11 +328,12 @@ try {
       FROM ${table} p
       WHERE COALESCE(NULLIF(btrim(p.brand_wikidata), ''), NULLIF(btrim(p.operator_wikidata), ''),
                      NULLIF(btrim(p.brand), ''), NULLIF(btrim(p.operator), '')) IS NOT NULL
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
       GROUP BY 1
       HAVING COUNT(*) > 1
       ORDER BY places DESC, chain_identity
       LIMIT $1
-    `, [limitArg])
+    `, states.length ? [limitArg, states] : [limitArg])
     report.chain_coverage = chains.rows
 
     const chainTotal = await client.query(`
@@ -311,10 +344,11 @@ try {
         FROM ${table} p
         WHERE COALESCE(NULLIF(btrim(p.brand_wikidata), ''), NULLIF(btrim(p.operator_wikidata), ''),
                        NULLIF(btrim(p.brand), ''), NULLIF(btrim(p.operator), '')) IS NOT NULL
+          ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($1::text[])" : ''}
         GROUP BY 1
         HAVING COUNT(*) > 1
       ) grouped_chains
-    `)
+    `, states.length ? [states] : [])
     report.totals.chain_coverage_groups = Number(chainTotal.rows[0]?.total || 0)
   }
 
@@ -324,6 +358,7 @@ try {
   else {
     console.log(`# Lifecycle Quality Report (${entityArg})`)
     console.log(`Generated: ${report.generated_at}`)
+    console.log(`Scope: ${states.length ? states.join(', ') : 'all states'}`)
     console.log(`Replacements: ${report.replacements.length}`)
     console.log(`Likely replacements: ${report.totals.replacements} (showing ${report.replacements.length})`)
     console.log(`Stale evidence rows: ${report.totals.stale_evidence} (showing ${report.closed_or_stale.length})`)

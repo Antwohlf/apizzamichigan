@@ -26,6 +26,14 @@
     <string>10</string>
     <key>APIZZA_SYNC_INSERT_MISSING_REVIEWED_NEW</key>
     <string>true</string>
+    <key>APIZZA_SYNC_RECONCILE_CHECKPOINT</key>
+    <string>scripts/.supabase-reconcile-checkpoint.json</string>
+    <key>APIZZA_SYNC_RECONCILE_BATCH</key>
+    <string>100</string>
+    <key>APIZZA_SYNC_RECONCILE_MAX_BATCHES</key>
+    <string>1</string>
+    <key>APIZZA_SYNC_CONCURRENCY</key>
+    <string>1</string>
     <key>ENABLE_LIFECYCLE_SYNC</key>
     <string>1</string>
   </dict>

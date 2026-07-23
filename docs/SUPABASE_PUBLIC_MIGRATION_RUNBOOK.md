@@ -15,6 +15,9 @@ file is the canonical operator entry point.
 The lifecycle migration adds explicit historical/replacement fields. The
 search migration enables `pg_trgm` and adds idempotent indexes for the fields
 already searched by the public sites. It is safe to run either migration again.
+The migration also installs the guarded `apply_pizza_places_sync_batch(jsonb)`
+RPC. It performs approved updates in one database transaction and is callable
+only by the Supabase service role.
 
 ## Verify Before Enabling Sync
 
@@ -50,6 +53,14 @@ The `Public schema and search performance` gate should no longer list the two
 SQL files as remaining actions. Do not run a broad write sync as part of this
 migration; the recurring guarded sync will pick up eligible lifecycle fields
 after the readiness gate passes.
+
+## Enable the low-I/O path
+
+After the SQL migration succeeds and the readiness report is clean, set
+`APIZZA_SYNC_BULK_RPC=1` in the iMac sync environment. The normal guarded sync
+will then batch updates through the RPC. Reviewed-new inserts remain on the
+existing guarded insert path. Remove the variable to fall back to row-level
+updates if the RPC is unavailable.
 
 ## Rollback
 

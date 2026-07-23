@@ -169,7 +169,13 @@ out center tags;
       hours: tags.opening_hours ? { raw: tags.opening_hours } : null,
       cuisine: tags.cuisine,
       isClosed: ['yes', 'true', '1'].includes(String(tags.disused || tags.abandoned || '').trim().toLowerCase())
-        || Boolean(tags['was:amenity'] || tags['end_date']),
+        || Boolean(
+          tags['disused:amenity']
+          || tags['abandoned:amenity']
+          || tags['demolished:amenity']
+          || tags['was:amenity']
+          || tags.end_date
+        ),
 
       osmTags: this.buildOsmTags(tags)
     }
@@ -205,7 +211,8 @@ out center tags;
       'wheelchair',
       'brand', 'brand:wikidata', 'operator', 'operator:wikidata',
       'addr:housenumber', 'addr:street', 'addr:city', 'addr:state', 'addr:postcode',
-      'disused', 'abandoned', 'was:amenity', 'end_date'
+      'disused', 'abandoned', 'disused:amenity', 'abandoned:amenity',
+      'demolished:amenity', 'was:amenity', 'end_date'
     ]
 
     for (const k of also) {

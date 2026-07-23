@@ -1,4 +1,43 @@
-import { FOCUSED_PLACE_ZOOM, lightboxRestoreViewport, focusedPlaceZoom } from './viewport'
+import { FOCUSED_PLACE_ZOOM, lightboxRestoreViewport, focusedPlaceZoom, isPlaceViewportFocused, clusterFitOptions } from './viewport'
+
+describe('cluster navigation', () => {
+  test('keeps cluster expansion bounded to neighborhood context', () => {
+    expect(clusterFitOptions()).toEqual({
+      padding: [48, 48],
+      maxZoom: 14,
+      animate: true,
+      duration: 0.6,
+    })
+  })
+})
+
+describe('isPlaceViewportFocused', () => {
+  const place = { lat: 40.734, lng: -74.003 }
+
+  test('accepts a sufficiently zoomed viewport near the place', () => {
+    expect(isPlaceViewportFocused({
+      center: { lat: 40.8, lng: -74.05 },
+      zoom: 11,
+      place,
+    })).toBe(true)
+  })
+
+  test('rejects a stale viewport in another region', () => {
+    expect(isPlaceViewportFocused({
+      center: { lat: 44.3, lng: -85.6 },
+      zoom: 6,
+      place,
+    })).toBe(false)
+  })
+
+  test('rejects a nearby but state-level viewport', () => {
+    expect(isPlaceViewportFocused({
+      center: { lat: 40.8, lng: -74.05 },
+      zoom: 6,
+      place,
+    })).toBe(false)
+  })
+})
 
 describe('focusedPlaceZoom', () => {
   test('preserves zoom when an expanded popup opens for a visible marker', () => {

@@ -18,6 +18,7 @@ import {
 } from '../lib/source-promotion-policy.mjs';
 
 const contract = JSON.parse(readFileSync('config/canonical-contract.json', 'utf8'));
+const entityProfiles = JSON.parse(readFileSync('config/entity-profiles.json', 'utf8'));
 const sourcePolicy = JSON.parse(readFileSync('config/source-policy.json', 'utf8'));
 const sourcePipeline = JSON.parse(readFileSync('config/source-pipeline.json', 'utf8'));
 
@@ -66,12 +67,30 @@ function verifySourceConfiguration() {
   }
 }
 
+function verifyEntityProfiles() {
+  const profiles = entityProfiles.profiles || {};
+  assert(entityProfiles.version === 1, 'entity profile version must be 1');
+  assert(sameSet(Object.keys(profiles), contract.entities), 'entity profiles must cover exactly the canonical entities');
+
+  for (const entity of contract.entities) {
+    const profile = profiles[entity];
+    assert(profile && typeof profile === 'object', `entity profile missing: ${entity}`);
+    assert(profile.canonical_table === contract.canonical_tables[entity], `entity profile table disagrees: ${entity}`);
+    assert(typeof profile.primary_classification_field === 'string' && profile.primary_classification_field.trim(), `primary classification field missing: ${entity}`);
+    assert(typeof profile.taxonomy_file === 'string' && profile.taxonomy_file.trim(), `taxonomy file missing: ${entity}`);
+    assert(Array.isArray(profile.regions) && profile.regions.length > 0, `entity profile regions missing: ${entity}`);
+    assert(typeof profile.public_route === 'string' && profile.public_route.startsWith('/'), `public route missing: ${entity}`);
+    assert(typeof profile.admin_route === 'string' && profile.admin_route.startsWith('/admin/'), `admin route missing: ${entity}`);
+  }
+}
+
 function main() {
   assert(contract.version === 1, 'canonical contract version must be 1');
   assert(contract.sync_target === SUPABASE_SYNC_TARGET_TABLE, 'contract sync target disagrees with sync policy');
   assert(sameSet(contract.local_only_tables, LOCAL_ONLY_SUPABASE_TABLES), 'contract local-only tables disagree with sync policy');
   assert(contract.canonical_tables.pizza === 'pizza_places', 'pizza canonical table must be pizza_places');
   assert(contract.canonical_tables.taco === 'taco_places', 'taco canonical table must be taco_places');
+  verifyEntityProfiles();
   verifySourceConfiguration();
 
   const localSyncColumns = [...new Set(LOCAL_SYNC_COLS)];
@@ -109,6 +128,11 @@ function main() {
     version: contract.version,
     entities: contract.entities,
     canonical_tables: contract.canonical_tables,
+    entity_profiles: Object.fromEntries(Object.entries(entityProfiles.profiles).map(([entity, profile]) => [entity, {
+      canonical_table: profile.canonical_table,
+      primary_classification_field: profile.primary_classification_field,
+      regions: profile.regions,
+    }])),
     local_only_tables: contract.local_only_tables,
     sync_columns: syncColumns.length,
     field_groups: Object.fromEntries(fieldGroups.map(([group, fields]) => [group, fields.length])),

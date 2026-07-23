@@ -515,7 +515,7 @@ report/spider at a time.
 
 Official-chain rows with exact independent identifiers do not need manual review.
 Use exact-identifier mode when the source address, phone, store-specific URL, and
-nearest canonical location all agree. The recurring pipeline requires all three
+nearest canonical location all agree. Exact-identifier mode requires all three
 identifiers; it never changes the canonical display name:
 
 ```bash
