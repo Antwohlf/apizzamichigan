@@ -8,12 +8,19 @@ const plist = readFileSync('infra/local/launchd/com.apizzamichigan.source-pipeli
 const runner = readFileSync('scripts/ops/run-source-pipeline.mjs', 'utf8');
 const osmSource = readFileSync('scripts/ops/export-osm-source.mjs', 'utf8');
 const osmTiles = readFileSync('scripts/ops/export-osm-tiles.mjs', 'utf8');
+const readiness = readFileSync('scripts/ops/source-pipeline-readiness-report.mjs', 'utf8');
+const sourceQuality = readFileSync('scripts/ops/source-quality-report.mjs', 'utf8');
+const lifecycleQuality = readFileSync('scripts/ops/lifecycle-quality-report.mjs', 'utf8');
 const osmExtractor = readFileSync('scripts/enrichment/agents/osm-extractor.mjs', 'utf8');
 const wikidataSource = readFileSync('scripts/ops/export-wikidata-source.mjs', 'utf8');
+const scopeHelper = readFileSync('scripts/lib/source-pipeline-scope.mjs', 'utf8');
 const required = ['osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata', 'official_website'];
 const CAPABILITIES = ['discover', 'match_existing', 'enrich_evidence', 'promote_contact'];
 const missing = required.filter(key => !config.sources?.[key]?.enabled);
 if (missing.length) throw new Error(`missing enabled sources: ${missing.join(', ')}`);
+if (!runner.includes("argv[i] === '--plan'") || !runner.includes("mode: 'plan'") || !runner.includes('if (options.plan)')) {
+  throw new Error('source pipeline must expose a non-mutating --plan mode');
+}
 for (const key of required) {
   const capabilities = config.sources[key]?.capabilities;
   if (!Array.isArray(capabilities) || !capabilities.length || capabilities.some(value => !CAPABILITIES.includes(value))) {
@@ -32,7 +39,7 @@ if (!config.sources.official_website.capabilities.includes('promote_contact')) {
 if (required.filter(key => config.sources[key].capabilities.includes('promote_contact')).length !== 1) {
   throw new Error('exactly one source may currently promote contact fields automatically');
 }
-if (config.limits.new_places_per_run !== 50 || config.limits.new_places_per_day !== 250 || config.limits.classify_queue_jobs_per_region_per_run !== 50) {
+if (config.limits.new_places_per_run !== 50 || config.limits.new_places_per_day !== 250 || config.limits.classify_queue_jobs_per_region_per_run !== 50 || config.limits.classify_partial_retry_jobs_per_region_per_run !== 2) {
   throw new Error('new-place caps and classifier feeder cap must remain bounded');
 }
 if (config.sources.wikidata.auto_create || config.sources.official_website.auto_create) {
@@ -47,6 +54,11 @@ if (Number(config.sources.osm.cadence_hours) !== 0.25) {
 if (Number(config.sources.osm.regions_per_run) !== 1 || !runner.includes('regionsPerRun')) {
   throw new Error('OSM source pipeline must process one region per scheduled run');
 }
+if (!Array.isArray(config.operational_regions) || !config.operational_regions.length
+  || !runner.includes('selectSourcePipelineRegions')
+  || !scopeHelper.includes('config.operational_regions')) {
+  throw new Error('source pipeline must default to the configured operational regions');
+}
 if (Number(config.sources.overture_places.tile_step) !== 1 || Number(config.sources.overture_places.tiles_per_run) !== 1 || !runner.includes('export-overture-tiles.py')) {
   throw new Error('Overture source pipeline must use bounded resumable tiles');
 }
@@ -59,9 +71,17 @@ if (Number(config.sources.osm.tiles_per_run) !== 4
   throw new Error('OSM source pipeline must use the measured regional tile budgets');
 }
 if (Number(config.sources.osm.refresh_after_hours) !== 720
+  || Number(config.sources.osm.provenance_refresh_limit_per_run) !== 1000
   || !runner.includes('OSM_REFRESH_AFTER_HOURS')
-  || !osmTiles.includes('OSM_REFRESH_AFTER_HOURS')) {
+  || !osmTiles.includes('OSM_REFRESH_AFTER_HOURS')
+  || !runner.includes('refreshAfterMs')
+  || !runner.includes('Date.parse(tile.completed_at)')) {
   throw new Error('OSM source pipeline must refresh completed tiles within 30 days');
+}
+if (!runner.includes('refresh-osm-place-sources.mjs')
+  || !runner.includes('provenance_refresh_limit_per_run')
+  || !runner.includes("'--states'")) {
+  throw new Error('OSM source pipeline must refresh exact existing provenance independently of review queue volume');
 }
 if (Number(config.sources.osm.tile_timeout_ms_by_region?.NY) !== 180000 || Number(config.sources.osm.tile_timeout_ms_by_region?.TX) !== 180000 || Number(config.sources.osm.overpass_request_timeout_ms_by_region?.NY) !== 60000 || Number(config.sources.osm.overpass_request_timeout_ms_by_region?.TX) !== 60000 || !runner.includes('OSM_TILE_TIMEOUT_MS') || !runner.includes('OVERPASS_REQUEST_TIMEOUT_MS')) {
   throw new Error('OSM source pipeline must support bounded regional timeout overrides');
@@ -71,6 +91,9 @@ if (Number(config.sources.osm.failure_rotation_threshold) !== 1 || !runner.inclu
 }
 if (policy.version !== 1 || required.some(key => !policy.sources?.[key]?.freshness_days)) {
   throw new Error('source policy must define freshness for every enabled source');
+}
+if (!lifecycleQuality.includes("config/source-policy.json") || !lifecycleQuality.includes('sourceFreshnessCase')) {
+  throw new Error('lifecycle quality report must derive freshness windows from source policy');
 }
 if (!runner.includes("resolve(ROOT, 'reports/source-review'") || !runner.includes('last_error')) {
   throw new Error('source runner must pass absolute review paths and persist per-source errors');
@@ -92,8 +115,8 @@ if (!runner.includes('sourceState.region_index')
   || !runner.includes('(startingRegionIndex + regionOffset + 1) % regions.length')) {
   throw new Error('source runner must advance geographic cursors independently per source');
 }
-if (!runner.includes('selectOsmRegion') || !runner.includes('osmBacklog')) {
-  throw new Error('OSM source runner must prioritize the region with the largest unfinished tile backlog');
+if (!runner.includes('selectOsmRegion') || !runner.includes('osmBacklog') || !runner.includes('state.sources[source].region_index')) {
+  throw new Error('OSM source runner must prioritize refresh backlog and advance its region cursor');
 }
 if (!runner.includes('Number.isInteger(Number(sourceState.region_index))') || !runner.includes(': 0;')) {
   throw new Error('source runner must default missing geographic cursors to region zero');
@@ -104,8 +127,8 @@ if (!runner.includes('SOURCE_PIPELINE_RUN_SCRAPER') || !runner.includes('managed
 if (!runner.includes('record-website-provenance.mjs')) {
   throw new Error('source runner must record website evidence after managed scraping');
 }
-if (!runner.includes('populate-classify-from-db.mjs') || !runner.includes("'--skip-existing'") || !runner.includes('classify_queue_jobs_per_region_per_run')) {
-  throw new Error('source runner must feed bounded MI/NY classifier jobs without duplicating existing queue work');
+if (!runner.includes('populate-classify-from-db.mjs') || !runner.includes("'--skip-existing'") || !runner.includes("'--retry-partial'") || !runner.includes('classify_queue_jobs_per_region_per_run') || !runner.includes('classify_partial_retry_jobs_per_region_per_run') || !runner.includes('populateClassifierQueue(config, options.apply, regions)') || !runner.includes('regions.map(region => region.key)') || runner.includes("for (const state of ['MI', 'NY'])")) {
+  throw new Error('source runner must feed bounded classifier jobs from configured operational regions without duplicating existing queue work');
 }
 if (!runner.includes('auto-link-source-review-queue.mjs')
   || !runner.includes("'--exact-identifiers'")
@@ -116,13 +139,20 @@ if (!runner.includes('auto-link-source-review-queue.mjs')
   throw new Error('source runner must auto-link exact identifiers for every applied feeder');
 }
 const autoLink = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
-if (!autoLink.includes('if (!args.exactIdentifiers)')
-  || !autoLink.includes('Exact-identifier automation must not inherit')
+if (!autoLink.includes('if (!args.exactIdentifiers && !args.exactSourceId && !args.sourceIdentity)')
+  || !autoLink.includes('Exact-match automation must not inherit')
   || !autoLink.includes('args.minExactIdentifiers !== 3')
   || !autoLink.includes('sourceAddress')
   || !autoLink.includes('sourcePhone')
-  || !autoLink.includes('sourceWebsite')) {
+  || !autoLink.includes('sourceWebsite')
+  || !autoLink.includes('exactSourceIdReason')
+  || !autoLink.includes('sourceIdentityReason')) {
   throw new Error('exact-identifier auto-link mode must exclude broad spatial/name matches');
+}
+if (!autoLink.includes("source_data->>'full_address'")
+  || !autoLink.includes("source_data->>'phone_number'")
+  || !autoLink.includes("source_data->>'website_url'")) {
+  throw new Error('exact-identifier auto-link mode must accept normalized legacy source field aliases');
 }
 if (!autoLink.includes('--exact-source-id') || !autoLink.includes('exactSourceId')) {
   throw new Error('exact-source-id auto-link mode must be present for unchanged OSM evidence refresh');
@@ -131,8 +161,22 @@ const websiteProvenance = readFileSync('scripts/ops/record-website-provenance.mj
 if (!websiteProvenance.includes("CONCAT('place:', id)")) {
   throw new Error('website provenance source identities must be location-scoped');
 }
-if (!osmSource.includes('OVERPASS_QUERY_TIMEOUT_SECONDS') || !osmSource.includes('OVERPASS_REQUEST_TIMEOUT_MS') || !osmSource.includes('fetchWithHardTimeout') || !osmSource.includes('controller.abort()') || !osmTiles.includes('OSM_TILE_TIMEOUT_MS') || !osmTiles.includes('OSM_RETRY_COOLDOWN_MS') || !osmTiles.includes('next_retry_at') || !osmTiles.includes('deferred_tiles') || !osmTiles.includes('orderedTiles') || !osmTiles.includes('retryPriority') || !osmTiles.includes('time(?:d\\s*out|out)') || !osmTiles.includes('Split only the failed tile') || !osmTiles.includes('resumeSubtiles') || !osmTiles.includes('depth >= 1') || !osmTiles.includes('Manifest bbox mismatch') || !osmTiles.includes('Manifest step mismatch')) {
-  throw new Error('OSM refresh must expose bounded timeouts and one-level adaptive tile recovery');
+if (!osmSource.includes('OVERPASS_QUERY_TIMEOUT_SECONDS') || !osmSource.includes('OVERPASS_REQUEST_TIMEOUT_MS') || !osmSource.includes('fetchWithHardTimeout') || !osmSource.includes('controller.abort()') || !osmTiles.includes('OSM_TILE_TIMEOUT_MS') || !osmTiles.includes('OSM_RETRY_COOLDOWN_MS') || !osmTiles.includes('next_retry_at') || !osmTiles.includes('deferred_tiles') || !osmTiles.includes('orderedTiles') || !osmTiles.includes('retryPriority') || !osmTiles.includes('time(?:d\\s*out|out)') || !osmTiles.includes('Split only the failed tile') || !osmTiles.includes('resumeSubtiles') || !osmTiles.includes('depth >= 1') || !osmTiles.includes('Manifest bbox mismatch') || !osmTiles.includes('Manifest step mismatch') || !osmTiles.includes('planOnly') || !osmTiles.includes("mode: 'plan'") || !osmTiles.includes('process.exit(0)')) {
+  throw new Error('OSM refresh must expose bounded timeouts, adaptive recovery, and a read-only plan mode');
+}
+if (!readiness.includes('next_actions') || !readiness.includes('plan_command') || !readiness.includes('resume_command') || !readiness.includes('osmResumeCommands')) {
+  throw new Error('source readiness must expose actionable OSM plan and resume commands');
+}
+if (!readiness.includes('source-freshness-report.mjs')
+  || !readiness.includes('Source evidence freshness')
+  || !readiness.includes('stale evidence rows')
+  || !readiness.includes('no local evidence rows')) {
+  throw new Error('source readiness must expose actionable source freshness status');
+}
+if (!sourceQuality.includes("source_data->>'latitude'")
+  || !sourceQuality.includes("source_data->>'lon'")
+  || !sourceQuality.includes("source_data->>'longitude'")) {
+  throw new Error('source quality conflict checks must accept normalized coordinate aliases');
 }
 if (!osmExtractor.includes("tags['disused:amenity']")
   || !osmExtractor.includes("tags['abandoned:amenity']")

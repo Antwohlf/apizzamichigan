@@ -9,6 +9,7 @@ export default function AdminHomePanel({ entity, navigate }) {
   const [summary, setSummary] = useState(null)
   const [reviewStats, setReviewStats] = useState(null)
   const [suggestionCount, setSuggestionCount] = useState(null)
+  const [syncReadiness, setSyncReadiness] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
@@ -18,7 +19,7 @@ export default function AdminHomePanel({ entity, navigate }) {
     const load = async () => {
       setLoading(true)
       setError('')
-      const [summaryResult, reviewsResult, suggestionsResult] = await Promise.allSettled([
+      const [summaryResult, reviewsResult, suggestionsResult, syncResult] = await Promise.allSettled([
         fetch(`/api/admin/source-review-summary?entity=${entity}`, { credentials: 'include' }).then(async response => {
           if (!response.ok) throw new Error('Data review status is unavailable.')
           return response.json()
@@ -29,6 +30,10 @@ export default function AdminHomePanel({ entity, navigate }) {
         }),
         fetch(`/api/admin/suggestions?entity=${entity}&status=pending`, { credentials: 'include' }).then(async response => {
           if (!response.ok) throw new Error('Suggestion status is unavailable.')
+          return response.json()
+        }),
+        fetch(`/api/admin/supabase-sync-readiness?entity=${entity}`, { credentials: 'include' }).then(async response => {
+          if (!response.ok) throw new Error('Publishing status is unavailable.')
           return response.json()
         }),
       ])
@@ -56,6 +61,11 @@ export default function AdminHomePanel({ entity, navigate }) {
       } else {
         setSuggestionCount(null)
       }
+      if (syncResult.status === 'fulfilled') {
+        setSyncReadiness(syncResult.value?.data || null)
+      } else {
+        setSyncReadiness(null)
+      }
       setLoading(false)
     }
 
@@ -66,6 +76,9 @@ export default function AdminHomePanel({ entity, navigate }) {
   }, [entity, refreshKey])
 
   const tasks = useMemo(() => {
+    const lifecycleCount = summary?.lifecycle
+      ? Number(summary.lifecycle.replacements || 0) + Number(summary.lifecycle.closedSignals || 0)
+      : summary?.queues?.lifecycle
     const queueTasks = SOURCE_REVIEW_QUEUES.slice(0, 3).map(queue => ({
       id: queue.id,
       title: queue.homeTitle,
@@ -79,7 +92,7 @@ export default function AdminHomePanel({ entity, navigate }) {
       {
         id: 'basic-fields',
         title: 'Fill missing basic information',
-        detail: 'See which Michigan and New York places still need an address, contact detail, style, or price.',
+        detail: 'See which places in the configured operating regions still need an address, contact detail, style, or price.',
         count: summary?.basicFieldCoverage?.overall?.needsAttention,
         path: `/admin/reviews/system?entity=${entity}#basic-coverage`,
       },
@@ -93,9 +106,23 @@ export default function AdminHomePanel({ entity, navigate }) {
       {
         id: 'lifecycle',
         title: 'Review business changes',
-        detail: 'Check replacements and stale listings before they affect the map.',
-        count: summary?.queues?.lifecycle,
+        detail: 'Check possible replacements and closure signals before they affect the map.',
+        count: lifecycleCount,
         path: `/admin/reviews/system?entity=${entity}#lifecycle-quality`,
+      },
+      {
+        id: 'source-freshness',
+        title: 'Review outdated source data',
+        detail: 'See which places rely on evidence that needs a fresh source check.',
+        count: summary?.lifecycle?.stalePlaces,
+        path: `/admin/reviews/system?entity=${entity}#lifecycle-quality`,
+      },
+      {
+        id: 'source-conflicts',
+        title: 'Resolve source conflicts',
+        detail: 'Inspect accepted source records that overlap another record from the same source.',
+        count: summary?.sourceQuality?.acceptedCoordinateConflicts,
+        path: `/admin/reviews/system?entity=${entity}#approved-import`,
       },
       {
         id: 'suggestions',
@@ -113,6 +140,12 @@ export default function AdminHomePanel({ entity, navigate }) {
       },
     ]
   }, [entity, reviewStats, suggestionCount, summary])
+
+  const pendingPublishCount = Math.max(
+    Number(syncReadiness?.pendingAfterCheckpoint) || 0,
+    Number(syncReadiness?.wouldUpdate) || 0,
+  )
+  const protectedFieldConflicts = Number(syncReadiness?.protectedFieldConflicts) || 0
 
   return (
     <div className="admin-content">
@@ -171,6 +204,37 @@ export default function AdminHomePanel({ entity, navigate }) {
             onClick={() => navigate(`/admin/reviews/system?entity=${entity}`)}
           >
             View system
+          </button>
+        </div>
+      </section>
+
+      <section className="admin-system-status admin-home-publishing" aria-labelledby="home-publishing-heading">
+          <div>
+            <p className="admin-eyebrow">Public map</p>
+            <h2 id="home-publishing-heading">Publishing status</h2>
+            <p>{syncReadiness?.detail || 'Checking whether local changes are ready to reach the public map.'}</p>
+            {syncReadiness ? (
+              <p className="admin-system-status__meta">
+                {pendingPublishCount
+                  ? `${formatCount(pendingPublishCount)} local update${pendingPublishCount === 1 ? '' : 's'} waiting to publish.`
+                  : 'No local updates are waiting to publish.'}
+                {protectedFieldConflicts
+                  ? ` ${formatCount(protectedFieldConflicts)} protected-field conflict${protectedFieldConflicts === 1 ? '' : 's'} need review.`
+                  : ''}
+              </p>
+            ) : null}
+          </div>
+        <div className="admin-home-publishing__actions">
+          <strong className={`admin-system-status__state admin-system-status__state--${syncReadiness?.state || 'unknown'}`}>
+            {syncReadiness?.label || 'Checking…'}
+          </strong>
+          <button
+            className="admin-button admin-button--quiet"
+            type="button"
+            onClick={() => navigate(`/admin/reviews/system?entity=${entity}`)}
+          >
+            View details
+            <ArrowRight size={16} aria-hidden="true" />
           </button>
         </div>
       </section>

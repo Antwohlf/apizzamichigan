@@ -72,7 +72,7 @@ function createStateIcon(site, count, showCounts = true, isLoading = false, isDi
 
   return L.divIcon({
     html: `
-      <div style="position: relative; width: 44px; height: 44px; cursor: pointer;">
+      <div role="img" aria-label="${displayCount} ${site} places in ${site === 'taco' ? 'this area' : 'this state'}" title="${displayCount} ${site} places" style="position: relative; width: 44px; height: 44px; cursor: pointer;">
         <img src="${icon}" alt="" aria-hidden="true" style="width: 44px; height: 44px; opacity: ${opacity};" />
         ${badgeHtml}
         ${spinnerHtml}
@@ -113,6 +113,7 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
   return (
     <Marker
       position={[lat, lng]}
+      title={`${stateCode}: ${count} ${site} places`}
       icon={createStateIcon(site, count, showCounts, isLoading, isDimmed, isHighlighted)}
       eventHandlers={{
         click: handleClick,

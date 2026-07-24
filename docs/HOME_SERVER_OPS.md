@@ -66,9 +66,10 @@ ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync
 ssh example-host 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
 ```
 
-It applies at most one 100-row ordinary batch plus one guarded reviewed-new
-reconciliation batch of up to 250 rows every 30 minutes and exits without
-writing if health, QA, readiness, or dry-run gates fail.
+It applies at most one 100-row ordinary batch every 30 minutes and exits without
+writing if health, QA, readiness, or dry-run gates fail. Broad reviewed-new
+reconciliation is maintenance-only; enable it explicitly with
+`APIZZA_SYNC_RUN_RECONCILIATION=true` when needed.
 
 ## Service Control
 

@@ -79,6 +79,7 @@ function main() {
 
   const sync = read('infra/local/launchd/com.apizzamichigan.supabase-sync.plist.template');
   assert(sync.includes('<key>ENABLE_LIFECYCLE_SYNC</key>'), 'Supabase sync must explicitly enable lifecycle publication');
+  assert(sync.includes('<key>APIZZA_SYNC_BULK_RPC</key>'), 'Supabase sync must use the guarded bulk RPC path');
   assert(sync.includes('<string>1</string>'), 'Supabase sync lifecycle publication must be enabled');
 
   const backup = read('infra/local/launchd/com.apizzamichigan.backup.plist.template');

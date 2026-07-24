@@ -1,6 +1,9 @@
 import { createRoot, type Root } from 'react-dom/client'
 import ReviewGallery from '../ReviewGallery'
 import { buildGoogleMapsUrl } from '../../lib/buildGoogleMapsUrl'
+import { lifecycleCopy } from '../../lib/lifecycle'
+import { normalizeRating } from '../../lib/ratings'
+import { normalizeEntityStyle } from '../../config/entityConfig'
 
 type ReviewPhoto = {
   id?: string | number
@@ -22,6 +25,12 @@ type Place = {
   status?: string | null
   rating?: number | null
   address?: string | null
+  phone?: string | null
+  website_url?: string | null
+  websiteUrl?: string | null
+  menu_url?: string | null
+  menuUrl?: string | null
+  hours?: unknown
   href?: string | null
   city?: string | null
   state?: string | null
@@ -31,6 +40,8 @@ type Place = {
   lifecycle_status?: string | null
   lifecycleStatus?: string | null
   lifecycle_replaced_by_id?: string | number | null
+  lifecycleReplacedById?: string | number | null
+  lifecycle_replaced_by_name?: string | null
   favorited?: boolean | null
   photos?: Array<ReviewPhoto | string> | null
 }
@@ -46,21 +57,33 @@ function displayPrice(place: Place) {
   return place.price_range || place.priceRange || place.price || null
 }
 
+export function displayPopupStyle(place: Place) {
+  const raw = String(place.style || '').trim()
+  if (!raw) return null
+  const normalized = normalizeEntityStyle(place.type, raw)
+  return normalized && normalized !== 'Unknown' ? normalized : null
+}
+
 function displayStatus(place: Place) {
   const raw = String(place.status || '').trim()
   if (!raw) return null
   const normalized = raw.toLowerCase()
   if (normalized.startsWith('visited')) return 'Anthony reviewed'
-  if (normalized.startsWith('golden')) return 'Golden'
+  if (normalized.startsWith('golden')) return null
   return raw
 }
 
+function isFavoritedPlace(place: Place) {
+  if (typeof place.favorited === 'boolean') return place.favorited
+  return String(place.status || '').trim().toLowerCase().startsWith('golden')
+}
+
 function displayLifecycle(place: Place) {
-  const raw = String(place.lifecycle_status || place.lifecycleStatus || '').trim().toLowerCase()
-  if (raw === 'closed' || raw.startsWith('closed')) return 'Historical location'
-  if (raw === 'replaced' || raw.startsWith('replaced')) return 'Replaced by a newer business'
-  if (raw === 'demolished' || raw.startsWith('demolished')) return 'Demolished location'
-  return null
+  return lifecycleCopy(place.lifecycle_status || place.lifecycleStatus)
+}
+
+function replacementId(place: Place) {
+  return place.lifecycle_replaced_by_id ?? place.lifecycleReplacedById ?? null
 }
 
 function displayLocation(place: Place) {
@@ -77,6 +100,30 @@ function internalDetailHref(place: Place) {
   return `${prefix}/${encodeURIComponent(place.id)}`
 }
 
+function officialWebsite(value: string | null | undefined) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  if (/^[a-z][a-z\d+.-]*:/i.test(raw) && !/^https?:\/\//i.test(raw)) return null
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : null
+  } catch (error) {
+    return null
+  }
+}
+
+function formatHours(hours: unknown) {
+  if (!hours) return null
+  if (typeof hours === 'string') return hours.trim() || null
+  if (Array.isArray(hours)) return hours.filter(Boolean).join(' · ') || null
+  if (typeof hours === 'object') {
+    const entries = Object.entries(hours).filter(([, value]) => value !== null && value !== undefined && String(value).trim())
+    if (!entries.length) return null
+    return entries.map(([day, value]) => `${day}: ${value}`).join(' · ')
+  }
+  return null
+}
+
 function getRoot(node: HTMLElement) {
   let root = roots.get(node)
   if (!root) {
@@ -87,8 +134,9 @@ function getRoot(node: HTMLElement) {
 }
 
 export function renderPreview(node: HTMLElement, place: Place) {
-  const isGolden = place.type === 'taco' && Boolean(place.favorited)
+  const isGolden = isFavoritedPlace(place)
   const price = displayPrice(place)
+  const style = displayPopupStyle(place)
   const status = displayStatus(place)
   const lifecycle = displayLifecycle(place)
   const classNames = ['popup-card']
@@ -106,21 +154,30 @@ export function renderPreview(node: HTMLElement, place: Place) {
       <div className="title">{place.name}</div>
       <div className="meta">
         {price ? <span className="badge">{price}</span> : null}
-        {place.style ? <span className="badge badge--style">{place.style}</span> : null}
+        {style ? <span className="badge badge--style">{style}</span> : null}
         {status ? <span className="badge badge--status">{status}</span> : null}
-        {lifecycle ? <span className="badge badge--status">{lifecycle}</span> : null}
-        {isGolden ? <span className="badge badge--golden">Golden</span> : null}
+        {lifecycle ? <span className="badge badge--status">{lifecycle.badge}</span> : null}
+        {isGolden ? <span className="badge badge--golden">Anthony&apos;s Pick</span> : null}
       </div>
     </div>
   )
 }
 
-export function renderExpanded(node: HTMLElement, place: Place, onClose: () => void) {
-  const isGolden = place.type === 'taco' && Boolean(place.favorited)
+export function renderExpanded(
+  node: HTMLElement,
+  place: Place,
+  onClose: () => void,
+  onDetailsNavigate?: () => void,
+) {
+  const isGolden = isFavoritedPlace(place)
   const price = displayPrice(place)
+  const style = displayPopupStyle(place)
   const status = displayStatus(place)
   const lifecycle = displayLifecycle(place)
   const location = displayLocation(place)
+  const website = officialWebsite(place.website_url || place.websiteUrl)
+  const menu = officialWebsite(place.menu_url || place.menuUrl)
+  const hours = formatHours(place.hours)
   const photos = Array.isArray(place.photos) ? place.photos.filter(Boolean) : []
   const classNames = ['popup-card']
   if (isGolden) {
@@ -152,21 +209,28 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
       </button>
       <div className="popup-card__body">
         <div className="title">{place.name}</div>
-        {(place.style || price || status || lifecycle) ? (
+        {(style || price || status || lifecycle || isGolden) ? (
           <div className="popup-card__chips">
-            {place.style ? <span className="badge badge--style">{place.style}</span> : null}
+            {style ? <span className="badge badge--style">{style}</span> : null}
             {price ? <span className="badge">{price}</span> : null}
             {status ? <span className="badge badge--status">{status}</span> : null}
-            {lifecycle ? <span className="badge badge--status">{lifecycle}</span> : null}
+            {lifecycle ? <span className="badge badge--status">{lifecycle.badge}</span> : null}
+            {isGolden ? <span className="badge badge--golden">Anthony&apos;s Pick</span> : null}
           </div>
         ) : null}
         {lifecycle ? (
           <div className="popup-card__lifecycle">
-            {lifecycle}.
-            {place.lifecycle_replaced_by_id ? (
+            {lifecycle.message}
+            {place.lifecycle_replaced_by_name ? (
+              <span className="popup-card__replacement-name"> Current place: {place.lifecycle_replaced_by_name}.</span>
+            ) : null}
+            {replacementId(place) ? (
               <a
-                href={internalDetailHref({ ...place, id: String(place.lifecycle_replaced_by_id) })}
-                onClick={stopPopupEvent}
+                href={internalDetailHref({ ...place, id: String(replacementId(place)) })}
+                onClick={event => {
+                  onDetailsNavigate?.()
+                  stopPopupEvent(event)
+                }}
                 onMouseDown={stopPopupEvent}
                 onPointerDown={stopPopupEvent}
               >
@@ -175,14 +239,20 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
             ) : null}
           </div>
         ) : null}
-        {typeof place.rating === 'number' ? (
-          <div className="rating">★ {place.rating.toFixed(1)}</div>
+        {normalizeRating(place.rating) !== null ? (
+          <div className="rating">★ {normalizeRating(place.rating)!.toFixed(1)}</div>
         ) : null}
         {location ? (
           <div className="addr">
             {location}
           </div>
         ) : null}
+        {place.phone ? (
+          <div className="addr">
+            <a href={`tel:${place.phone}`} onClick={stopPopupEvent}>{place.phone}</a>
+          </div>
+        ) : null}
+        {hours ? <div className="addr">Hours: {hours}</div> : null}
         {photos.length ? (
           <div className="review-gallery-wrap">
             <ReviewGallery photos={photos} placeName={place.name} />
@@ -194,7 +264,10 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
           <a
             href={place.href}
             className="popup-link--details"
-            onClick={stopPopupEvent}
+            onClick={event => {
+              onDetailsNavigate?.()
+              stopPopupEvent(event)
+            }}
             onMouseDown={stopPopupEvent}
             onPointerDown={stopPopupEvent}
           >
@@ -204,13 +277,42 @@ export function renderExpanded(node: HTMLElement, place: Place, onClose: () => v
           <a
             href={internalDetailHref(place)}
             className="popup-link--details"
-            onClick={stopPopupEvent}
+            onClick={event => {
+              onDetailsNavigate?.()
+              stopPopupEvent(event)
+            }}
             onMouseDown={stopPopupEvent}
             onPointerDown={stopPopupEvent}
           >
             View place details
           </a>
         )}
+        {website ? (
+          <a
+            href={website}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="popup-link--details"
+            onClick={stopPopupEvent}
+            onMouseDown={stopPopupEvent}
+            onPointerDown={stopPopupEvent}
+          >
+            Official website
+          </a>
+        ) : null}
+        {menu ? (
+          <a
+            href={menu}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="popup-link--details"
+            onClick={stopPopupEvent}
+            onMouseDown={stopPopupEvent}
+            onPointerDown={stopPopupEvent}
+          >
+            Menu
+          </a>
+        ) : null}
         <a
           target="_blank"
           rel="noopener noreferrer"

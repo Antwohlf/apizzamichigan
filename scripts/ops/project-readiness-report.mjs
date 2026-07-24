@@ -17,6 +17,7 @@ function run(script, args = []) {
   try {
     const stdout = execFileSync(process.execPath, [join(root, 'scripts/ops', script), ...args], {
       cwd: root,
+      env: { ...process.env },
       encoding: 'utf8',
       timeout: 45_000,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -34,6 +35,7 @@ function verifier(script) {
   try {
     const stdout = execFileSync(process.execPath, [join(root, 'scripts/ops', script)], {
       cwd: root,
+      env: { ...process.env },
       encoding: 'utf8',
       timeout: 30_000,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -46,6 +48,30 @@ function verifier(script) {
 
 function item(workstream, status, evidence, remaining = []) {
   return { workstream, status, evidence, remaining }
+}
+
+// A stale or advisory source warning should not hide a hard production gate.
+// Keep the ordering explicit so the report answers "what blocks the next
+// useful action?" rather than simply returning the first report in the list.
+const NEXT_GATE_ORDER = [
+  '6. Operations',
+  '7. Public schema and search performance',
+  '2. Enrichment',
+  '1. Data pipeline',
+  '3. Review operations',
+  '4. Data model',
+  '5. Product/UI',
+]
+
+function nextGate(reports) {
+  return reports
+    .filter(report => report.status !== 'ready')
+    .sort((left, right) => {
+      const leftIndex = NEXT_GATE_ORDER.indexOf(left.workstream)
+      const rightIndex = NEXT_GATE_ORDER.indexOf(right.workstream)
+      return (leftIndex < 0 ? NEXT_GATE_ORDER.length : leftIndex)
+        - (rightIndex < 0 ? NEXT_GATE_ORDER.length : rightIndex)
+    })[0] || null
 }
 
 function statusFromReadiness(report) {
@@ -64,6 +90,10 @@ function main() {
   const sync = run('supabase-sync-status-report.mjs', ['--json'])
   const reviewedNew = run('reconcile-reviewed-new-supabase.mjs', ['--limit', '250', '--json'])
   const publicSchema = run('supabase-sync-readiness-report.mjs', ['--batch', '1', '--sample', '1', '--json'])
+  const bulkRpcReady = sync.ok && sync.value.bulkRpc?.state === 'ready'
+  const publicSchemaReady = publicSchema.ok
+    && publicSchema.value.lifecycleSync?.remoteSchema?.state === 'ready'
+    && publicSchema.value.lifecycleSync?.enabled === true
 
   const sourceItems = source.ok ? source.value.items : []
   const sourceItem = name => sourceItems.find(row => row.item === name)
@@ -85,6 +115,11 @@ function main() {
         `classifier_health=${classifier.value.health?.state}`,
         `recent_completed=${classifier.value.queue?.recent?.completed ?? 'unknown'}`,
         `recent_failed=${classifier.value.queue?.recent?.failed ?? 'unknown'}`,
+        `missing_all_classification=${classifier.value.postgres?.summary?.missing_all_classification ?? 'unknown'}`,
+        `incomplete_classification=${classifier.value.postgres?.summary?.incomplete_classification ?? 'unknown'}`,
+        `operational_backlog=${classifier.value.postgres?.classificationBacklog?.candidates ?? 'unknown'}`,
+        `retryable_partial=${classifier.value.postgres?.classificationBacklog?.retryablePartial ?? 'unknown'}`,
+        `missing_classify_job=${classifier.value.postgres?.classificationBacklog?.missingJob ?? 'unknown'}`,
         `stale_processing=${(classifier.value.queue?.staleProcessingJobs || []).length}`,
         `tunnel=${classifier.value.tunnel?.ok ? 'healthy' : 'unhealthy'}`,
       ] : [],
@@ -111,15 +146,21 @@ function main() {
     item(
       '6. Operations',
       runtime.ok && syncPolicy.ok && sync.ok && sync.value.status === 'OK'
-        && reviewedNew.ok && reviewedNew.value.missing_count === 0 ? 'ready' : 'partial',
+        && bulkRpcReady && reviewedNew.ok && reviewedNew.value.missing_count === 0 ? 'ready' : 'partial',
       [runtime, syncPolicy].filter(row => row.ok).map(row => row.output.split('\n').at(-1)).concat(
         sync.ok ? [`sync_status=${sync.value.status}`] : [],
+        sync.ok ? [`bulk_sync=${sync.value.bulkRpc?.state || 'unknown'}`] : [],
         reviewedNew.ok ? [`reviewed_new_missing=${reviewedNew.value.missing_count}`] : [],
       ),
       [
         ...(runtime.ok && syncPolicy.ok && sync.ok && reviewedNew.ok ? [] : ['runtime, sync policy, sync status, or reviewed-new reconciliation is not verified']),
         ...[runtime, syncPolicy].filter(row => !row.ok).map(row => row.error),
         ...(sync.ok ? (sync.value.status === 'OK' ? [] : [`sync status=${sync.value.status}`]) : [sync.error]),
+        ...(bulkRpcReady ? [] : [
+          sync.ok
+            ? `bulk sync: ${sync.value.bulkRpc?.detail || 'capability was not verified'}`
+            : 'bulk sync capability was not verified',
+        ]),
         ...(reviewedNew.ok
           ? (reviewedNew.value.missing_count === 0 ? [] : [`${reviewedNew.value.missing_count} reviewed-new local rows still need Supabase insertion`])
           : [reviewedNew.error]),
@@ -127,7 +168,7 @@ function main() {
     ),
     item(
       '7. Public schema and search performance',
-      'partial',
+      publicSchemaReady ? 'ready' : 'partial',
       publicSchema.ok ? [
         `lifecycle_remote_schema=${publicSchema.value.lifecycleSync?.remoteSchema?.state || 'unknown'}`,
         `lifecycle_sync=${publicSchema.value.lifecycleSync?.enabled ? 'enabled' : 'disabled'}`,
@@ -137,17 +178,21 @@ function main() {
         ...(publicSchema.value.lifecycleSync?.remoteSchema?.state === 'ready'
           ? []
           : ['apply supabase-production-migration.sql in the Supabase SQL editor']),
-        'set ENABLE_LIFECYCLE_SYNC=1 only after the lifecycle readiness report is ready',
+        ...(publicSchema.value.lifecycleSync?.enabled
+          ? []
+          : ['set ENABLE_LIFECYCLE_SYNC=1 only after the lifecycle readiness report is ready']),
       ] : [publicSchema.error, 'apply supabase-production-migration.sql and rerun readiness'],
     ),
   ]
 
+  const gate = nextGate(reports)
   const report = {
     generated_at: new Date().toISOString(),
     read_only: true,
     source_readiness: source.ok ? source.value.overall_status : 'unavailable',
     reports,
-    next_gate: reports.find(row => row.status !== 'ready')?.workstream || null,
+    next_gate: gate?.workstream || null,
+    next_gate_reason: gate?.remaining?.[0] || null,
   }
 
   if (json) {
@@ -164,6 +209,7 @@ function main() {
     console.log('')
   }
   console.log(`Next gate: ${report.next_gate || 'none'}`)
+  if (report.next_gate_reason) console.log(`Why: ${report.next_gate_reason}`)
 }
 
 main()

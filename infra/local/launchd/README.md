@@ -53,6 +53,10 @@ launchctl enable "gui/$(id -u)/com.apizzamichigan.supabase-sync"
 launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.supabase-sync"
 ```
 
+The checked-in template enables guarded bulk RPC writes for lower Supabase
+disk I/O and includes lifecycle fields. Load it only after the sync readiness
+report confirms the remote RPC and lifecycle columns are ready.
+
 Operate:
 
 ```bash

@@ -70,10 +70,28 @@ California, and Texas. Rows outside those bounding boxes are reported as
 `outOfScopeRowsExcluded` and are not compared, queued for review, or written
 to `place_sources`.
 
+Some regional bounding boxes cross state borders. A region may also declare
+`region_codes`; when a source provides an explicit state/region code, the
+input adapter rejects codes outside that allowlist. Records without a state
+code remain eligible because incomplete OSM addresses are common and should be
+reviewed rather than silently discarded.
+
 An intentional global or nonstandard import must opt out explicitly with
 `--allow-out-of-scope` and use a separately reviewed input. Existing canonical
 rows outside the current ingestion scope are legacy data and are not removed
 by this gate; scope enforcement applies to new source input.
+
+Audit existing evidence before considering any archival cleanup:
+
+```bash
+npm run source-scope-audit -- --entity pizza --source osm --sample 20
+```
+
+This report is read-only. It separates evidence into `in_scope`,
+`unknown_region`, `explicit_out_of_scope`, `out_of_scope_unknown_region`, and
+`no_coordinates`. It reports both the total matching rows and the inspected
+rows, and marks the result as truncated when `--limit` is reached. It never
+deletes provenance or changes canonical places.
 
 Default mode is dry-run. To persist strong matches as source evidence:
 
@@ -325,7 +343,9 @@ may be outside Michigan.
 Reviewed-new rows without per-location websites will not enter the normal
 scrape-to-classify handoff. For those exact local IDs, use deterministic chain
 inference instead. The command is dry-run by default and only fills null local
-`style`, `price_range`, and `style_confidence` fields:
+`style`, `price_range`, and `style_confidence` fields. Style promotion requires
+chain identity or a style keyword in the place name; a location name such as
+`New York, NY` is never treated as pizza-style evidence:
 
 ```bash
 node scripts/ops/apply-deterministic-classification.mjs \
@@ -494,7 +514,9 @@ node scripts/ops/auto-link-source-review-queue.mjs \
 ```
 
 Explicit brand rules can be enabled for source reports where the source display
-name is generic but the source report itself proves the brand:
+name is generic but the source report itself proves the brand. Brand-rule mode
+is explicit-only by default; it does not also include the generic name/distance
+class:
 
 ```bash
 node scripts/ops/auto-link-source-review-queue.mjs \
@@ -503,6 +525,10 @@ node scripts/ops/auto-link-source-review-queue.mjs \
   --brand-rules \
   --limit 100
 ```
+
+To intentionally preview both the explicit brand rules and the generic
+name/distance class, add `--include-score-distance`. Keep that class read-only
+until the candidate set has been reviewed.
 
 Apply mode marks only pending `ambiguous` rows as `linked` and writes evidence
 to `place_sources` with `match_method='auto_reviewed_link'` or

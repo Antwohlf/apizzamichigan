@@ -104,19 +104,22 @@ function compactRow(row) {
 function classify(row) {
   const styleResult = inferStyleFromName(row.name, row.address || '');
   const priceResult = inferPriceFromChain(row.name);
-  const style = row.style || styleResult.style || null;
+  // A location name such as "New York, NY" is not evidence of pizza style.
+  // Deterministic promotion is limited to chain identity and name keywords.
+  const deterministicStyle = styleResult.source === 'address_keyword' ? null : styleResult.style;
+  const style = row.style || deterministicStyle || null;
   const priceRange = row.price_range || priceResult.price || null;
-  const styleConfidence = row.style_confidence || (styleResult.style ? 'inferred' : null);
+  const styleConfidence = row.style_confidence || (deterministicStyle ? 'inferred' : null);
 
   const changes = {};
-  if (!row.style && styleResult.style) changes.style = styleResult.style;
+  if (!row.style && deterministicStyle) changes.style = deterministicStyle;
   if (!row.price_range && priceResult.price) changes.price_range = priceResult.price;
-  if (!row.style_confidence && styleResult.style) changes.style_confidence = 'inferred';
+  if (!row.style_confidence && deterministicStyle) changes.style_confidence = 'inferred';
 
   return {
     ...compactRow(row),
-    inferred_style: styleResult.style,
-    inferred_style_match: styleResult.match,
+    inferred_style: deterministicStyle,
+    inferred_style_match: deterministicStyle ? styleResult.match : null,
     inferred_price_range: priceResult.price,
     inferred_price_match: priceResult.match,
     final_style: style,

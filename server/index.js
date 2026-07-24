@@ -4,6 +4,8 @@ const express = require('express')
 const cookieParser = require('cookie-parser')
 const { existsSync, readdirSync, readFileSync, statSync } = require('fs')
 const { join, resolve } = require('path')
+const { execFile } = require('child_process')
+const { promisify } = require('util')
 const pg = require('pg')
 const { createClient } = require('@supabase/supabase-js')
 const { handleBugReport } = require('../api/_lib/bugReport')
@@ -22,10 +24,47 @@ const REVIEW_PHOTO_TABLE = 'review-photos'
 const FALLBACK_SUPABASE_URL = 'https://htahyiuvqmalfpbgiizx.supabase.co'
 const MAX_REVIEW_PHOTOS = 10
 const MAX_REVIEW_PHOTO_BYTES = 8 * 1024 * 1024
+const execFileAsync = promisify(execFile)
 const SOURCE_REVIEW_DIR = process.env.SOURCE_REVIEW_DIR || 'reports/source-review'
 const SOURCE_REVIEW_QUEUE_CSV = process.env.SOURCE_REVIEW_QUEUE_CSV || 'reports/source-review-queue.csv'
+const SOURCE_POLICY = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/source-policy.json'), 'utf8'))
+const SOURCE_PIPELINE = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/source-pipeline.json'), 'utf8'))
+const ENTITY_PROFILES = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/entity-profiles.json'), 'utf8'))
+const SOURCE_FRESHNESS_CASE = Object.entries(SOURCE_POLICY.sources || {})
+  .map(([source, config]) => `WHEN '${source.replaceAll("'", "''")}' THEN ${Number(config.freshness_days) || 365}`)
+  .join(' ')
 let reviewPhotosTableAvailable = true
 let sourceReviewDecisionHistorySchemaReady = false
+
+function normalizedSourceId(value) {
+  return String(value || '').trim().replace(/^osm:/i, '')
+}
+
+function latestOsmInputIds(entity) {
+  if (entity !== 'pizza' && entity !== 'taco') return { files: [], ids: new Set() }
+  const regions = SOURCE_PIPELINE.operational_regions || SOURCE_PIPELINE.regions || []
+  const ids = new Set()
+  const files = []
+  for (const region of regions) {
+    const key = typeof region === 'string' ? region : region?.key
+    if (!key) continue
+    const file = resolve(__dirname, '..', 'reports', 'osm', `${String(key).toLowerCase()}-${entity}.json`)
+    if (!existsSync(file)) continue
+    files.push(file)
+    try {
+      const payload = JSON.parse(readFileSync(file, 'utf8'))
+      const rows = Array.isArray(payload) ? payload : payload?.rows
+      if (!Array.isArray(rows)) continue
+      for (const row of rows) {
+        const id = normalizedSourceId(row?.id || row?.source_id)
+        if (id) ids.add(id)
+      }
+    } catch {
+      // A partial refresh cannot prove that a source row was observed.
+    }
+  }
+  return { files, ids }
+}
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
 const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD || 'invalid-admin-session-secret'
@@ -76,7 +115,19 @@ const normalizeCount = value => {
   return Number.isFinite(number) ? number : 0
 }
 
-const buildBasicFieldCoverage = (totalRow = {}, stateRows = []) => {
+const configuredCoverageRegions = entity => {
+  if (entity === 'pizza') {
+    return (SOURCE_PIPELINE.operational_regions || SOURCE_PIPELINE.regions || [])
+      .map(region => typeof region === 'string' ? region : region?.key)
+      .map(region => String(region || '').trim().toUpperCase())
+      .filter(Boolean)
+  }
+  return (ENTITY_PROFILES.profiles?.[entity]?.regions || [])
+    .map(region => String(region || '').trim().toUpperCase())
+    .filter(Boolean)
+}
+
+const buildBasicFieldCoverage = (totalRow = {}, stateRows = [], scope = []) => {
   const fields = ['address', 'website_url', 'phone', 'style', 'price_range']
   const normalize = row => {
     const total = normalizeCount(row?.total)
@@ -88,7 +139,7 @@ const buildBasicFieldCoverage = (totalRow = {}, stateRows = []) => {
     }
   }
   return {
-    scope: ['MI', 'NY'],
+    scope,
     fields,
     overall: normalize(totalRow),
     byState: Object.fromEntries(stateRows.map(row => [row.state, normalize(row)])),
@@ -142,14 +193,14 @@ const sourceReviewReadinessSql = `(
         AND peer.review_kind = 'likely_new'
         AND peer.status = 'accepted'
         AND peer.id <> source_review_queue.id
-        AND NULLIF(peer.source_data->>'lat', '') IS NOT NULL
-        AND NULLIF(peer.source_data->>'lng', '') IS NOT NULL
-        AND NULLIF(source_review_queue.source_data->>'lat', '') IS NOT NULL
-        AND NULLIF(source_review_queue.source_data->>'lng', '') IS NOT NULL
+        AND COALESCE(NULLIF(peer.source_data->>'lat', ''), NULLIF(peer.source_data->>'latitude', '')) IS NOT NULL
+        AND COALESCE(NULLIF(peer.source_data->>'lng', ''), NULLIF(peer.source_data->>'lon', ''), NULLIF(peer.source_data->>'longitude', '')) IS NOT NULL
+        AND COALESCE(NULLIF(source_review_queue.source_data->>'lat', ''), NULLIF(source_review_queue.source_data->>'latitude', '')) IS NOT NULL
+        AND COALESCE(NULLIF(source_review_queue.source_data->>'lng', ''), NULLIF(source_review_queue.source_data->>'lon', ''), NULLIF(source_review_queue.source_data->>'longitude', '')) IS NOT NULL
         AND (111320 * sqrt(
-          power(NULLIF(peer.source_data->>'lat', '')::double precision - NULLIF(source_review_queue.source_data->>'lat', '')::double precision, 2)
-          + power((NULLIF(peer.source_data->>'lng', '')::double precision - NULLIF(source_review_queue.source_data->>'lng', '')::double precision)
-            * cos(radians(NULLIF(source_review_queue.source_data->>'lat', '')::double precision)), 2)
+          power(COALESCE(NULLIF(peer.source_data->>'lat', ''), NULLIF(peer.source_data->>'latitude', ''))::double precision - COALESCE(NULLIF(source_review_queue.source_data->>'lat', ''), NULLIF(source_review_queue.source_data->>'latitude', ''))::double precision, 2)
+          + power((COALESCE(NULLIF(peer.source_data->>'lng', ''), NULLIF(peer.source_data->>'lon', ''), NULLIF(peer.source_data->>'longitude', ''))::double precision - COALESCE(NULLIF(source_review_queue.source_data->>'lng', ''), NULLIF(source_review_queue.source_data->>'lon', ''), NULLIF(source_review_queue.source_data->>'longitude', ''))::double precision)
+            * cos(radians(COALESCE(NULLIF(source_review_queue.source_data->>'lat', ''), NULLIF(source_review_queue.source_data->>'latitude', ''))::double precision)), 2)
         )) <= 150
     ) THEN 'duplicate_accepted_source_coordinate'
     ELSE 'candidate_ready'
@@ -538,9 +589,11 @@ async function readLocalSourceProvenance(entity) {
           source,
           COUNT(*)::int AS rows,
           COUNT(DISTINCT place_id)::int AS places,
+          COUNT(*) FILTER (WHERE ps.retrieved_at >= NOW() - make_interval(days => CASE ps.source ${SOURCE_FRESHNESS_CASE} ELSE 365 END))::int AS fresh_rows,
+          COUNT(*) FILTER (WHERE ps.retrieved_at < NOW() - make_interval(days => CASE ps.source ${SOURCE_FRESHNESS_CASE} ELSE 365 END))::int AS stale_rows,
           MAX(retrieved_at) AS latest_retrieved_at,
           MAX(updated_at) AS latest_updated_at
-        FROM place_sources
+        FROM place_sources ps
         WHERE entity_type = $1
         GROUP BY source
         ORDER BY source
@@ -2084,6 +2137,10 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         .map(field => `NULLIF(BTRIM(COALESCE(${field}::text, '')), '') IS NULL`)
         .join(' OR ') || 'FALSE'
       const coverageStateExpression = placeColumns.has('state') ? 'state' : "''"
+      const coverageRegions = configuredCoverageRegions(entity)
+      const coverageRegionPredicate = placeColumns.has('state')
+        ? `UPPER(COALESCE(${coverageStateExpression}, '')) = ANY($1::text[])`
+        : 'FALSE'
       const coverageResult = await client.query(`
         SELECT
           COUNT(*)::int AS total,
@@ -2094,10 +2151,10 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           ${coverageExpression('style')},
           ${coverageExpression('price_range')}
         FROM ${placeTable}
-        WHERE ${coverageStateExpression} IN ('MI', 'NY')
+        WHERE ${coverageRegionPredicate}
           AND lower(COALESCE(status, '')) NOT LIKE 'closed%'
           AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
-      `)
+      `, [coverageRegions])
       const coverageByStateResult = await client.query(`
         SELECT
           ${coverageStateExpression} AS state,
@@ -2109,12 +2166,12 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           ${coverageExpression('style')},
           ${coverageExpression('price_range')}
         FROM ${placeTable}
-        WHERE ${coverageStateExpression} IN ('MI', 'NY')
+        WHERE ${coverageRegionPredicate}
           AND lower(COALESCE(status, '')) NOT LIKE 'closed%'
           AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         GROUP BY ${coverageStateExpression}
         ORDER BY ${coverageStateExpression}
-      `)
+      `, [coverageRegions])
       if (!tables.has('source_review_queue')) {
         return {
           available: false,
@@ -2130,10 +2187,11 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
             lifecycle: 0,
           },
           lifecycle: { replacements: 0, staleEvidence: 0, stalePlaces: 0, closedSignals: 0 },
+          sourceQuality: { acceptedCoordinateConflicts: 0 },
           sourceRows: 0,
           linkedPlaces: 0,
           latestSourceUpdate: null,
-          basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows),
+          basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows, coverageRegions),
         }
       }
 
@@ -2242,6 +2300,35 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         stalePlaces: tables.has('place_sources') ? normalizeCount(lifecycleTotals.stale_places) : 0,
         closedSignals: tables.has('place_sources') ? normalizeCount(lifecycleTotals.closed_signals) : 0,
       }
+      const sourceQualityResult = tables.has('source_review_queue') ? await client.query(`
+        WITH accepted AS (
+          SELECT id, source, source_name,
+                 COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', ''))::double precision AS lat,
+                 COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', ''))::double precision AS lng
+          FROM source_review_queue
+          WHERE entity_type = $1
+            AND review_kind = 'likely_new'
+            AND status = 'accepted'
+            AND COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', '')) IS NOT NULL
+            AND COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', '')) IS NOT NULL
+        ), pairs AS (
+          SELECT a.id, b.id
+          FROM accepted a
+          JOIN accepted b ON a.source = b.source AND a.id < b.id
+          WHERE abs(a.lat - b.lat) <= 0.003
+            AND abs(a.lng - b.lng) <= 0.003
+            AND (111320 * sqrt(
+              power(a.lat - b.lat, 2)
+              + power((a.lng - b.lng) * cos(radians(a.lat)), 2)
+            )) <= 150
+            AND lower(regexp_replace(coalesce(a.source_name, ''), '[^a-z0-9]+', '', 'g'))
+              <> lower(regexp_replace(coalesce(b.source_name, ''), '[^a-z0-9]+', '', 'g'))
+        )
+        SELECT COUNT(*)::int AS conflicts FROM pairs
+      `, [entity]) : { rows: [{ conflicts: 0 }] }
+      const sourceQuality = {
+        acceptedCoordinateConflicts: normalizeCount(sourceQualityResult.rows[0]?.conflicts),
+      }
 
       return {
         available: true,
@@ -2256,10 +2343,11 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           lifecycle: lifecycle.replacements,
         },
         lifecycle,
+        sourceQuality,
         sourceRows: normalizeCount(sourceTotals.source_rows),
         linkedPlaces: normalizeCount(sourceTotals.linked_places),
         latestSourceUpdate: sourceTotals.latest_source_update || null,
-        basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows),
+        basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows, coverageRegions),
       }
     })
 
@@ -2280,11 +2368,82 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           approvedForImport: 0,
           lifecycle: 0,
         },
-          lifecycle: { replacements: 0, staleEvidence: 0, stalePlaces: 0, closedSignals: 0 },
+        lifecycle: { replacements: 0, staleEvidence: 0, stalePlaces: 0, closedSignals: 0 },
+        sourceQuality: { acceptedCoordinateConflicts: 0 },
         sourceRows: 0,
         linkedPlaces: 0,
         latestSourceUpdate: null,
         basicFieldCoverage: buildBasicFieldCoverage(),
+      },
+    })
+  }
+})
+
+app.get('/api/admin/supabase-sync-readiness', requireAdminAuth, async (req, res) => {
+  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+  if (entity === 'taco') {
+    return res.json({
+      data: {
+        available: true,
+        state: 'not_configured',
+        label: 'Not configured for tacos',
+        detail: 'The current guarded publisher is configured for pizza_places only.',
+        generatedAt: new Date().toISOString(),
+      },
+    })
+  }
+
+  try {
+    const script = resolve(__dirname, '..', 'scripts/ops/supabase-sync-status-report.mjs')
+    const { stdout } = await execFileAsync(process.execPath, [script, '--json', '--hours', '24', '--batch', '50', '--sample', '1'], {
+      cwd: resolve(__dirname, '..'),
+      env: process.env,
+      timeout: 15000,
+      maxBuffer: 2 * 1024 * 1024,
+    })
+    const report = JSON.parse(stdout)
+    const bulkRpc = report.bulkRpc || {}
+    const pending = Number(report.summary?.pending_after_checkpoint) || 0
+    const wouldUpdate = Number(report.nextBatch?.wouldUpdate) || 0
+    const protectedFieldConflicts = Number(report.nextBatch?.protectedFieldConflicts) || 0
+    const hasPendingChanges = Boolean(pending || wouldUpdate)
+    const publishingReady = bulkRpc.state === 'ready'
+    const state = hasPendingChanges
+      ? (publishingReady ? 'ready' : 'blocked')
+      : 'nothing_waiting'
+    const detail = state === 'ready'
+      ? `${pending || wouldUpdate} local change${(pending || wouldUpdate) === 1 ? '' : 's'} eligible for the guarded publisher.`
+      : state === 'nothing_waiting'
+        ? publishingReady
+          ? 'Local and public data are caught up for the current checkpoint.'
+          : 'No local changes are waiting today. Future publishing still needs the Supabase migration.'
+        : bulkRpc.detail || 'Apply and verify the production Supabase migration before enabling bulk sync.'
+
+    return res.json({
+      data: {
+        available: true,
+        state,
+        label: state === 'ready' ? 'Ready to publish'
+          : state === 'nothing_waiting' ? 'Nothing waiting'
+            : 'Blocked by Supabase setup',
+        detail,
+        pendingAfterCheckpoint: pending,
+        wouldUpdate,
+        protectedFieldConflicts,
+        bulkRpcState: bulkRpc.state || 'unknown',
+        publishingReady,
+        generatedAt: report.generatedAt || new Date().toISOString(),
+      },
+    })
+  } catch (error) {
+    console.error('[admin] Supabase sync readiness error', error)
+    return res.json({
+      data: {
+        available: false,
+        state: 'unavailable',
+        label: 'Sync status unavailable',
+        detail: 'The read-only sync check could not complete. No sync was started.',
+        generatedAt: new Date().toISOString(),
       },
     })
   }
@@ -2559,6 +2718,75 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   } catch (error) {
     console.error('[admin] source review queue fetch error', error)
     return res.status(500).json({ error: 'Failed to load source review queue.' })
+  }
+})
+
+app.get('/api/admin/source-review-conflicts', requireAdminAuth, async (req, res) => {
+  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+  const limit = safeInteger(req.query?.limit, 20, { min: 1, max: 50 })
+
+  try {
+    const payload = await withLocalPostgres(async client => {
+      if (!(await sourceReviewQueueExists(client))) return { available: false, data: [], total: 0 }
+      const result = await client.query(`
+        SELECT
+          srq.id,
+          srq.source,
+          srq.source_id,
+          srq.source_name,
+          srq.source_url,
+          peer.id AS conflict_id,
+          peer.source_id AS conflict_source_id,
+          peer.source_name AS conflict_source_name,
+          peer.source_url AS conflict_source_url,
+          ROUND((111320 * sqrt(
+            power(COALESCE(NULLIF(peer.source_data->>'lat', ''), NULLIF(peer.source_data->>'latitude', ''))::double precision - COALESCE(NULLIF(srq.source_data->>'lat', ''), NULLIF(srq.source_data->>'latitude', ''))::double precision, 2)
+            + power((COALESCE(NULLIF(peer.source_data->>'lng', ''), NULLIF(peer.source_data->>'lon', ''), NULLIF(peer.source_data->>'longitude', ''))::double precision - COALESCE(NULLIF(srq.source_data->>'lng', ''), NULLIF(srq.source_data->>'lon', ''), NULLIF(srq.source_data->>'longitude', ''))::double precision) * cos(radians(COALESCE(NULLIF(srq.source_data->>'lat', ''), NULLIF(srq.source_data->>'latitude', ''))::double precision)), 2)
+          )))::int AS conflict_distance_m
+        FROM source_review_queue srq
+        LEFT JOIN LATERAL (
+          SELECT peer.*
+          FROM source_review_queue peer
+          WHERE peer.entity_type = srq.entity_type
+            AND peer.source = srq.source
+            AND peer.review_kind = 'likely_new'
+            AND peer.status = 'accepted'
+            AND peer.id <> srq.id
+            AND (NULLIF(peer.source_data->>'lat', '') IS NOT NULL OR NULLIF(peer.source_data->>'latitude', '') IS NOT NULL)
+            AND (NULLIF(peer.source_data->>'lng', '') IS NOT NULL OR NULLIF(peer.source_data->>'lon', '') IS NOT NULL OR NULLIF(peer.source_data->>'longitude', '') IS NOT NULL)
+            AND (NULLIF(srq.source_data->>'lat', '') IS NOT NULL OR NULLIF(srq.source_data->>'latitude', '') IS NOT NULL)
+            AND (NULLIF(srq.source_data->>'lng', '') IS NOT NULL OR NULLIF(srq.source_data->>'lon', '') IS NOT NULL OR NULLIF(srq.source_data->>'longitude', '') IS NOT NULL)
+            AND (111320 * sqrt(
+              power(COALESCE(NULLIF(peer.source_data->>'lat', ''), NULLIF(peer.source_data->>'latitude', ''))::double precision - COALESCE(NULLIF(srq.source_data->>'lat', ''), NULLIF(srq.source_data->>'latitude', ''))::double precision, 2)
+              + power((COALESCE(NULLIF(peer.source_data->>'lng', ''), NULLIF(peer.source_data->>'lon', ''), NULLIF(peer.source_data->>'longitude', ''))::double precision - COALESCE(NULLIF(srq.source_data->>'lng', ''), NULLIF(srq.source_data->>'lon', ''), NULLIF(srq.source_data->>'longitude', ''))::double precision) * cos(radians(COALESCE(NULLIF(srq.source_data->>'lat', ''), NULLIF(srq.source_data->>'latitude', ''))::double precision)), 2)
+            )) <= 150
+          ORDER BY (111320 * sqrt(
+            power(COALESCE(NULLIF(peer.source_data->>'lat', ''), NULLIF(peer.source_data->>'latitude', ''))::double precision - COALESCE(NULLIF(srq.source_data->>'lat', ''), NULLIF(srq.source_data->>'latitude', ''))::double precision, 2)
+            + power((COALESCE(NULLIF(peer.source_data->>'lng', ''), NULLIF(peer.source_data->>'lon', ''), NULLIF(peer.source_data->>'longitude', ''))::double precision - COALESCE(NULLIF(srq.source_data->>'lng', ''), NULLIF(srq.source_data->>'lon', ''), NULLIF(srq.source_data->>'longitude', ''))::double precision) * cos(radians(COALESCE(NULLIF(srq.source_data->>'lat', ''), NULLIF(srq.source_data->>'latitude', ''))::double precision)), 2)
+          ))
+          LIMIT 1
+        ) peer ON true
+        WHERE srq.entity_type = $1
+          AND srq.status = 'accepted'
+          AND srq.review_kind = 'likely_new'
+          AND ${sourceReviewReadinessSqlForAlias} = 'duplicate_accepted_source_coordinate'
+        ORDER BY srq.id
+        LIMIT $2
+      `, [entity, limit])
+      const count = await client.query(`
+        SELECT COUNT(*)::int AS total
+        FROM source_review_queue srq
+        WHERE srq.entity_type = $1
+          AND srq.status = 'accepted'
+          AND srq.review_kind = 'likely_new'
+          AND ${sourceReviewReadinessSqlForAlias} = 'duplicate_accepted_source_coordinate'
+      `, [entity])
+      return { available: true, data: result.rows, total: count.rows[0]?.total || 0 }
+    })
+    return res.json(payload)
+  } catch (error) {
+    console.error('[admin] source review conflict fetch error', error)
+    return res.status(500).json({ error: 'Failed to load source review conflicts.' })
   }
 })
 
@@ -2964,14 +3192,23 @@ app.get('/api/admin/source-review-queue/:id/ai-assessment', requireAdminAuth, as
       `)
       if (!table.rows[0]?.exists) return { available: false, data: null }
       const result = await client.query(`
-        SELECT review_queue_id, entity_type, model, decision, confidence, reason,
-          supporting_evidence, needs_human_review, decision_origin, created_at
-        FROM source_review_ai_assessments
-        WHERE review_queue_id = $1
-        ORDER BY created_at DESC, id DESC
+        SELECT assessment.review_queue_id, assessment.entity_type, assessment.model,
+          assessment.decision, assessment.confidence, assessment.reason,
+          assessment.supporting_evidence, assessment.needs_human_review,
+          assessment.decision_origin, assessment.created_at,
+          (assessment.created_at < queue.updated_at) AS stale
+        FROM source_review_ai_assessments assessment
+        JOIN source_review_queue queue ON queue.id = assessment.review_queue_id
+        WHERE assessment.review_queue_id = $1
+        ORDER BY assessment.created_at DESC, assessment.id DESC
         LIMIT 1
       `, [id])
-      return { available: true, data: result.rows[0] || null }
+      const assessment = result.rows[0] || null
+      return {
+        available: true,
+        data: assessment?.stale ? null : assessment,
+        stale: Boolean(assessment?.stale),
+      }
     })
     return res.json(payload)
   } catch (error) {
@@ -3261,13 +3498,14 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
       const latestSourceSql = `
         WITH latest_source AS (
           SELECT DISTINCT ON (ps.place_id, ps.source)
-                 ps.entity_type, ps.place_id, ps.source, ps.retrieved_at
+                 ps.entity_type, ps.place_id, ps.source, ps.source_id, ps.source_url, ps.retrieved_at
           FROM place_sources ps
           WHERE ps.entity_type = $1
           ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
         )
       `
       if (kind === 'stale') {
+        const latestOsmInputs = latestOsmInputIds(entity)
         const where = `
           latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
             WHEN 'osm' THEN 30 WHEN 'official_website' THEN 30 WHEN 'all_the_places' THEN 90
@@ -3275,10 +3513,11 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
           AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
           AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         `
-        const [total, rows] = await Promise.all([
+        const [total, rows, observationRows] = await Promise.all([
           client.query(`${latestSourceSql} SELECT COUNT(*)::int AS total FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id WHERE latest_source.entity_type = $1 AND ${where}`, [entity]),
           client.query(`${latestSourceSql}
-            SELECT p.id AS place_id, p.name, p.state, p.status, latest_source.source, latest_source.retrieved_at,
+            SELECT p.id AS place_id, p.name, p.state, p.status, latest_source.source,
+                   latest_source.source_id, latest_source.source_url, latest_source.retrieved_at,
                    CASE latest_source.source WHEN 'osm' THEN 30 WHEN 'official_website' THEN 30 WHEN 'all_the_places' THEN 90
                      WHEN 'fsq_os_places' THEN 180 WHEN 'overture_places' THEN 365 WHEN 'wikidata' THEN 365 ELSE 180 END AS freshness_days
             FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id
@@ -3286,8 +3525,38 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
             ORDER BY latest_source.retrieved_at NULLS FIRST
             LIMIT $2
           `, [entity, limit]),
+          client.query(`${latestSourceSql}
+            SELECT latest_source.source, latest_source.source_id
+            FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id
+            WHERE latest_source.entity_type = $1 AND ${where}
+          `, [entity]),
         ])
-        return { entity, kind, available: true, total: Number(total.rows[0]?.total || 0), rows: rows.rows }
+        const observationCounts = { observed: 0, unobserved: 0, unavailable: 0 }
+        for (const row of observationRows.rows) {
+          if (row.source !== 'osm' || !latestOsmInputs.files.length) observationCounts.unavailable += 1
+          else if (latestOsmInputs.ids.has(normalizedSourceId(row.source_id))) observationCounts.observed += 1
+          else observationCounts.unobserved += 1
+        }
+        const enrichedRows = rows.rows.map(row => {
+          if (row.source !== 'osm' || !latestOsmInputs.files.length) {
+            return { ...row, latest_input_observation: 'not_available' }
+          }
+          return {
+            ...row,
+            latest_input_observation: latestOsmInputs.ids.has(normalizedSourceId(row.source_id))
+              ? 'observed_in_latest_input'
+              : 'unobserved_in_latest_input',
+          }
+        })
+        return {
+          entity,
+          kind,
+          available: true,
+          total: Number(total.rows[0]?.total || 0),
+          latest_input_files: latestOsmInputs.files.map(file => file.replace(`${resolve(__dirname, '..')}/`, '')),
+          latest_input_observation_counts: observationCounts,
+          rows: enrichedRows,
+        }
       }
 
       if (kind === 'closed') {

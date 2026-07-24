@@ -33,5 +33,15 @@
     "auto_fill_if_blank": ["website_url", "phone"],
     "manual_review_only": ["name", "address", "lat", "lng", "state", "google_place_id"],
     "blocked_from_source_promotion": ["style", "price", "price_range", "rating", "notes", "status", "photos", "lifecycle_status", "lifecycle_replaced_by_id"]
+  },
+  "editorial_rules": {
+    "picks": {
+      "owner": "Anthony/editorial workflow",
+      "minimum_rating_by_entity": {
+        "pizza": 8,
+        "taco": 8
+      },
+      "public_label": "Anthony's Picks"
+    }
   }
 }

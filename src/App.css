@@ -180,6 +180,7 @@ body {
 .toggle-button:hover {
   background: var(--app-accent-muted);
   color: var(--app-bg);
+  cursor: pointer;
 }
 
 .toggle-button.active {

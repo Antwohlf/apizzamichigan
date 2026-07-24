@@ -16,12 +16,15 @@ const ADMIN = [
   readFileSync('src/admin/sourceReviewTriage.js', 'utf8'),
 ].join('\n');
 const AUTO_LINK = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
+const AI_REVIEW = readFileSync('scripts/ops/ai-source-review-triage.mjs', 'utf8');
 const RECLASSIFY_AMBIGUOUS = readFileSync('scripts/ops/reclassify-ambiguous-source-candidates.mjs', 'utf8');
 const ACCEPT_LIKELY_NEW = readFileSync('scripts/ops/accept-likely-new-source-candidates.mjs', 'utf8');
 const REVIEWED_NEW_BACKLOG = readFileSync('scripts/ops/reviewed-new-source-backlog-report.mjs', 'utf8');
 const EXPORT_REVIEWED = readFileSync('scripts/ops/export-reviewed-source-candidates.mjs', 'utf8');
 const PREFLIGHT_REVIEWED_NEW = readFileSync('scripts/ops/preflight-reviewed-new-place-import.mjs', 'utf8');
 const VERIFY_REVIEWED_NEW_IMPORTS = readFileSync('scripts/ops/verify-reviewed-new-imports.mjs', 'utf8');
+const REPLACEMENT_REPORT = readFileSync('scripts/ops/replacement-candidate-report.mjs', 'utf8');
+const LIFECYCLE_REPORT = readFileSync('scripts/ops/lifecycle-quality-report.mjs', 'utf8');
 const POPULATE_SCRAPE = readFileSync('scripts/enrichment/populate-scrape-from-db.mjs', 'utf8');
 const POPULATE_CLASSIFY = readFileSync('scripts/enrichment/populate-classify-from-db.mjs', 'utf8');
 const PROMOTION_POLICY = readFileSync('scripts/lib/source-promotion-policy.mjs', 'utf8');
@@ -91,6 +94,8 @@ function main() {
     'ps.id IS NULL',
     'const BRAND_RULES = [',
     'args.brandRules',
+    'const includeScoreDistance = !args.brandRules || args.includeScoreDistance',
+    '--include-score-distance',
     'brandRuleSql(values)',
     "reportFile: 'papa_murphys-review.json'",
     "reportFile: 'dominos_pizza_us-review.json'",
@@ -109,6 +114,29 @@ function main() {
     "action,\n            reviewer_notes,\n            reviewed_by",
     "'auto_link'",
   ], 'auto-link source review guard');
+
+  includesAll(AI_REVIEW, [
+    'CREATE TABLE IF NOT EXISTS source_review_ai_assessments',
+    'UNIQUE (review_queue_id, model)',
+    'if (args.cache) await ensureAssessmentTable()',
+    'if (args.cache) await cacheAssessment(row, ai)',
+    "const decisions = new Set(['same_place', 'different_place', 'business_replacement', 'uncertain'])",
+    "result.needs_human_review = result.decision !== 'same_place' || result.needs_human_review !== false",
+    'The decision value must be exactly one of',
+  ], 'AI source review guard');
+  includesAll(SERVER, [
+    'JOIN source_review_queue queue ON queue.id = assessment.review_queue_id',
+    '(assessment.created_at < queue.updated_at) AS stale',
+    'data: assessment?.stale ? null : assessment',
+  ], 'AI assessment freshness guard');
+  assert(!AI_REVIEW.includes('UPDATE source_review_queue'), 'AI review must not mutate queue decisions');
+  assert(!AI_REVIEW.includes('INSERT INTO place_sources'), 'AI review must not write provenance');
+  assert(!AI_REVIEW.includes('supabase'), 'AI review must not write Supabase');
+
+  includesAll(REPLACEMENT_REPORT + LIFECYCLE_REPORT, [
+    'unreviewed_identity_change_requires_review',
+    'exact OSM',
+  ], 'identity-change review labeling');
 
   const promotionMatchMethods = SOURCE_PROMOTION_DEFAULTS_MATCH_METHODS(PROMOTION_POLICY);
   assert(!promotionMatchMethods.includes('auto_reviewed_link'), 'source promotion defaults must not include auto_reviewed_link');

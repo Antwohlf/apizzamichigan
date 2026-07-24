@@ -30,6 +30,15 @@ export const pizzaTheme = {
   map: {
     tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+    primaryView: {
+      center: [42.7, -79.8],
+      zoom: 5,
+    },
+  },
+  search: {
+    preferredStates: ['MI', 'NY'],
+    initialStates: ['MI', 'NY'],
+    publicStates: ['MI', 'NY'],
   },
 }
 

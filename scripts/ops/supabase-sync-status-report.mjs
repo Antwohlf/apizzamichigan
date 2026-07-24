@@ -18,6 +18,7 @@ import {
   localSyncSelectParams,
   localSyncSelectSql,
   protectedFieldSkips,
+  SUPABASE_BULK_SYNC_RPC,
 } from '../lib/supabase-sync-policy.mjs';
 
 function parseArgs(argv) {
@@ -26,6 +27,7 @@ function parseArgs(argv) {
     batch: 50,
     sample: 10,
     checkpoint: 'scripts/.supabase-sync-checkpoint.json',
+    requireBulkRpc: false,
     json: false,
   };
 
@@ -35,6 +37,7 @@ function parseArgs(argv) {
     else if (arg === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--checkpoint') out.checkpoint = argv[++i];
+    else if (arg === '--require-bulk-rpc') out.requireBulkRpc = true;
     else if (arg === '--json') out.json = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-status-report.mjs [options]
@@ -44,6 +47,7 @@ Options:
   --batch <n>       Next batch size to inspect (default 50)
   --sample <n>      Rows per detail table (default 10)
   --checkpoint <p>  Checkpoint path (default scripts/.supabase-sync-checkpoint.json)
+  --require-bulk-rpc Require the low-I/O bulk RPC to be available
   --json            Emit JSON instead of Markdown
 `);
       process.exit(0);
@@ -60,14 +64,14 @@ Options:
 
 function loadEnvLocal() {
   const path = resolve(process.cwd(), '.env.local');
-  if (!existsSync(path)) return {};
-
-  const out = {};
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    if (!line || line.startsWith('#')) continue;
-    const idx = line.indexOf('=');
-    if (idx === -1) continue;
-    out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  const out = { ...process.env };
+  if (existsSync(path)) {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      const idx = line.indexOf('=');
+      if (idx === -1) continue;
+      out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
   }
   return out;
 }
@@ -130,11 +134,69 @@ function compact(row) {
   };
 }
 
-function statusFrom({ checkpoint, pendingAfterCheckpoint, nextBatch, missingRows, protectedConflicts }) {
+function statusFrom({ checkpoint, pendingAfterCheckpoint, nextBatch, missingRows, protectedConflicts, bulkRpc, requireBulkRpc }) {
+  if ((requireBulkRpc || bulkRpc?.configured) && bulkRpc.state !== 'ready') return 'BLOCKED'
   if (!checkpoint) return 'WARN';
   if (missingRows.length || protectedConflicts.length) return 'WARN';
   if (nextBatch.length === 0 && pendingAfterCheckpoint > 0) return 'WARN';
   return 'OK';
+}
+
+function publicationReadiness({ lifecycleRemoteSchema, bulkRpc }) {
+  if (lifecycleRemoteSchema?.state !== 'ready') {
+    return {
+      status: 'BLOCKED',
+      reason: lifecycleRemoteSchema?.detail || 'Supabase lifecycle columns are unavailable.',
+    };
+  }
+  if (bulkRpc?.state !== 'ready') {
+    return {
+      status: 'BLOCKED',
+      reason: bulkRpc?.detail || 'The low-I/O bulk sync path is not ready.',
+    };
+  }
+  return {
+    status: 'READY',
+    reason: bulkRpc.detail || 'The low-I/O bulk sync path is ready for guarded publication.',
+  };
+}
+
+function bulkRpcConfigured(env) {
+  return /^(1|true|yes)$/i.test(String(
+    env.APIZZA_SYNC_BULK_RPC || process.env.APIZZA_SYNC_BULK_RPC || '',
+  ).trim());
+}
+
+async function inspectBulkRpc(supabase, configured, lifecycleRemoteSchema) {
+  const result = {
+    configured,
+    rpc: SUPABASE_BULK_SYNC_RPC,
+    available: 'unknown',
+    state: 'unavailable',
+    detail: '',
+  };
+
+  const { error } = await supabase.rpc(SUPABASE_BULK_SYNC_RPC, { p_rows: [] });
+  if (!error) {
+    result.available = true;
+    result.state = configured ? 'ready' : 'not_configured';
+    result.detail = configured
+      ? 'Bulk RPC is available and enabled for the sync service.'
+      : 'Bulk RPC is available, but the sync service is still using row-level updates.';
+    return result;
+  }
+
+  result.available = false;
+  if (error.code === 'PGRST202' || /could not find the function/i.test(error.message || '')) {
+    result.state = 'migration_missing';
+    result.detail = lifecycleRemoteSchema?.state === 'ready'
+      ? `Supabase exposes the lifecycle columns but not ${SUPABASE_BULK_SYNC_RPC}(jsonb); run scripts/enrichment/supabase-bulk-sync-rpc-migration.sql before enabling low-I/O bulk sync.`
+      : `Supabase does not expose ${SUPABASE_BULK_SYNC_RPC}(jsonb); apply the production migration before enabling bulk sync.`;
+  } else {
+    result.state = 'unavailable';
+    result.detail = error.message || 'Bulk RPC capability check failed.';
+  }
+  return result;
 }
 
 async function main() {
@@ -197,6 +259,17 @@ async function main() {
     const ids = nextBatch.map(row => row.id);
 
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+    const lifecycleSchemaCheck = await supabase
+      .from(SUPABASE_SYNC_TARGET_TABLE)
+      .select('id, lifecycle_status, lifecycle_replaced_by_id')
+      .limit(1);
+    const lifecycleRemoteSchema = lifecycleSchemaCheck.error
+      ? {
+        state: /column .* does not exist/i.test(lifecycleSchemaCheck.error.message || '') ? 'missing' : 'unavailable',
+        detail: lifecycleSchemaCheck.error.message || 'Lifecycle schema check failed.',
+      }
+      : { state: 'ready', detail: 'Supabase exposes both lifecycle columns.' };
+    const bulkRpc = await inspectBulkRpc(supabase, bulkRpcConfigured(env), lifecycleRemoteSchema);
     const { data: sbRows, error } = ids.length
       ? await supabase
         .from(SUPABASE_SYNC_TARGET_TABLE)
@@ -241,15 +314,21 @@ async function main() {
       nextBatch,
       missingRows,
       protectedConflicts,
+      bulkRpc,
+      requireBulkRpc: options.requireBulkRpc,
     });
+    const publication = publicationReadiness({ lifecycleRemoteSchema, bulkRpc });
 
     const payload = {
       generatedAt: new Date().toISOString(),
       status,
+      publicationReadiness: publication,
       repo: { root, ...git },
       syncBoundary,
       options,
       checkpoint,
+      lifecycleRemoteSchema,
+      bulkRpc,
       summary: summary.rows[0],
       nextBatch: {
         localRows: nextBatch.length,
@@ -293,6 +372,17 @@ async function main() {
     console.log('## Sync Boundary');
     console.log(`- target table: \`${payload.syncBoundary.targetTable}\``);
     console.log(`- local-only tables: ${payload.syncBoundary.localOnlyTables.map(tableName => `\`${tableName}\``).join(', ')}`);
+    console.log('');
+    console.log('## Low-I/O Bulk Sync');
+    console.log(`- publication readiness: ${payload.publicationReadiness.status}`);
+    console.log(`- publication detail: ${payload.publicationReadiness.reason}`);
+    console.log(`- lifecycle schema: ${payload.lifecycleRemoteSchema.state}`);
+    console.log(`- lifecycle detail: ${payload.lifecycleRemoteSchema.detail}`);
+    console.log(`- RPC: \`${payload.bulkRpc.rpc}\``);
+    console.log(`- state: ${payload.bulkRpc.state}`);
+    console.log(`- configured: ${payload.bulkRpc.configured ? 'yes' : 'no'}`);
+    console.log(`- available: ${payload.bulkRpc.available}`);
+    console.log(`- detail: ${payload.bulkRpc.detail}`);
     console.log('');
     console.log('## Next Batch');
     console.log(`- local rows: ${payload.nextBatch.localRows}`);

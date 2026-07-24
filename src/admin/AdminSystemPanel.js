@@ -12,6 +12,15 @@ const formatDate = value => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
 }
 
+const REGION_LABELS = {
+  CA: 'California',
+  MI: 'Michigan',
+  NY: 'New York',
+  TX: 'Texas',
+}
+
+const regionLabel = code => REGION_LABELS[String(code || '').toUpperCase()] || String(code || '').toUpperCase()
+
 const promotionPolicyRows = [
   ['Website and phone', 'Fill blanks only from accepted, high-confidence evidence.'],
   ['Menu, email, social links, hours, service options', 'Keep as source evidence until normalization and conflict rules exist.'],
@@ -22,6 +31,7 @@ const promotionPolicyRows = [
 
 export default function AdminSystemPanel({ entity }) {
   const [payload, setPayload] = useState(null)
+  const [syncReadiness, setSyncReadiness] = useState(null)
   const [lifecycle, setLifecycle] = useState(null)
   const [basicFieldCoverage, setBasicFieldCoverage] = useState(null)
   const [lifecycleKind, setLifecycleKind] = useState('replacements')
@@ -32,6 +42,8 @@ export default function AdminSystemPanel({ entity }) {
   const [basicCoverageOpen, setBasicCoverageOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#basic-coverage')
   const [preflight, setPreflight] = useState(null)
   const [preflightLoading, setPreflightLoading] = useState(false)
+  const [conflictRows, setConflictRows] = useState(null)
+  const [conflictLoading, setConflictLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -49,20 +61,23 @@ export default function AdminSystemPanel({ entity }) {
       setLoading(true)
       setError('')
       try {
-        const [provenanceResponse, summaryResponse] = await Promise.all([
+        const [provenanceResponse, summaryResponse, syncResponse] = await Promise.all([
           fetch(`/api/admin/source-provenance?entity=${entity}`, { credentials: 'include' }),
           fetch(`/api/admin/source-review-summary?entity=${entity}`, { credentials: 'include' }),
+          fetch(`/api/admin/supabase-sync-readiness?entity=${entity}`, { credentials: 'include' }),
         ])
         if (!provenanceResponse.ok) throw new Error(await provenanceResponse.text() || 'Source status is unavailable.')
-        const [provenancePayload, summaryPayload] = await Promise.all([
+        const [provenancePayload, summaryPayload, syncPayload] = await Promise.all([
           provenanceResponse.json(),
           summaryResponse.json(),
+          syncResponse.ok ? syncResponse.json() : Promise.resolve({}),
         ])
         if (!cancelled) {
           setPayload(provenancePayload?.data || null)
           setPreflight(null)
           setLifecycle(summaryPayload?.data?.lifecycle || null)
           setBasicFieldCoverage(summaryPayload?.data?.basicFieldCoverage || null)
+          setSyncReadiness(syncPayload?.data || null)
         }
       } catch (err) {
         if (!cancelled) setError(err?.message || 'System details could not be loaded.')
@@ -72,6 +87,7 @@ export default function AdminSystemPanel({ entity }) {
     }
     setPreviewPage(0)
     setPreflight(null)
+    setConflictRows(null)
     load()
     return () => {
       cancelled = true
@@ -94,6 +110,21 @@ export default function AdminSystemPanel({ entity }) {
     }
   }, [entity, preflight, preflightLoading])
 
+  const loadConflictRows = useCallback(async () => {
+    if (conflictRows || conflictLoading) return
+    setConflictLoading(true)
+    setError('')
+    try {
+      const response = await fetch(`/api/admin/source-review-conflicts?entity=${entity}&limit=20`, { credentials: 'include' })
+      if (!response.ok) throw new Error(await response.text() || 'Source conflicts are unavailable.')
+      setConflictRows(await response.json())
+    } catch (err) {
+      setError(err?.message || 'Source conflicts are unavailable.')
+    } finally {
+      setConflictLoading(false)
+    }
+  }, [conflictRows, conflictLoading, entity])
+
   const loadLifecycleCandidates = useCallback(async kind => {
     setLifecycleLoading(true)
     setError('')
@@ -114,7 +145,8 @@ export default function AdminSystemPanel({ entity }) {
     const section = document.getElementById('approved-import')
     if (section) section.open = true
     loadPreflight()
-  }, [loadPreflight])
+    loadConflictRows()
+  }, [loadConflictRows, loadPreflight])
 
   useEffect(() => {
     if (typeof window === 'undefined' || window.location.hash !== '#lifecycle-quality') return
@@ -130,6 +162,10 @@ export default function AdminSystemPanel({ entity }) {
   const previewPageCount = Math.max(1, Math.ceil(preflightCandidates.length / PREVIEW_PAGE_SIZE))
   const visibleCandidates = preflightCandidates.slice(previewPage * PREVIEW_PAGE_SIZE, (previewPage + 1) * PREVIEW_PAGE_SIZE)
   const blockedCount = Math.max(0, Number(preflight?.rowsInspected || 0) - Number(preflight?.candidateReady || 0))
+  const coordinateConflictCount = Number(preflight?.readinessCounts?.find?.(row => row.readiness === 'duplicate_accepted_source_coordinate')?.rows || 0)
+  const coverageRegions = basicFieldCoverage?.scope?.length
+    ? basicFieldCoverage.scope
+    : Object.keys(basicFieldCoverage?.byState || {})
 
   const runImport = async () => {
     setImportBusy(true)
@@ -205,6 +241,26 @@ export default function AdminSystemPanel({ entity }) {
 
       {!loading && payload ? (
         <>
+          <section className="admin-system-status" aria-labelledby="sync-status-heading">
+            <div>
+              <p className="admin-eyebrow">Publishing</p>
+              <h2 id="sync-status-heading">Supabase sync</h2>
+              <p>{syncReadiness?.detail || 'Checking whether local changes are ready to publish.'}</p>
+              {syncReadiness ? (
+                <p className="admin-system-status__meta">
+                  {Number(syncReadiness.pendingAfterCheckpoint || syncReadiness.wouldUpdate || 0)
+                    ? `${formatCount(Math.max(Number(syncReadiness.pendingAfterCheckpoint) || 0, Number(syncReadiness.wouldUpdate) || 0))} local update${Math.max(Number(syncReadiness.pendingAfterCheckpoint) || 0, Number(syncReadiness.wouldUpdate) || 0) === 1 ? '' : 's'} waiting.`
+                    : 'No local updates are waiting.'}
+                  {Number(syncReadiness.protectedFieldConflicts) > 0
+                    ? ` ${formatCount(syncReadiness.protectedFieldConflicts)} protected-field conflict${Number(syncReadiness.protectedFieldConflicts) === 1 ? '' : 's'} need review.`
+                    : ''}
+                </p>
+              ) : null}
+            </div>
+            <strong className={`admin-system-status__state admin-system-status__state--${syncReadiness?.state || 'unknown'}`}>
+              {syncReadiness?.label || 'Checking…'}
+            </strong>
+          </section>
           <details
             className="admin-system-section"
             id="basic-coverage"
@@ -217,7 +273,7 @@ export default function AdminSystemPanel({ entity }) {
             </summary>
             <div className="admin-system-section__body">
               <p className="admin-system-copy">
-                Active places in Michigan and New York with at least one missing basic field. Source updates can fill contact blanks automatically; identity changes still require review.
+                Active places in the configured operating regions with at least one missing basic field. Source updates can fill contact blanks automatically; identity changes still require review.
               </p>
               <div className="admin-stat-grid">
                 <div><strong>{formatCount(basicFieldCoverage?.overall?.total)}</strong><span>Places checked</span></div>
@@ -232,11 +288,11 @@ export default function AdminSystemPanel({ entity }) {
                   <caption className="admin-sr-only">Basic information coverage by state</caption>
                   <thead><tr><th>Area</th><th>Places</th><th>Need attention</th><th>Missing website</th><th>Missing phone</th><th>Missing style</th><th>Missing price</th></tr></thead>
                   <tbody>
-                    {['MI', 'NY'].map(state => {
+                    {coverageRegions.map(state => {
                       const row = basicFieldCoverage?.byState?.[state]
                       return (
                         <tr key={state}>
-                          <td>{state === 'MI' ? 'Michigan' : 'New York'}</td>
+                          <td>{regionLabel(state)}</td>
                           <td>{formatCount(row?.total)}</td>
                           <td>{formatCount(row?.needsAttention)}</td>
                           <td>{formatCount(row?.missing?.website_url)}</td>
@@ -297,6 +353,11 @@ export default function AdminSystemPanel({ entity }) {
               </div>
               {lifecycleLoading ? <div className="admin-alert" role="status">Loading lifecycle candidates…</div> : null}
               {lifecycleCandidates?.available === false ? <div className="admin-alert admin-alert--warning">Local lifecycle evidence is unavailable.</div> : null}
+              {lifecycleKind === 'stale' && lifecycleCandidates?.latest_input_observation_counts ? (
+                <p className="admin-system-copy" role="status">
+                  {formatCount(lifecycleCandidates.latest_input_observation_counts.unobserved)} stale row{lifecycleCandidates.latest_input_observation_counts.unobserved === 1 ? '' : 's'} were not seen in the latest OSM refresh; {formatCount(lifecycleCandidates.latest_input_observation_counts.observed)} were seen and only need a refresh.
+                </p>
+              ) : null}
               {lifecycleCandidates?.available && !lifecycleCandidates.rows?.length ? <p className="admin-system-copy">No candidates in this category.</p> : null}
               {lifecycleCandidates?.available && lifecycleCandidates.rows?.length ? (
                 <div className="admin-table-wrap">
@@ -328,7 +389,17 @@ export default function AdminSystemPanel({ entity }) {
                               <td>{formatDate(row.retrieved_at)}</td>
                               <td>
                                 <span>{row.freshness_days} day window</span>
-                                <small className="admin-table__subtext">Refresh evidence before making a lifecycle decision</small>
+                                <small className="admin-table__subtext">
+                                  {row.latest_input_observation === 'unobserved_in_latest_input'
+                                    ? 'Not seen in the latest OSM refresh. This is a review lead, not proof the place closed.'
+                                    : row.latest_input_observation === 'observed_in_latest_input'
+                                      ? 'Seen in the latest OSM refresh. The evidence record itself is simply overdue for refresh.'
+                                      : 'Stale evidence is not a closure signal. Check the source before deciding what to do.'}
+                                </small>
+                                <div className="admin-table__actions">
+                                  <a href={`${entity === 'taco' ? '/tacos/places' : '/places'}/${encodeURIComponent(String(row.place_id))}`}>View place</a>
+                                  {row.source_url ? <a href={row.source_url} target="_blank" rel="noopener noreferrer">Source</a> : null}
+                                </div>
                               </td>
                             </>
                           ) : null}
@@ -376,6 +447,7 @@ export default function AdminSystemPanel({ entity }) {
                         <th>Source</th>
                         <th>Evidence rows</th>
                         <th>Places linked</th>
+                        <th>Freshness</th>
                         <th>Last update</th>
                       </tr>
                     </thead>
@@ -385,6 +457,9 @@ export default function AdminSystemPanel({ entity }) {
                           <td>{sourceLabel(row.source)}</td>
                           <td>{formatCount(row.rows)}</td>
                           <td>{formatCount(row.places)}</td>
+                          <td className={Number(row.stale_rows) > 0 ? 'admin-table__warning' : 'admin-table__success'}>
+                            {formatCount(row.fresh_rows)} fresh{Number(row.stale_rows) > 0 ? ` · ${formatCount(row.stale_rows)} stale` : ''}
+                          </td>
                           <td>{formatDate(row.latest_updated_at)}</td>
                         </tr>
                       ))}
@@ -401,7 +476,10 @@ export default function AdminSystemPanel({ entity }) {
             open={importOpen}
             onToggle={event => {
               setImportOpen(event.currentTarget.open)
-              if (event.currentTarget.open) loadPreflight()
+              if (event.currentTarget.open) {
+                loadPreflight()
+                loadConflictRows()
+              }
             }}
           >
             <summary>
@@ -421,6 +499,40 @@ export default function AdminSystemPanel({ entity }) {
                     <div className="admin-metric"><span>Needs review</span><strong>{formatCount(blockedCount)}</strong></div>
                     <div className="admin-metric"><span>Not checked</span><strong>{formatCount(preflight.rowsNotInspected)}</strong></div>
                   </div>
+                  {coordinateConflictCount > 0 ? (
+                    <div className="admin-conflict-review" style={{ marginTop: 14 }}>
+                      <div className="admin-alert admin-alert--warning" role="status">
+                        {formatCount(coordinateConflictCount)} approved records overlap another record from the same source with a different name. Review these before importing; they may represent a duplicate or a replacement.
+                      </div>
+                      <div className="admin-inline-actions" style={{ marginTop: 10 }}>
+                        <button className="admin-button admin-button--quiet" type="button" onClick={loadConflictRows} disabled={conflictLoading}>
+                          {conflictLoading ? 'Loading conflicts…' : conflictRows ? 'Refresh conflict list' : 'Show conflict list'}
+                        </button>
+                        <span className="admin-system-copy">Read-only. Opening a source does not change either place.</span>
+                      </div>
+                      {conflictRows?.available === false ? <div className="admin-alert admin-alert--warning" style={{ marginTop: 10 }}>Local source review data is unavailable.</div> : null}
+                      {conflictRows?.available !== false && conflictRows?.data?.length ? (
+                        <div className="admin-table-wrap" style={{ marginTop: 10 }}>
+                          <table className="admin-table">
+                            <caption className="admin-sr-only">Accepted source records with same-source coordinate conflicts</caption>
+                            <thead><tr><th>Source record</th><th>Other accepted record</th><th>Distance</th><th>Inspect</th></tr></thead>
+                            <tbody>
+                              {conflictRows.data.map(row => (
+                                <tr key={row.id}>
+                                  <td><strong>{row.source_name || row.source_id || 'Unnamed source'}</strong><small className="admin-table__subtext">{sourceLabel(row.source)} · #{row.id}</small></td>
+                                  <td><strong>{row.conflict_source_name || 'Unnamed source'}</strong><small className="admin-table__subtext">#{row.conflict_id}</small></td>
+                                  <td>{Math.round(Number(row.conflict_distance_m) || 0)} m</td>
+                                  <td>{row.source_url ? <a href={row.source_url} target="_blank" rel="noreferrer">Source</a> : 'No source link'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {Number(conflictRows.total) > conflictRows.data.length ? <p className="admin-system-copy">Showing {conflictRows.data.length} of {formatCount(conflictRows.total)} conflicts. Resolve these through the existing source-review safeguards before importing.</p> : null}
+                        </div>
+                      ) : null}
+                      {conflictRows && conflictRows.available !== false && !conflictRows.data?.length ? <p className="admin-system-copy">No accepted conflicts are currently visible in the queue.</p> : null}
+                    </div>
+                  ) : null}
                   <div className="admin-inline-actions" style={{ marginTop: 14 }}>
                     <button
                       className="admin-button admin-button--primary"

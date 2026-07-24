@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useTheme } from './themes/ThemeProvider'
-import { ThemeKeys } from './themes/siteTheme'
-import { pizzaStyles } from './data/pizzaStyles'
-import { TACO_TYPES } from './data/tacoTypes'
+import { entityConfigForTheme } from './config/entityConfig'
 import { StatusFilter } from './sidebar/StatusFilter'
 import './Sidebar.css'
 
@@ -21,6 +19,10 @@ const Sidebar = ({
   onAnthonysVisitsToggle,
   showAnthonysPicks = false,
   onAnthonysPicksToggle,
+  anthonysPicksLabel = "Anthony's Picks",
+  anthonysPicksMinimumRating = 8,
+  showHistorical = false,
+  onHistoricalToggle,
 }) => {
   const { theme } = useTheme()
 
@@ -33,9 +35,10 @@ const Sidebar = ({
   const [selectedStatuses, setSelectedStatuses] = useState(() => new Set(
     Array.isArray(filters?.statuses) ? filters.statuses : ALL_STATUS_VALUES
   ))
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const hasMountedRef = useRef(false)
 
-  const stylesForTheme = themeKey === ThemeKeys.TACO ? TACO_TYPES : pizzaStyles
+  const stylesForTheme = entityConfigForTheme(themeKey).styleOptions
 
   useEffect(() => {
     if (!filters) return
@@ -89,8 +92,29 @@ const Sidebar = ({
     setSelectedStatuses(new Set())
   }, [themeKey])
 
+  const selectedFilterCount = selectedStyles.length + selectedPrices.length + (
+    selectedStatuses.size < ALL_STATUS_VALUES.length ? 1 : 0
+  ) + (showHistorical ? 1 : 0)
+
   return (
     <div className="sidebar-container">
+      <button
+        type="button"
+        className="mobile-filter-toggle"
+        aria-expanded={mobileFiltersOpen}
+        aria-controls="map-filters"
+        onClick={() => setMobileFiltersOpen(open => !open)}
+      >
+        <span>Filters</span>
+        {selectedFilterCount > 0 && <span className="mobile-filter-toggle__count">{selectedFilterCount}</span>}
+        <span aria-hidden="true">{mobileFiltersOpen ? '\u2212' : '+'}</span>
+      </button>
+      <div
+        id="map-filters"
+        className={`sidebar-filters${mobileFiltersOpen ? ' is-open' : ''}`}
+        role="region"
+        aria-label="Map filters"
+      >
       <section className="filter-section" aria-label={theme.copy.styleLabel}>
         <h2 className="filter-section__title">{theme.copy.styleLabel}</h2>
         <div className="filter-section__options">
@@ -133,6 +157,38 @@ const Sidebar = ({
 
       <StatusFilter value={selectedStatuses} onChange={setSelectedStatuses} />
 
+      <section className="filter-section filter-section--picks" aria-label={anthonysPicksLabel}>
+        <h2 className="filter-section__title">{anthonysPicksLabel}</h2>
+        <label className={`filter-checkbox${showAnthonysPicks ? ' is-selected' : ''}`}>
+          <input
+            type="checkbox"
+            checked={showAnthonysPicks}
+            onChange={e => onAnthonysPicksToggle?.(e.target.checked)}
+            aria-label={anthonysPicksLabel}
+          />
+          <span>
+            <strong>Rated {anthonysPicksMinimumRating} or higher</strong>
+            <small>Anthony&apos;s top-rated places</small>
+          </span>
+        </label>
+      </section>
+
+      <section className="filter-section" aria-label="Historical places">
+        <h2 className="filter-section__title">Historical places</h2>
+        <label className={`filter-checkbox${showHistorical ? ' is-selected' : ''}`}>
+          <input
+            type="checkbox"
+            checked={showHistorical}
+            onChange={event => onHistoricalToggle?.(event.target.checked)}
+            aria-label="Include historical places"
+          />
+          <span>
+            <strong>Include closed and replaced</strong>
+            <small>Show places with map history</small>
+          </span>
+        </label>
+      </section>
+
       <section className="filter-section" aria-label="Map Settings">
         <h2 className="filter-section__title">Map Settings</h2>
         <label
@@ -169,24 +225,8 @@ const Sidebar = ({
             style={{ width: '18px', height: '18px', cursor: 'pointer' }}
           />
         </label>
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0.5rem 0',
-            cursor: 'pointer',
-          }}
-        >
-          <span style={{ fontSize: '0.9rem', color: 'var(--app-text)' }}>Anthony&apos;s Picks (8+)</span>
-          <input
-            type="checkbox"
-            checked={showAnthonysPicks}
-            onChange={e => onAnthonysPicksToggle?.(e.target.checked)}
-            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-          />
-        </label>
       </section>
+      </div>
     </div>
   )
 }

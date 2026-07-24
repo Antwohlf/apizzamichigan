@@ -9,17 +9,44 @@ does not alter or delete records.
 2. Paste and run `scripts/enrichment/supabase-production-migration.sql`.
 3. Confirm the script finishes without errors.
 
+This first migration contains only the lifecycle columns and guarded bulk
+sync function. It deliberately does not build search indexes, so the critical
+publication path can be enabled without combining it with a large disk-I/O
+operation on the Nano instance.
+
 The two component files remain checked in for reference, but the combined
 file is the canonical operator entry point.
 
 The lifecycle migration adds explicit historical/replacement fields. The
-search migration enables `pg_trgm` and adds idempotent indexes for the fields
-already searched by the public sites. It is safe to run either migration again.
+separate search migration enables `pg_trgm` and adds idempotent indexes for the
+fields already searched by the public sites. It is safe to run either
+migration again.
 The migration also installs the guarded `apply_pizza_places_sync_batch(jsonb)`
 RPC. It performs approved updates in one database transaction and is callable
 only by the Supabase service role.
 
+If the lifecycle columns are already present but the readiness report says the
+RPC is missing, run the smaller repair file instead:
+
+```text
+scripts/enrichment/supabase-bulk-sync-rpc-migration.sql
+```
+
+That repair file only creates or replaces the guarded RPC. It does not alter
+columns, create indexes, or write any place rows.
+
 ## Verify Before Enabling Sync
+
+First run the SQL Editor verification file:
+
+```text
+scripts/enrichment/verify-supabase-bulk-sync-rpc.sql
+```
+
+It should return one function row with `security_definer = true`,
+`service_role_can_execute = true`, both public-role execute values false, both
+lifecycle columns, and a zero-row probe of `{"updated_count": 0}`. This probe
+does not modify any place rows.
 
 On the iMac, run the read-only check:
 
@@ -41,6 +68,15 @@ Only after `remote schema: ready` is confirmed, add
 same readiness report. The lifecycle section should then show
 `enabled: yes` with no remote-schema error.
 
+## Optional Search Index Step
+
+After the core migration and publication readiness check pass, apply
+`scripts/enrichment/supabase-search-index-migration.sql` separately. Run it
+during a period when a brief increase in disk activity is acceptable, and
+verify the Supabase database observability page afterward. Search remains
+functional without these indexes; the indexes improve substring-search
+latency as the tables grow.
+
 ## Post-check
 
 Run the consolidated read-only audit:
@@ -56,11 +92,25 @@ after the readiness gate passes.
 
 ## Enable the low-I/O path
 
-After the SQL migration succeeds and the readiness report is clean, set
-`APIZZA_SYNC_BULK_RPC=1` in the iMac sync environment. The normal guarded sync
-will then batch updates through the RPC. Reviewed-new inserts remain on the
-existing guarded insert path. Remove the variable to fall back to row-level
-updates if the RPC is unavailable.
+After the SQL migration succeeds, run the status report before changing the
+service:
+
+```bash
+/usr/local/bin/node scripts/ops/supabase-sync-status-report.mjs --json
+```
+
+The report must show `bulkRpc.state: "not_configured"` or `"ready"` with
+`bulkRpc.available: true`. If it shows `migration_missing`, do not enable the
+flag; the production migration has not reached Supabase yet. If it shows
+`not_configured`, set `APIZZA_SYNC_BULK_RPC=1` in the iMac sync environment and
+reload the launchd job. Rerun the report and require `bulkRpc.state: "ready"`.
+
+The normal guarded sync will then batch updates through the RPC. The launchd
+wrapper passes --bulk-rpc explicitly for both its regular and reconciliation
+runs, so scheduled sync fails closed rather than silently falling back to
+high-I/O row-level updates. Reviewed-new inserts remain on the existing guarded
+insert path. Row-level updates remain available only for an explicitly
+operator-invoked manual run.
 
 ## Rollback
 

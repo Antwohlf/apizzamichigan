@@ -21,8 +21,30 @@
 
 .place-detail__back,
 .place-detail__actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: var(--detail-accent, var(--app-accent));
   font-weight: 700;
+}
+
+.place-detail__actions a {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+.place-detail__actions a:hover,
+.place-detail__actions a:focus-visible {
+  border-color: var(--detail-accent, var(--app-accent));
+  background: color-mix(in srgb, var(--detail-accent, #f97316) 10%, transparent);
+}
+
+.place-detail__actions a:focus-visible,
+.place-detail__back:focus-visible {
+  outline: 2px solid var(--detail-accent, var(--app-accent));
+  outline-offset: 2px;
 }
 
 .place-detail__eyebrow {
@@ -30,6 +52,7 @@
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  overflow-wrap: anywhere;
 }
 
 .place-detail__card {
@@ -48,6 +71,7 @@
 .place-detail h1 {
   margin: 0;
   font-size: clamp(2rem, 5vw, 3.4rem);
+  overflow-wrap: anywhere;
 }
 
 .place-detail__location {
@@ -155,6 +179,54 @@
   text-align: center;
 }
 
+.place-detail-state--loading {
+  place-content: start center;
+  padding-top: clamp(5rem, 16vh, 10rem);
+}
+
+.place-detail-skeleton {
+  width: min(100%, 520px);
+  display: grid;
+  gap: 0.75rem;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-card);
+  text-align: left;
+}
+
+.place-detail-skeleton__eyebrow,
+.place-detail-skeleton__title,
+.place-detail-skeleton__line {
+  display: block;
+  background: color-mix(in srgb, var(--app-text-muted) 22%, transparent);
+  border-radius: 4px;
+}
+
+.place-detail-skeleton__eyebrow {
+  width: 34%;
+  height: 0.8rem;
+}
+
+.place-detail-skeleton__title {
+  width: 82%;
+  height: 2.6rem;
+}
+
+.place-detail-skeleton__line {
+  width: 92%;
+  height: 1rem;
+}
+
+.place-detail-skeleton__line--short {
+  width: 58%;
+}
+
+.place-detail-skeleton p {
+  margin: 0.35rem 0 0;
+  color: var(--app-text-muted);
+}
+
 @media (max-width: 640px) {
   .place-detail {
     padding: 0.75rem;
@@ -214,5 +286,9 @@
   .place-detail__actions {
     display: grid;
     gap: 0.65rem;
+  }
+
+  .place-detail__actions a {
+    justify-content: center;
   }
 }

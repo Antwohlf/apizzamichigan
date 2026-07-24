@@ -18,40 +18,9 @@ ALTER TABLE IF EXISTS taco_places
 ALTER TABLE IF EXISTS taco_places
   ADD COLUMN IF NOT EXISTS lifecycle_replaced_by_id BIGINT;
 
--- Trigram indexes support the existing case-insensitive public search.
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_name_trgm
-  ON pizza_places USING gin (name gin_trgm_ops) WHERE name IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_address_trgm
-  ON pizza_places USING gin (address gin_trgm_ops) WHERE address IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_style_trgm
-  ON pizza_places USING gin (style gin_trgm_ops) WHERE style IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_brand_trgm
-  ON pizza_places USING gin (brand gin_trgm_ops) WHERE brand IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_operator_trgm
-  ON pizza_places USING gin (operator gin_trgm_ops) WHERE operator IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_taco_places_search_name_trgm
-  ON taco_places USING gin (name gin_trgm_ops) WHERE name IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_taco_places_search_address_trgm
-  ON taco_places USING gin (address gin_trgm_ops) WHERE address IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_taco_places_search_style_trgm
-  ON taco_places USING gin (style gin_trgm_ops) WHERE style IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_status
-  ON pizza_places (status) WHERE status IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_price_range
-  ON pizza_places (price_range) WHERE price_range IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_taco_places_search_status
-  ON taco_places (status) WHERE status IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_taco_places_search_price
-  ON taco_places (price) WHERE price IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_pizza_places_search_state
-  ON pizza_places (state) WHERE state IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_taco_places_search_state
-  ON taco_places (state) WHERE state IS NOT NULL;
+-- Search indexes are intentionally kept in the separate
+-- supabase-search-index-migration.sql file. Apply this core migration first;
+-- the heavier index build can then be scheduled and monitored independently.
 
 -- Low-I/O update path for the guarded local-to-public sync. The caller still
 -- computes the field-level policy and sends only permitted changes. This
@@ -91,6 +60,8 @@ BEGIN
       enrichment_agent text,
       enrichment_run_id integer,
       address_source text,
+      scrape_method text,
+      scrape_notes text,
       website_url text,
       menu_url text,
       phone text,
@@ -137,6 +108,8 @@ BEGIN
     enrichment_agent = CASE WHEN incoming.patch ? 'enrichment_agent' THEN incoming.enrichment_agent ELSE target.enrichment_agent END,
     enrichment_run_id = CASE WHEN incoming.patch ? 'enrichment_run_id' THEN incoming.enrichment_run_id ELSE target.enrichment_run_id END,
     address_source = CASE WHEN incoming.patch ? 'address_source' THEN incoming.address_source ELSE target.address_source END,
+    scrape_method = CASE WHEN incoming.patch ? 'scrape_method' THEN incoming.scrape_method ELSE target.scrape_method END,
+    scrape_notes = CASE WHEN incoming.patch ? 'scrape_notes' THEN incoming.scrape_notes ELSE target.scrape_notes END,
     website_url = CASE WHEN incoming.patch ? 'website_url' THEN incoming.website_url ELSE target.website_url END,
     menu_url = CASE WHEN incoming.patch ? 'menu_url' THEN incoming.menu_url ELSE target.menu_url END,
     phone = CASE WHEN incoming.patch ? 'phone' THEN incoming.phone ELSE target.phone END,

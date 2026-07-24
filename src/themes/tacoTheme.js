@@ -30,6 +30,15 @@ export const tacoTheme = {
   map: {
     tileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    primaryView: {
+      center: [44.3148, -85.6024],
+      zoom: 6,
+    },
+  },
+  search: {
+    preferredStates: ['MI', 'NY'],
+    initialStates: ['MI', 'NY'],
+    publicStates: ['MI', 'NY'],
   },
 }
 

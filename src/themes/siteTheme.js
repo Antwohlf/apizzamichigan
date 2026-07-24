@@ -30,7 +30,16 @@
  * @property {{
  *   tileUrl?: string;
  *   attribution?: string;
+ *   primaryView?: {
+ *     center: [number, number];
+ *     zoom: number;
+ *   };
  * }} [map]
+ * @property {{
+ *   preferredStates?: string[];
+ *   initialStates?: string[];
+ *   publicStates?: string[];
+ * }} [search]
  */
 
 export const ThemeKeys = Object.freeze({

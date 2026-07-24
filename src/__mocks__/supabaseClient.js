@@ -7,10 +7,14 @@ const createQuery = (table) => {
     rangeStart: null,
     rangeEnd: null,
     limit: null,
+    minimumRating: null,
   }
 
   const result = () => {
     let data = [...(mockDataByTable[table] || [])]
+    if (state.minimumRating !== null) {
+      data = data.filter(row => Number(row.rating) >= state.minimumRating)
+    }
     if (state.rangeStart !== null && state.rangeEnd !== null) {
       data = data.slice(state.rangeStart, state.rangeEnd + 1)
     }
@@ -43,6 +47,10 @@ const createQuery = (table) => {
     ilike: jest.fn(() => query),
     in: jest.fn(() => query),
     not: jest.fn(() => query),
+    gte: jest.fn((column, value) => {
+      if (column === 'rating') state.minimumRating = Number(value)
+      return query
+    }),
     or: jest.fn(() => query),
     then: (resolve, reject) => result().then(resolve, reject),
     catch: reject => result().catch(reject),

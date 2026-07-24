@@ -1,6 +1,14 @@
-import { FOCUSED_PLACE_ZOOM, lightboxRestoreViewport, focusedPlaceZoom, isPlaceViewportFocused, clusterFitOptions } from './viewport'
+import { FOCUSED_PLACE_ZOOM, SEARCH_RESULT_FOCUS_ZOOM, captureLightboxViewport, lightboxRestoreViewport, focusedPlaceZoom, isPlaceViewportFocused, clusterFitOptions, clusterNavigation, clusterRadiusForZoom, searchFitOptions, searchNavigation, shouldForceIndividualMarkers } from './viewport'
 
 describe('cluster navigation', () => {
+  test('tightens cluster radius as the map reaches neighborhood scale', () => {
+    expect(clusterRadiusForZoom(7)).toBe(92)
+    expect(clusterRadiusForZoom(10)).toBe(52)
+    expect(clusterRadiusForZoom(13)).toBe(36)
+    expect(clusterRadiusForZoom(14)).toBe(24)
+    expect(clusterRadiusForZoom('not-a-zoom')).toBe(80)
+  })
+
   test('keeps cluster expansion bounded to neighborhood context', () => {
     expect(clusterFitOptions()).toEqual({
       padding: [48, 48],
@@ -8,6 +16,101 @@ describe('cluster navigation', () => {
       animate: true,
       duration: 0.6,
     })
+  })
+
+  test('steps inward instead of fitting a wide geographic cluster', () => {
+    expect(clusterNavigation({
+      latitudeSpan: 4.2,
+      longitudeSpan: 6.1,
+      currentZoom: 7,
+      maxZoom: 14,
+    })).toEqual({ mode: 'step', zoom: 9 })
+  })
+
+  test('fits ordinary neighborhood clusters', () => {
+    expect(clusterNavigation({
+      latitudeSpan: 0.08,
+      longitudeSpan: 0.12,
+      currentZoom: 11,
+      maxZoom: 14,
+    })).toEqual({ mode: 'fit' })
+  })
+})
+
+describe('search navigation', () => {
+  test('keeps multi-result searches in useful neighborhood context', () => {
+    expect(searchFitOptions()).toEqual({
+      padding: [72, 72],
+      maxZoom: 12,
+      animate: true,
+      duration: 0.7,
+    })
+  })
+
+  test('keeps broad multi-market searches on the best result', () => {
+    const places = [
+      { id: 'first', lat: 42.28, lng: -83.74 },
+      { id: 'second', lat: 40.73, lng: -74.0 },
+    ]
+    expect(searchNavigation(places)).toEqual({
+      mode: 'place',
+      place: places[0],
+      zoom: SEARCH_RESULT_FOCUS_ZOOM,
+    })
+  })
+
+  test('fits results that belong to one compact area', () => {
+    const places = [
+      { id: 'first', lat: 42.28, lng: -83.74 },
+      { id: 'second', lat: 42.31, lng: -83.72 },
+    ]
+    expect(searchNavigation(places)).toEqual({ mode: 'fit', places })
+  })
+
+  test('focuses the best result when a compact search has too many matches', () => {
+    const places = Array.from({ length: 51 }, (_, index) => ({
+      id: String(index),
+      lat: 42.28 + (index * 0.001),
+      lng: -83.74 + (index * 0.001),
+    }))
+    expect(searchNavigation(places)).toEqual({
+      mode: 'place',
+      place: places[0],
+      zoom: SEARCH_RESULT_FOCUS_ZOOM,
+    })
+  })
+
+  test('fits a metro-area search so all nearby results stay visible', () => {
+    const places = [
+      { id: 'first', lat: 40.70, lng: -74.02 },
+      { id: 'second', lat: 40.98, lng: -73.62 },
+    ]
+    expect(searchNavigation(places)).toEqual({ mode: 'fit', places })
+  })
+
+  test('focuses the best result for a statewide or multi-market search', () => {
+    const places = [
+      { id: 'first', lat: 42.28, lng: -83.74 },
+      { id: 'second', lat: 40.73, lng: -74.0 },
+    ]
+    expect(searchNavigation(places)).toEqual({
+      mode: 'place',
+      place: places[0],
+      zoom: SEARCH_RESULT_FOCUS_ZOOM,
+    })
+  })
+})
+
+describe('focused marker density', () => {
+  test('keeps small focused result sets unclustered', () => {
+    expect(shouldForceIndividualMarkers({ searchActive: true, placeCount: 12 })).toBe(true)
+    expect(shouldForceIndividualMarkers({ nearMeActive: true, placeCount: 40 })).toBe(true)
+  })
+
+  test('keeps broad focused result sets clustered', () => {
+    expect(shouldForceIndividualMarkers({ searchActive: true, placeCount: 41 })).toBe(false)
+    expect(shouldForceIndividualMarkers({ nearMeActive: true, placeCount: 200 })).toBe(false)
+    expect(shouldForceIndividualMarkers({ searchActive: false, nearMeActive: false, placeCount: 1 })).toBe(false)
   })
 })
 
@@ -98,5 +201,21 @@ describe('lightboxRestoreViewport', () => {
       capturedViewport: { lat: 44.3, lng: -85.6, zoom: 10 },
       activePlace: { lat: 40.734, lng: -74.003 },
     })).toEqual({ lat: 40.734, lng: -74.003, zoom: FOCUSED_PLACE_ZOOM })
+  })
+})
+
+describe('captureLightboxViewport', () => {
+  test('uses the active place when lightbox opens before map focus finishes', () => {
+    expect(captureLightboxViewport({
+      capturedViewport: { lat: 44.3, lng: -85.6, zoom: 6 },
+      activePlace: { lat: 40.734, lng: -74.003 },
+    })).toEqual({ lat: 40.734, lng: -74.003, zoom: FOCUSED_PLACE_ZOOM })
+  })
+
+  test('preserves a settled viewport near the active place', () => {
+    expect(captureLightboxViewport({
+      capturedViewport: { lat: 40.8, lng: -74.05, zoom: 11 },
+      activePlace: { lat: 40.734, lng: -74.003 },
+    })).toEqual({ lat: 40.8, lng: -74.05, zoom: 11 })
   })
 })

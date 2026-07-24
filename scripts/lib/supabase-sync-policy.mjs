@@ -143,6 +143,7 @@ export function normalizeSyncSelectorOptions(options = {}) {
 
   return {
     ids,
+    lifecycleOnly: Boolean(options.lifecycleOnly),
     startAfter: Number.isFinite(options.startAfter) ? options.startAfter : 0,
     batch: Math.max(
       Number.isFinite(options.batch) && options.batch > 0 ? options.batch : 500,
@@ -159,9 +160,10 @@ export function normalizeSyncSelectorOptions(options = {}) {
 export function localSyncSelect(options = {}) {
   const selector = normalizeSyncSelectorOptions(options);
   const params = [];
+  const valueCols = selector.lifecycleOnly ? LIFECYCLE_COLS : LOCAL_SYNC_VALUE_COLS;
   const filters = [
     `(
-            ${LOCAL_SYNC_VALUE_COLS.map(col => `${col} is not null`).join('\n            or ')}
+            ${valueCols.map(col => `${col} is not null`).join('\n            or ')}
           )`,
   ];
 
@@ -227,19 +229,22 @@ export function localSyncSelectQueryParams(options = {}) {
   return localSyncSelect(options).params;
 }
 
-export function buildSupabasePayload(local, current, { nowIso = new Date().toISOString() } = {}) {
+export function buildSupabasePayload(local, current, {
+  nowIso = new Date().toISOString(),
+  lifecycleOnly = false,
+} = {}) {
   if (!current) return null;
 
   const payload = { id: local.id };
 
-  for (const col of OVERWRITE_COLS) {
+  for (const col of lifecycleOnly ? [] : OVERWRITE_COLS) {
     const value = local[col];
     if (value !== null && value !== undefined && !syncValuesEqual(value, current[col])) {
       payload[col] = value;
     }
   }
 
-  for (const col of FILL_IF_NULL_COLS) {
+  for (const col of lifecycleOnly ? [] : FILL_IF_NULL_COLS) {
     const localValue = local[col];
     const supabaseValue = current[col];
     if ((supabaseValue === null || supabaseValue === undefined) && localValue !== null && localValue !== undefined) {
@@ -253,8 +258,10 @@ export function buildSupabasePayload(local, current, { nowIso = new Date().toISO
     if (!syncValuesEqual(local[col], current[col])) payload[col] = local[col] ?? null;
   }
 
-  if (current.qa_status == null) payload.qa_status = 'unreviewed';
-  if (current.qa_schema_version == null) payload.qa_schema_version = 1;
+  if (!lifecycleOnly) {
+    if (current.qa_status == null) payload.qa_status = 'unreviewed';
+    if (current.qa_schema_version == null) payload.qa_schema_version = 1;
+  }
 
   if (Object.keys(payload).length <= 1) return null;
   if (!('updated_at' in payload)) payload.updated_at = nowIso;

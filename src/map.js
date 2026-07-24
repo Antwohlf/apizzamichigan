@@ -1,70 +1,35 @@
 // src/map.js
-import React, { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import React from 'react'
+import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import 'leaflet-rotatedmarker'
 
 import { PlacesLayer } from './map/PlacesLayer'
 import { PopupProvider } from './context/PopupProvider'
+import { filterPublicAggregates } from './map/publicScope'
+import { consumeMapReturnState } from './map/mapReturnState'
 
-const ZoomButton = () => {
-  const map = useMapEvents({
-    moveend: () => {
-      checkView();
-    },
-  });
-
-  const [isDefaultMichiganView, setIsDefaultMichiganView] = useState(true);
-
-  const michiganCenter = [44.3148, -85.6024];
-  const michiganZoom = 6;
+const ZoomButton = ({ showAllMarkets = false, onScopeChange, primaryView }) => {
+  const map = useMap()
+  const fallbackPrimaryView = { center: [44.3148, -85.6024], zoom: 6 }
+  const activePrimaryView = primaryView || fallbackPrimaryView
 
   const handleToggleView = () => {
-    if (!isDefaultMichiganView) {
-      map.setView(michiganCenter, michiganZoom); // Zoom back to default Michigan view
+    const nextShowAllMarkets = !showAllMarkets
+    onScopeChange?.(nextShowAllMarkets)
+    if (nextShowAllMarkets) {
+      map.setView([20, 0], 2)
     } else {
-      map.setView([20, 0], 2); // Zoom out to show the world
+      map.setView(activePrimaryView.center, activePrimaryView.zoom)
     }
   };
-
-  const checkView = () => {
-    if (!map || typeof map.getCenter !== 'function' || typeof map.getZoom !== 'function') {
-      return
-    }
-
-    const currentCenter = map.getCenter()
-    const currentZoom = map.getZoom()
-
-    // Check if the map is within Michigan boundaries
-    const isInMichigan =
-      currentCenter.lat > 41 && currentCenter.lat < 49 &&
-      currentCenter.lng > -90 && currentCenter.lng < -82;
-
-    // Check if at default Michigan view
-    const isAtDefaultMichiganView =
-      Math.abs(currentCenter.lat - michiganCenter[0]) < 0.1 &&
-      Math.abs(currentCenter.lng - michiganCenter[1]) < 0.1 &&
-      currentZoom === michiganZoom;
-
-    // Update state based on current view
-    if (isAtDefaultMichiganView) {
-      setIsDefaultMichiganView(true)
-    } else if (isInMichigan) {
-      setIsDefaultMichiganView(false);
-    } else {
-      setIsDefaultMichiganView(false);
-    }
-  };
-
-  // Initialize the state when the component mounts
-  useEffect(() => {
-    checkView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <div className="zoom-button">
-      <button onClick={handleToggleView}>
-        {!isDefaultMichiganView ? 'Back to Michigan' : 'And Beyond'}
+      <button
+        onClick={handleToggleView}
+        aria-label={showAllMarkets ? 'Return to Michigan and New York' : 'Explore all markets'}
+      >
+        {showAllMarkets ? 'Back to primary markets' : 'And Beyond'}
       </button>
     </div>
   );
@@ -80,14 +45,30 @@ const Map = ({
   flyToLocation,
   forceIndividualMarkers = false,
   resetKey,
+  showAllMarkets = false,
+  onScopeChange,
+  searchFocusKey = '',
 }) => {
   const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+  const primaryView = theme?.map?.primaryView || { center: [44.3148, -85.6024], zoom: 6 }
+  const returnState = React.useMemo(
+    () => consumeMapReturnState(undefined, typeof window === 'undefined' ? null : window.location.pathname),
+    []
+  )
+  const initialView = returnState
+    ? { center: [returnState.center.lat, returnState.center.lng], zoom: returnState.zoom }
+    : primaryView
+  const primaryStates = theme?.search?.publicStates || theme?.search?.preferredStates || []
+  const visibleStateAggregates = filterPublicAggregates(stateAggregates, {
+    showAll: showAllMarkets,
+    primaryStates,
+  })
 
   return (
     <MapContainer
-      center={[44.3148, -85.6024]} // Centered on Michigan
-      zoom={6}
+      center={initialView.center}
+      zoom={initialView.zoom}
       style={{ height: '100%', width: '100%', position: 'relative' }}
     >
       <TileLayer attribution={attribution} url={tileUrl} />
@@ -96,14 +77,15 @@ const Map = ({
           site={site}
           places={places}
           showClusterCounts={showClusterCounts}
-          stateAggregates={stateAggregates}
+          stateAggregates={visibleStateAggregates}
           onStateClick={onStateClick}
           flyToLocation={flyToLocation}
           resetKey={resetKey}
           forceIndividualMarkers={forceIndividualMarkers}
+          searchFocusKey={searchFocusKey}
         />
         {/* Render ZoomButton directly inside MapContainer */}
-        <ZoomButton />
+        <ZoomButton showAllMarkets={showAllMarkets} onScopeChange={onScopeChange} primaryView={primaryView} />
       </PopupProviderBridge>
     </MapContainer>
   )

@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { renderExpanded, teardownPopup } from './renderPopup'
+import { displayPopupStyle, renderExpanded, teardownPopup } from './renderPopup'
 import { REVIEW_LIGHTBOX_CLOSE_EVENT, REVIEW_LIGHTBOX_OPEN_EVENT } from '../ReviewGallery'
 
 describe('renderExpanded', () => {
@@ -99,6 +99,29 @@ describe('renderExpanded', () => {
     )
   })
 
+  test('runs the return-state hook before navigating to place details', () => {
+    const onDetailsNavigate = jest.fn()
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Returnable Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+        },
+        jest.fn(),
+        onDetailsNavigate
+      )
+    })
+
+    fireEvent.click(screen.getByRole('link', { name: /view place details/i }))
+    expect(onDetailsNavigate).toHaveBeenCalledTimes(1)
+  })
+
   test('renders compact status and location details for expanded popups', () => {
     // renderExpanded owns a detached React root outside Testing Library's render helper.
     // eslint-disable-next-line testing-library/no-unnecessary-act
@@ -137,7 +160,90 @@ describe('renderExpanded', () => {
     )
   })
 
+  test('exposes verified contact actions when public data includes them', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Contact Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          phone: '+1 734 555 0100',
+          website_url: 'contactpizza.example.com',
+          menu_url: 'https://contactpizza.example.com/menu',
+          hours: { Monday: '11:00-22:00' },
+        },
+        jest.fn()
+      )
+    })
+
+    expect(screen.getByRole('link', { name: '+1 734 555 0100' })).toHaveAttribute(
+      'href',
+      'tel:+1 734 555 0100'
+    )
+    expect(screen.getByRole('link', { name: /official website/i })).toHaveAttribute(
+      'href',
+      'https://contactpizza.example.com/'
+    )
+    expect(screen.getByRole('link', { name: /menu/i })).toHaveAttribute(
+      'href',
+      'https://contactpizza.example.com/menu'
+    )
+    expect(screen.getByText('Hours: Monday: 11:00-22:00')).toBeInTheDocument()
+  })
+
+  test('does not render unsafe website values as popup links', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Unsafe Website Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          website_url: 'ftp://unsafe.example.com',
+        },
+        jest.fn()
+      )
+    })
+
+    expect(screen.queryByRole('link', { name: /official website/i })).not.toBeInTheDocument()
+  })
+
+  test('preserves Anthony pick highlighting for pizza popups', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Anthony Pick Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          status: 'golden',
+          rating: 9.2,
+        },
+        jest.fn()
+      )
+    })
+
+    const dialog = screen.getByRole('dialog', { name: /anthony pick pizza details/i })
+    expect(dialog).toHaveAttribute('data-favorited', 'true')
+    expect(dialog).toHaveClass('popup-card--favorited', 'golden-glow')
+    expect(screen.getByText("Anthony's Pick")).toBeInTheDocument()
+  })
+
   test('explains historical locations and links to a replacement when available', () => {
+    const onDetailsNavigate = jest.fn()
     // renderExpanded owns a detached React root outside Testing Library's render helper.
     // eslint-disable-next-line testing-library/no-unnecessary-act
     act(() => {
@@ -151,15 +257,45 @@ describe('renderExpanded', () => {
           type: 'pizza',
           lifecycle_status: 'replaced',
           lifecycle_replaced_by_id: 456,
+          lifecycle_replaced_by_name: 'Homeslice Pizzeria',
+        },
+        jest.fn(),
+        onDetailsNavigate
+      )
+    })
+
+    expect(screen.getByText('This business is no longer the current tenant at this address.')).toBeInTheDocument()
+    expect(screen.getByText('Current place: Homeslice Pizzeria.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view current place/i })).toHaveAttribute(
+      'href',
+      '/places/456'
+    )
+    fireEvent.click(screen.getByRole('link', { name: /view current place/i }))
+    expect(onDetailsNavigate).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the replacement link for legacy camelCase lifecycle data', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Old Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          lifecycleStatus: 'replaced',
+          lifecycleReplacedById: 789,
         },
         jest.fn()
       )
     })
 
-    expect(screen.getByText('Replaced by a newer business.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /view current place/i })).toHaveAttribute(
       'href',
-      '/places/456'
+      '/places/789'
     )
   })
 
@@ -404,5 +540,16 @@ describe('renderExpanded', () => {
     fireEvent.click(closeButton)
 
     await waitFor(() => expect(opener).toHaveFocus())
+  })
+})
+
+describe('public popup labels', () => {
+  test('uses the primary pizza style taxonomy', () => {
+    expect(displayPopupStyle({ type: 'pizza', style: 'Chicago, Sicilian, New York' } as any)).toBe('Sicilian')
+    expect(displayPopupStyle({ type: 'pizza', style: 'Unknown' } as any)).toBeNull()
+  })
+
+  test('preserves raw styles for non-pizza entities', () => {
+    expect(displayPopupStyle({ type: 'taco', style: 'Regional' } as any)).toBe('Regional')
   })
 })

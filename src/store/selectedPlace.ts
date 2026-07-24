@@ -13,6 +13,8 @@ export type SelectedPlace = {
   price_range?: string | null
   status?: string | null
   rating?: number | null
+  lifecycle_status?: string | null
+  lifecycle_replaced_by_id?: string | number | null
   lat?: number | null
   lng?: number | null
 }

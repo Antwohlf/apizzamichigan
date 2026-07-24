@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
+import { readSupabase } from '../lib/supabaseRead'
 
 function StatRow({ label, value, loading }) {
   return (
@@ -12,17 +13,29 @@ function StatRow({ label, value, loading }) {
   )
 }
 
-async function fetchStats(table) {
-  const [{ count: unvisited, error: unvisitedError }, { data: ratings, error: ratingsError }] = await Promise.all([
-    supabase
+async function fetchStats(table, states = []) {
+  const stateScope = Array.isArray(states) && states.length ? states : null
+  const buildUnvisitedQuery = () => {
+    let query = supabase
       .from(table)
       .select('id', { count: 'exact', head: true })
-      .ilike('status', 'unvisited'),
-    supabase
+      .ilike('status', 'unvisited')
+    if (stateScope) query = query.in('state', stateScope)
+    return query
+  }
+  const buildRatingsQuery = () => {
+    let query = supabase
       .from(table)
       .select('rating')
       .or('status.ilike.visited*,status.ilike.golden*')
-      .not('rating', 'is', null),
+      .not('rating', 'is', null)
+    if (stateScope) query = query.in('state', stateScope)
+    return query
+  }
+
+  const [{ count: unvisited, error: unvisitedError }, { data: ratings, error: ratingsError }] = await Promise.all([
+    readSupabase(buildUnvisitedQuery),
+    readSupabase(buildRatingsQuery),
   ])
 
   if (unvisitedError) throw unvisitedError
@@ -42,7 +55,7 @@ async function fetchStats(table) {
   }
 }
 
-export function StatsPanel({ table = 'pizza_places' }) {
+export function StatsPanel({ table = 'pizza_places', states = [] }) {
   const [stats, setStats] = useState({ tried: 0, unvisited: 0, average: '—' })
   const [loading, setLoading] = useState(true)
 
@@ -52,7 +65,7 @@ export function StatsPanel({ table = 'pizza_places' }) {
     async function loadStats() {
       setLoading(true)
       try {
-        const nextStats = await fetchStats(table)
+        const nextStats = await fetchStats(table, states)
         if (!isMounted) return
         setStats(nextStats)
       } catch (err) {
@@ -69,7 +82,7 @@ export function StatsPanel({ table = 'pizza_places' }) {
     return () => {
       isMounted = false
     }
-  }, [table])
+  }, [table, states])
 
   return (
     <div style={{ marginBottom: '1rem' }}>

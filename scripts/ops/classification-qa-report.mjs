@@ -20,6 +20,8 @@ function parseArgs(argv) {
   const out = {
     hours: 24,
     ids: [],
+    states: [],
+    missing: false,
     limit: 500,
     sample: 25,
     json: false
@@ -29,6 +31,8 @@ function parseArgs(argv) {
     const arg = argv[i]
     if (arg === '--hours') out.hours = parseInt(argv[++i], 10)
     else if (arg === '--ids') out.ids = parseIds(argv[++i])
+    else if (arg === '--states') out.states = parseStates(argv[++i])
+    else if (arg === '--missing') out.missing = true
     else if (arg === '--limit') out.limit = parseInt(argv[++i], 10)
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10)
     else if (arg === '--json') out.json = true
@@ -38,6 +42,8 @@ function parseArgs(argv) {
 Options:
   --hours <n>   Review rows enriched in the last n hours (default 24)
   --ids <a,b,c> Review exact local pizza_places ids instead of recent OSM rows
+  --states <a,b> Restrict the report to state codes such as MI,NY
+  --missing      Inspect rows with no style, price_range, or style_confidence
   --limit <n>   Maximum recent rows to inspect (default 500)
   --sample <n>  Maximum rows per detail table (default 25)
   --json        Emit JSON instead of Markdown
@@ -62,6 +68,17 @@ function parseIds(value) {
     .filter(id => Number.isInteger(id) && id > 0)
   if (!ids.length) throw new Error('Invalid --ids')
   return [...new Set(ids)]
+}
+
+function parseStates(value) {
+  const states = String(value || '')
+    .split(',')
+    .map(item => item.trim().toUpperCase())
+    .filter(Boolean)
+  if (!states.length || states.some(state => !/^[A-Z]{2}$/.test(state))) {
+    throw new Error('Invalid --states; use comma-separated two-letter state codes')
+  }
+  return [...new Set(states)]
 }
 
 function run(cmd, cmdArgs = [], options = {}) {
@@ -150,15 +167,18 @@ async function loadRows(options) {
 
   try {
     await client.connect()
+    const scopeWhere = options.states.length ? 'WHERE state = ANY($2::text[])' : ''
     const summary = await client.query(`
       SELECT
         COUNT(*)::int as total,
         COUNT(*) FILTER (WHERE last_enriched_at IS NOT NULL)::int as enriched,
         COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL OR style_confidence IS NOT NULL)::int as classified_or_priced,
+        COUNT(*) FILTER (WHERE style IS NULL AND price_range IS NULL AND style_confidence IS NULL)::int as missing_all_classification,
         COUNT(*) FILTER (WHERE last_enriched_at >= now() - ($1::text || ' hours')::interval)::int as enriched_in_window,
         MAX(last_enriched_at) as last_enriched_at
       FROM pizza_places
-    `, [String(options.hours)])
+      ${scopeWhere}
+    `, options.states.length ? [String(options.hours), options.states] : [String(options.hours)])
 
     const recent = options.ids.length
       ? await client.query(`
@@ -178,8 +198,9 @@ async function loadRows(options) {
         last_enriched_at
       FROM pizza_places
       WHERE id = ANY($1::bigint[])
+        ${options.states.length ? 'AND state = ANY($2::text[])' : ''}
       ORDER BY id
-    `, [options.ids])
+    `, options.states.length ? [options.ids, options.states] : [options.ids])
       : await client.query(`
       SELECT
         id,
@@ -196,11 +217,16 @@ async function loadRows(options) {
         enrichment_status,
         last_enriched_at
       FROM pizza_places
-      WHERE last_enriched_at >= now() - ($1::text || ' hours')::interval
+      WHERE ${options.missing
+        ? 'style IS NULL AND price_range IS NULL AND style_confidence IS NULL'
+        : "last_enriched_at >= now() - ($1::text || ' hours')::interval"}
         AND google_place_id LIKE 'osm:%'
+        ${options.states.length ? `AND state = ANY($${options.missing ? 1 : 2}::text[])` : ''}
       ORDER BY last_enriched_at DESC
-      LIMIT $2
-    `, [String(options.hours), options.limit])
+      LIMIT $${options.missing ? (options.states.length ? 2 : 1) : (options.states.length ? 3 : 2)}
+    `, options.missing
+      ? (options.states.length ? [options.states, options.limit] : [options.limit])
+      : (options.states.length ? [String(options.hours), options.states, options.limit] : [String(options.hours), options.limit]))
 
     return { ok: true, summary: summary.rows[0], rows: recent.rows }
   } catch (error) {
@@ -353,7 +379,7 @@ async function main() {
   console.log(`Repo: \`${root}\``)
   console.log(options.ids.length
     ? `Scope: ids=${options.ids.join(',')}, inspected ${analysis.totals.inspected} exact rows`
-    : `Window: last ${options.hours}h, inspected ${analysis.totals.inspected} most recent OSM rows (limit ${options.limit})`
+    : `${options.missing ? 'Scope: missing classification output' : `Window: last ${options.hours}h`}${options.states.length ? `, states=${options.states.join(',')}` : ''}; inspected ${analysis.totals.inspected} OSM rows (limit ${options.limit})`
   )
   console.log('')
 
@@ -362,6 +388,7 @@ async function main() {
   console.log(`- local pizza rows: ${data.summary.total}`)
   console.log(`- enriched rows: ${data.summary.enriched}`)
   console.log(`- classified_or_priced rows: ${data.summary.classified_or_priced}`)
+  console.log(`- missing all classification: ${data.summary.missing_all_classification}`)
   console.log(`- enriched in window: ${data.summary.enriched_in_window}`)
   console.log(`- inspected rows: ${analysis.totals.inspected}`)
   console.log(`- with style: ${analysis.totals.withStyle} (${pct(analysis.totals.withStyle, analysis.totals.inspected)})`)

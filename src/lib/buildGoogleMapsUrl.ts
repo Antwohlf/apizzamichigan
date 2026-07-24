@@ -55,12 +55,30 @@ function coordinateQuery(lat: number | string | null | undefined, lng: number | 
   return `${numericLat},${numericLng}`
 }
 
+function normalizeLocationPart(value: string | null | undefined): string {
+  return String(value || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function addressContainsPart(address: string | null | undefined, part: string | null | undefined): boolean {
+  const normalizedAddress = normalizeLocationPart(address)
+  const normalizedPart = normalizeLocationPart(part)
+  if (!normalizedAddress || !normalizedPart) return false
+  return ` ${normalizedAddress} `.includes(` ${normalizedPart} `)
+}
+
+function locationParts(place: PlaceLike): string[] {
+  const address = String(place.address || '').trim()
+  const parts = [place.address, place.city, place.state].map(value => String(value || '').trim()).filter(Boolean)
+  if (!address) return parts
+  return parts.filter((part, index) => index === 0 || !addressContainsPart(address, part))
+}
+
 export function buildGoogleMapsUrl(place: PlaceLike | null | undefined): string {
   if (!place) {
     return GOOGLE_MAPS_BASE_URL
   }
 
-  const { google_place_id, google_maps_url, name, address, city, state, lat, lng } = place
+  const { google_place_id, google_maps_url, name, lat, lng } = place
 
   const explicitMapsUrl = safeGoogleMapsUrl(google_maps_url)
   if (explicitMapsUrl) {
@@ -69,7 +87,7 @@ export function buildGoogleMapsUrl(place: PlaceLike | null | undefined): string 
 
   if (isGooglePlaceId(google_place_id)) {
     const trimmedPlaceId = google_place_id!.trim()
-    const query = [name, address, city, state].filter(Boolean).join(' ').trim()
+    const query = [name, ...locationParts(place)].filter(Boolean).join(' ').trim()
     const queryParam = query || coordinateQuery(lat, lng) || trimmedPlaceId
     return `${GOOGLE_MAPS_BASE_URL}/search/?api=1&query=${encodeURIComponent(queryParam)}&query_place_id=${encodeURIComponent(trimmedPlaceId)}`
   }
@@ -78,12 +96,14 @@ export function buildGoogleMapsUrl(place: PlaceLike | null | undefined): string 
   if (name) {
     queryParts.push(name)
   }
-  if (address) {
-    queryParts.push(address)
-  }
-  const cityState = [city, state].filter(Boolean).join(', ')
-  if (cityState) {
-    queryParts.push(cityState)
+  const places = locationParts(place)
+  if (places.length) {
+    if (place.address) {
+      queryParts.push(places[0])
+      if (places.length > 1) queryParts.push(places.slice(1).join(', '))
+    } else {
+      queryParts.push(places.join(', '))
+    }
   }
 
   const query = queryParts.join(' ').trim() || coordinateQuery(lat, lng)

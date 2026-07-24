@@ -14,6 +14,12 @@ const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
 const pipelinePath = resolve(process.cwd(), 'config/source-pipeline.json');
 const pipeline = existsSync(pipelinePath) ? JSON.parse(readFileSync(pipelinePath, 'utf8')) : null;
 const json = process.argv.includes('--json');
+const includeStaleRows = process.argv.includes('--include-stale-rows');
+const staleLimitArgIndex = process.argv.indexOf('--limit');
+const staleRowLimit = staleLimitArgIndex >= 0 ? Number(process.argv[staleLimitArgIndex + 1]) : 100;
+if (!Number.isInteger(staleRowLimit) || staleRowLimit < 1 || staleRowLimit > 1000) {
+  throw new Error('Invalid --limit. Use an integer from 1 to 1000.');
+}
 const stateArgIndex = process.argv.indexOf('--states');
 const scopedStates = (stateArgIndex >= 0 ? process.argv[stateArgIndex + 1] : process.env.SOURCE_FRESHNESS_STATES || '')
   .split(',')
@@ -21,7 +27,42 @@ const scopedStates = (stateArgIndex >= 0 ? process.argv[stateArgIndex + 1] : pro
   .filter(Boolean);
 const states = scopedStates.length
   ? scopedStates
-  : (pipeline?.entity === policy.entity ? (pipeline.regions || []).map(region => String(region.key).toUpperCase()) : []);
+  : (pipeline?.entity === policy.entity
+    ? (pipeline.operational_regions || pipeline.regions || []).map(region => (
+      typeof region === 'string' ? region.toUpperCase() : String(region.key).toUpperCase()
+    ))
+    : []);
+
+function normalizeOsmSourceId(value) {
+  return String(value || '').trim().replace(/^osm:/i, '');
+}
+
+function latestOsmInputs() {
+  if (policy.entity !== 'pizza' && policy.entity !== 'taco') return { files: [], ids: new Set() };
+  const regionKeys = states.length ? states : (pipeline?.operational_regions || pipeline?.regions || [])
+    .map(region => typeof region === 'string' ? region : region.key)
+    .filter(Boolean)
+    .map(region => String(region).toUpperCase());
+  const files = regionKeys
+    .map(region => resolve(process.cwd(), 'reports', 'osm', `${region.toLowerCase()}-${policy.entity}.json`))
+    .filter(existsSync);
+  const ids = new Set();
+  for (const file of files) {
+    try {
+      const payload = JSON.parse(readFileSync(file, 'utf8'));
+      const rows = Array.isArray(payload) ? payload : payload?.rows;
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        const id = normalizeOsmSourceId(row?.id || row?.source_id);
+        if (id) ids.add(id);
+      }
+    } catch {
+      // A malformed or partially written input must not make the read-only
+      // freshness report fail; it simply cannot prove observation.
+    }
+  }
+  return { files, ids };
+}
 
 function loadEnv(path) {
   if (!existsSync(path)) return {};
@@ -56,6 +97,14 @@ try {
     .map(([source, config]) => `WHEN '${source.replaceAll("'", "''")}' THEN ${Number(config.freshness_days)}`)
     .join(' ');
   const result = await client.query(`
+    WITH latest_source AS (
+      SELECT DISTINCT ON (ps.entity_type, ps.place_id, ps.source) ps.*
+      FROM place_sources ps
+      JOIN ${policy.entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = ps.place_id
+      WHERE ps.entity_type = $1
+        ${states.length ? 'AND UPPER(COALESCE(p.state, \'\')) = ANY($2::text[])' : ''}
+      ORDER BY ps.entity_type, ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST, ps.id DESC
+    )
     SELECT source,
            COUNT(*)::int AS evidence_rows,
            COUNT(*) FILTER (WHERE retrieved_at >= NOW() - make_interval(days => CASE source ${freshnessCase} ELSE 365 END))::int AS fresh_rows,
@@ -67,15 +116,69 @@ try {
            COUNT(*) FILTER (WHERE match_confidence < 0.9 OR match_confidence IS NULL)::int AS low_or_missing_confidence_rows,
            ROUND(AVG(match_confidence)::numeric, 4) AS avg_match_confidence,
            COUNT(*) FILTER (WHERE match_confidence IS NULL)::int AS missing_confidence
-    FROM place_sources ps
-    JOIN ${policy.entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = ps.place_id
-    WHERE ps.entity_type = $1
-      ${states.length ? 'AND UPPER(COALESCE(p.state, \'\')) = ANY($2::text[])' : ''}
+    FROM latest_source ps
     GROUP BY source
     ORDER BY source
   `, states.length ? [policy.entity, states] : [policy.entity]);
+  const latestInputs = latestOsmInputs();
+  let staleOsmRows = [];
+  if (latestInputs.ids.size && latestInputs.files.length) {
+    const staleResult = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.entity_type, ps.place_id, ps.source)
+               ps.entity_type, ps.place_id, ps.source, ps.source_id, ps.retrieved_at, ps.match_confidence
+        FROM place_sources ps
+        JOIN ${policy.entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = ps.place_id
+        WHERE ps.entity_type = $1
+          ${states.length ? 'AND UPPER(COALESCE(p.state, \'\')) = ANY($2::text[])' : ''}
+        ORDER BY ps.entity_type, ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST, ps.id DESC
+      )
+      SELECT ps.place_id,
+             ps.source_id,
+             ps.retrieved_at,
+             ps.match_confidence,
+             p.name,
+             p.state,
+             p.status,
+             p.lifecycle_status,
+             p.rating
+      FROM latest_source ps
+      JOIN ${policy.entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = ps.place_id
+      WHERE ps.entity_type = $1
+        AND ps.source = 'osm'
+        AND ps.retrieved_at < NOW() - make_interval(days => ${Number(policy.sources.osm?.freshness_days || 365)})
+        ${states.length ? 'AND UPPER(COALESCE(p.state, \'\')) = ANY($2::text[])' : ''}
+    `, states.length ? [policy.entity, states] : [policy.entity]);
+    staleOsmRows = staleResult.rows;
+  }
+  const staleOsmReviewRows = includeStaleRows
+    ? staleOsmRows
+      .map(row => ({
+        place_id: row.place_id,
+        source_id: row.source_id,
+        name: row.name,
+        state: row.state,
+        status: row.status,
+        lifecycle_status: row.lifecycle_status,
+        rating: row.rating,
+        retrieved_at: row.retrieved_at,
+        match_confidence: row.match_confidence,
+        observation_status: latestInputs.ids.has(normalizeOsmSourceId(row.source_id))
+          ? 'observed_in_latest_input'
+          : 'unobserved_in_latest_input',
+      }))
+      .sort((left, right) => String(left.retrieved_at || '').localeCompare(String(right.retrieved_at || '')))
+      .slice(0, staleRowLimit)
+    : null;
   const sources = Object.entries(policy.sources).map(([source, config]) => {
     const row = result.rows.find(item => item.source === source);
+    const staleSourceIds = source === 'osm'
+      ? staleOsmRows.map(item => normalizeOsmSourceId(item.source_id))
+      : [];
+    const staleObserved = staleSourceIds.filter(sourceId => latestInputs.ids.has(sourceId)).length;
+    const staleUnobserved = latestInputs.files.length
+      ? Math.max(0, staleSourceIds.length - staleObserved)
+      : null;
     return {
       source,
       priority: config.priority,
@@ -93,9 +196,28 @@ try {
       low_or_missing_confidence_rows: row?.low_or_missing_confidence_rows || 0,
       avg_match_confidence: row?.avg_match_confidence ?? null,
       missing_confidence: row?.missing_confidence || 0,
+      ...(source === 'osm' && latestInputs.files.length
+        ? {
+          latest_input_files: latestInputs.files.map(file => file.replace(`${process.cwd()}/`, '')),
+          latest_input_rows: latestInputs.ids.size,
+          stale_rows_observed_in_latest_input: staleObserved,
+          stale_rows_unobserved_in_latest_input: staleUnobserved,
+        }
+        : {}),
     };
   });
-  const report = { policy_version: policy.version, entity: policy.entity, checked_at: new Date().toISOString(), scope: states.length ? { states } : { states: 'all' }, sources };
+  const report = {
+    policy_version: policy.version,
+    entity: policy.entity,
+    checked_at: new Date().toISOString(),
+    scope: states.length ? { states } : { states: 'all' },
+    sources,
+    ...(includeStaleRows ? {
+      stale_osm_rows: staleOsmReviewRows,
+      stale_osm_rows_limit: staleRowLimit,
+      stale_osm_rows_read_only: true,
+    } : {}),
+  };
   if (json) console.log(JSON.stringify(report, null, 2));
   else {
     console.log(`# Source Freshness Report (${policy.entity})`);
@@ -104,6 +226,13 @@ try {
     console.log(`Scope: ${states.length ? states.join(', ') : 'all states'}`);
     console.log('');
     console.log(table(sources));
+    if (includeStaleRows) {
+      console.log('');
+      console.log(`## OSM stale-row review (read-only, showing up to ${staleRowLimit})`);
+      console.log(table(staleOsmReviewRows || []));
+      console.log('');
+      console.log('Absence from the latest OSM input is not evidence that a place is closed or replaced. Review these rows before changing lifecycle data.');
+    }
   }
 } finally {
   await client.end().catch(() => {});
