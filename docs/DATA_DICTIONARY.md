@@ -113,14 +113,21 @@ Business lifecycle is separate and optional:
 The `state` column is a legacy region field. For US rows it normally uses
 standard 2-letter state codes, but the table also contains international rows
 where the value is a source-provided region, province, department, or other
-administrative abbreviation. It must not be interpreted as a US state unless
-`country = 'US'`.
+administrative abbreviation. It must not be interpreted as a US state without
+an explicit product scope or source-country rule.
+
+There is not currently a canonical `country` column in the production place
+tables. The public app may derive a display country from known region
+groupings, but that derived value is not stored place data. A future country
+field should be introduced through a coordinated schema, sync, source, and
+public-filter migration; source adapters must not assume it exists today.
 
 Examples of valid non-US values currently present include `TIR` (Italy), `ALY`
 (Turkey), and `KAH` (Finland). New source adapters should preserve the source
-region in `state`, populate `country` when available, and avoid inventing a
-US-style abbreviation. Geographic filters should use `(country, state)` as
-their compound key.
+region in `state`, avoid inventing a US-style abbreviation, and preserve the
+source region until a country-aware schema is formally added. Geographic
+filters should use an explicit scoped region key rather than treating every
+`state` value as a US state code.
 
 Common US state codes:
 

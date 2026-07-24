@@ -46,7 +46,7 @@
 }
 
 .map-search-icon {
-  font-size: 0.85rem;
+  flex: 0 0 auto;
   margin-right: 8px;
   opacity: 0.5;
 }
@@ -74,6 +74,9 @@
   cursor: pointer;
   padding: 4px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: color 0.2s ease;
 }
 
@@ -117,7 +120,7 @@
 }
 
 .map-near-me-btn .near-me-icon {
-  font-size: 0.9rem;
+  flex: 0 0 auto;
 }
 
 .map-radius-select {
@@ -135,6 +138,31 @@
 .map-radius-select:focus {
   border-color: var(--app-accent);
   outline: none;
+}
+
+.map-scope-btn {
+  padding: 10px 14px;
+  background: var(--app-card);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+}
+
+.map-scope-btn:hover,
+.map-scope-btn:focus-visible {
+  border-color: var(--app-accent);
+  outline: none;
+}
+
+.map-scope-btn.active {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: #fff;
 }
 
 /* Location Error */
@@ -376,6 +404,13 @@
 
 /* Responsive */
 @media (max-width: 640px) {
+  /* Give an expanded place popup the full map surface on small screens.
+     Search state is preserved and the controls return when the popup closes. */
+  .map-popup-expanded .map-controls {
+    visibility: hidden;
+    opacity: 0;
+  }
+
   .map-controls {
     left: 50px;
     right: max(8px, env(safe-area-inset-right));
@@ -383,17 +418,42 @@
   }
 
   .map-controls-row {
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: stretch;
   }
 
   .map-search-bar {
+    grid-column: 1 / -1;
     min-width: 0;
+    min-height: 44px;
     width: 100%;
     max-width: 100%;
   }
 
+  .map-search-bar input {
+    min-height: 44px;
+  }
+
+  .map-search-clear,
+  .map-near-me-btn,
+  .map-scope-btn {
+    min-height: 44px;
+  }
+
+  .map-results-close {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+
   .map-near-me-group {
+    min-width: 0;
+    justify-content: stretch;
+  }
+
+  .map-near-me-btn,
+  .map-scope-btn {
+    width: 100%;
     justify-content: center;
   }
 
@@ -404,6 +464,10 @@
 
   .map-results-list {
     max-height: min(360px, 42svh);
+  }
+
+  .map-result-item {
+    min-height: 56px;
   }
 
   .map-results-summary-row {

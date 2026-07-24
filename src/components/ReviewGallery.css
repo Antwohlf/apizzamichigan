@@ -54,7 +54,7 @@
   isolation: isolate;
   display: grid;
   place-items: center;
-  padding: clamp(8px, 1.6vw, 18px);
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   background: rgba(2, 6, 23, 0.94);
   backdrop-filter: blur(6px);
 }
@@ -263,12 +263,16 @@
 
 @media (max-width: 640px) {
   .review-lightbox {
-    padding: 8px;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   }
 
   .review-lightbox__dialog {
     width: 100%;
-    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .review-lightbox__image {
+    max-height: min(860px, calc(100dvh - 110px));
   }
 
   .review-lightbox__caption {

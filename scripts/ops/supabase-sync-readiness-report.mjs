@@ -40,6 +40,7 @@ function parseArgs(argv) {
     checkpointPath: null,
     reconcile: false,
     json: false,
+    lifecycleOnly: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -53,6 +54,7 @@ function parseArgs(argv) {
     else if (arg === '--checkpoint') out.checkpointPath = argv[++i];
     else if (arg === '--reconcile') out.reconcile = true;
     else if (arg === '--json') out.json = true;
+    else if (arg === '--lifecycle-only') out.lifecycleOnly = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-readiness-report.mjs [options]
 
@@ -64,6 +66,7 @@ Options:
   --only-classified           Only inspect rows with style/price classification output
   --checkpoint <path>         Resume from a last_enriched_at + id checkpoint
   --reconcile                 Use an ID-based checkpoint and scan all eligible rows
+  --lifecycle-only            Inspect only lifecycle fields for explicit IDs
   --sample <n>                Rows per detail table (default 10)
   --json                      Emit JSON instead of Markdown
 `);
@@ -84,6 +87,13 @@ Options:
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
     throw new Error('Invalid --changed-since-hours');
   }
+  if (out.lifecycleOnly) {
+    if (!out.ids.length) throw new Error('--lifecycle-only requires explicit --ids');
+    if (out.checkpointPath || out.reconcile || out.changedSinceHours !== null || out.onlyClassified) {
+      throw new Error('--lifecycle-only only supports explicit IDs and inspection options');
+    }
+    if (!LIFECYCLE_SYNC_ENABLED) throw new Error('--lifecycle-only requires ENABLE_LIFECYCLE_SYNC=1');
+  }
   return out;
 }
 
@@ -98,14 +108,14 @@ function parseIds(value) {
 
 function loadEnvLocal() {
   const path = resolve(process.cwd(), '.env.local');
-  if (!existsSync(path)) return {};
-
-  const out = {};
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    if (!line || line.startsWith('#')) continue;
-    const idx = line.indexOf('=');
-    if (idx === -1) continue;
-    out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  const out = { ...process.env };
+  if (existsSync(path)) {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      const idx = line.indexOf('=');
+      if (idx === -1) continue;
+      out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
   }
   return out;
 }
@@ -237,7 +247,7 @@ async function main() {
         continue;
       }
 
-      for (const skip of protectedFieldSkips(local, current)) {
+      for (const skip of options.lifecycleOnly ? [] : protectedFieldSkips(local, current)) {
         protectedSkips.push({
           id: local.id,
           name: local.name,
@@ -247,7 +257,7 @@ async function main() {
         });
       }
 
-      const payload = buildSupabasePayload(local, current, { nowIso });
+      const payload = buildSupabasePayload(local, current, { nowIso, lifecycleOnly: options.lifecycleOnly });
       if (payload) updates.push({ local, current, payload });
     }
 
@@ -257,9 +267,11 @@ async function main() {
     const qaDefaults = changedFields.filter(col => QA_DEFAULT_COLS.includes(col));
     const protectedConflicts = protectedSkips.filter(skip => skip.differs);
 
-    const state = missingSupabaseRows.length
-      ? 'WARN'
-      : (LIFECYCLE_SYNC_ENABLED && lifecycleRemoteSchema.state !== 'ready' ? 'BLOCKED' : 'OK');
+    const state = !LIFECYCLE_SYNC_ENABLED && options.lifecycleOnly
+      ? 'BLOCKED'
+      : missingSupabaseRows.length
+        ? 'WARN'
+        : (LIFECYCLE_SYNC_ENABLED && lifecycleRemoteSchema.state !== 'ready' ? 'BLOCKED' : 'OK');
     const payloadSamples = sample(updates, options).map(item => ({
       id: item.local.id,
       name: item.local.name,
@@ -323,7 +335,7 @@ async function main() {
     console.log('');
     console.log(`Generated: ${result.generatedAt}`);
     console.log(`Repo: \`${root}\``);
-    console.log(`Batch: ids=${options.ids.length ? options.ids.join(',') : 'none'}, start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, reconcile=${options.reconcile}, checkpoint=${options.checkpointPath || 'none'}`);
+    console.log(`Batch: ids=${options.ids.length ? options.ids.join(',') : 'none'}, start_after=${options.startAfter}, batch=${options.batch}, changed_since_hours=${options.changedSinceHours ?? 'none'}, only_classified=${options.onlyClassified}, lifecycle_only=${options.lifecycleOnly}, reconcile=${options.reconcile}, checkpoint=${options.checkpointPath || 'none'}`);
     if (checkpointAfter) {
       console.log(options.reconcile
         ? `Reconciliation checkpoint after: id=${checkpointAfter.lastId}`

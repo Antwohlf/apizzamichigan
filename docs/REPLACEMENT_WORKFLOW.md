@@ -8,9 +8,13 @@ location. The system treats that differently from a normal source match.
 ### Unreviewed place
 
 When the source is the exact same OpenStreetMap record, the business name has
-changed, and the map record has no visit, rating, or note, **Update existing
-place** is safe. It keeps the map record ID, refreshes the identity and source
-details, clears stale enrichment, and records before/after evidence.
+changed, and the map record has no visit, rating, or note, the row is eligible
+for the guarded **Update existing place** action. It is not an automatic
+promotion: an exact OSM identity proves continuity of the mapped location,
+not that the business itself has not been replaced. The operator must still
+decide whether this is a spelling/name correction or a successor business.
+The action keeps the map record ID, refreshes the identity and source details,
+clears stale enrichment, and records before/after evidence.
 
 ### Personal or reviewed place
 
@@ -58,7 +62,9 @@ LOCAL_DB_NAME=pizza_enrichment LOCAL_DB_USER=ant \
 node scripts/ops/replacement-candidate-report.mjs --entity pizza
 ```
 
-The audit command above never changes a place, queue row, or public data.
+The audit command above never changes a place, queue row, or public data. Its
+`unreviewed_identity_change_requires_review` label means the old row has no
+personal history, not that the name change is safe to apply automatically.
 
 ## Explicit Lifecycle Action
 

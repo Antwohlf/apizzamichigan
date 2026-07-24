@@ -40,11 +40,16 @@ function readJson(path) {
 }
 
 const pipeline = readJson(resolve(process.cwd(), 'config/source-pipeline.json'))
+const sourcePolicy = readJson(resolve(process.cwd(), 'config/source-policy.json'))
 const entityProfiles = readJson(resolve(process.cwd(), 'config/entity-profiles.json'))
 const configuredStates = pipeline?.entity === entityArg
   ? (pipeline.regions || []).map(region => String(region.key).toUpperCase())
   : (entityProfiles?.profiles?.[entityArg]?.regions || []).map(region => String(region).toUpperCase())
 const states = allStates ? [] : (explicitStates.length ? explicitStates : configuredStates)
+const sourceFreshnessCase = Object.entries(sourcePolicy?.sources || {})
+  .map(([source, config]) => `WHEN '${source.replaceAll("'", "''")}' THEN ${Number(config.freshness_days) || 365}`)
+  .join(' ')
+  || 'WHEN \'__missing_policy__\' THEN 365'
 
 function readEnvFile(path) {
   if (!existsSync(path)) return {}
@@ -107,7 +112,7 @@ try {
              CASE WHEN p.status <> 'unvisited' OR p.rating IS NOT NULL
                     OR NULLIF(btrim(p.notes), '') IS NOT NULL
                   THEN 'history_requires_review'
-                  ELSE 'safe_unreviewed_update'
+                  ELSE 'unreviewed_identity_change_requires_review'
              END AS handling
       FROM source_review_queue srq
       JOIN ${table} p ON p.id = srq.nearest_place_id
@@ -151,25 +156,10 @@ try {
       )
       SELECT p.id AS place_id, p.name, p.state, p.status,
              latest_source.source, latest_source.retrieved_at,
-             CASE latest_source.source
-               WHEN 'osm' THEN 30
-               WHEN 'official_website' THEN 30
-               WHEN 'all_the_places' THEN 90
-               WHEN 'fsq_os_places' THEN 180
-               WHEN 'overture_places' THEN 365
-               WHEN 'wikidata' THEN 365
-               ELSE 180
-             END AS freshness_days
+             CASE latest_source.source ${sourceFreshnessCase} ELSE 180 END AS freshness_days
       FROM latest_source
       JOIN ${table} p ON p.id = latest_source.place_id
-      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
-          WHEN 'osm' THEN 30
-          WHEN 'official_website' THEN 30
-          WHEN 'all_the_places' THEN 90
-          WHEN 'fsq_os_places' THEN 180
-          WHEN 'overture_places' THEN 365
-          WHEN 'wikidata' THEN 365
-          ELSE 180 END)
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source ${sourceFreshnessCase} ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($3::text[])" : ''}
@@ -189,14 +179,7 @@ try {
       SELECT COUNT(*)::int AS total
       FROM latest_source
       JOIN ${table} p ON p.id = latest_source.place_id
-      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
-          WHEN 'osm' THEN 30
-          WHEN 'official_website' THEN 30
-          WHEN 'all_the_places' THEN 90
-          WHEN 'fsq_os_places' THEN 180
-          WHEN 'overture_places' THEN 365
-          WHEN 'wikidata' THEN 365
-          ELSE 180 END)
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source ${sourceFreshnessCase} ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
@@ -214,14 +197,7 @@ try {
       SELECT COUNT(DISTINCT p.id)::int AS total
       FROM latest_source
       JOIN ${table} p ON p.id = latest_source.place_id
-      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
-          WHEN 'osm' THEN 30
-          WHEN 'official_website' THEN 30
-          WHEN 'all_the_places' THEN 90
-          WHEN 'fsq_os_places' THEN 180
-          WHEN 'overture_places' THEN 365
-          WHEN 'wikidata' THEN 365
-          ELSE 180 END)
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source ${sourceFreshnessCase} ELSE 180 END)
         AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
         AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}

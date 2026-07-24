@@ -349,7 +349,7 @@ export default function ReviewGallery({ photos = [], placeName }) {
 
   return (
     <>
-      <div className="review-gallery">
+      <div className="review-gallery" role="region" aria-label={placeName ? `Review photos for ${placeName}` : 'Review photos'}>
         {visibleInlinePhotos.map((photo, index) => {
           const isLastVisible = index === visibleInlinePhotos.length - 1
           const hiddenCount = isLastVisible ? hiddenInlineCount : 0

@@ -51,6 +51,7 @@ function parseArgs(argv) {
     reconcile: false,
     concurrency: parseInt(process.env.APIZZA_SYNC_CONCURRENCY || '1', 10),
     bulkRpc: false,
+    lifecycleOnly: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -67,6 +68,7 @@ function parseArgs(argv) {
     else if (a === '--reconcile') out.reconcile = true;
     else if (a === '--concurrency') out.concurrency = parseInt(argv[++i], 10);
     else if (a === '--bulk-rpc') out.bulkRpc = true;
+    else if (a === '--lifecycle-only') out.lifecycleOnly = true;
     else if (a === '--help') {
       console.log(`Usage: node scripts/sync-local-to-supabase.mjs [options]
 
@@ -84,6 +86,7 @@ Options:
   --reconcile                 Scan all eligible local rows after an ID checkpoint
   --concurrency <n>           Run independent Supabase writes concurrently (env APIZZA_SYNC_CONCURRENCY)
   --bulk-rpc                  Apply updates through the guarded database-side batch RPC
+  --lifecycle-only            Publish only lifecycle fields for explicit IDs
   --dry-run                   Print what would happen, do not write to Supabase
   --verbose                   Extra logging
 `);
@@ -101,6 +104,15 @@ Options:
   if (!Number.isInteger(out.concurrency) || out.concurrency <= 0) throw new Error('Invalid --concurrency');
   if (out.changedSinceHours !== null && (!Number.isFinite(out.changedSinceHours) || out.changedSinceHours <= 0)) {
     throw new Error('Invalid --changed-since-hours');
+  }
+  if (out.lifecycleOnly) {
+    if (!out.ids.length) throw new Error('--lifecycle-only requires explicit --ids');
+    if (out.checkpointPath || out.reconcile || out.changedSinceHours !== null || out.onlyClassified || out.insertMissingReviewedNew) {
+      throw new Error('--lifecycle-only only supports explicit IDs, batching, dry-run, and bulk RPC');
+    }
+    if (!/^(1|true|yes)$/i.test(String(process.env.ENABLE_LIFECYCLE_SYNC || '').trim())) {
+      throw new Error('--lifecycle-only requires ENABLE_LIFECYCLE_SYNC=1');
+    }
   }
   return out;
 }
@@ -314,7 +326,7 @@ async function main() {
           continue;
         }
 
-        const payload = buildSupabasePayload(local, current);
+        const payload = buildSupabasePayload(local, current, { lifecycleOnly: args.lifecycleOnly });
         if (payload) {
           updates.push(payload);
           wouldUpdate++;
@@ -327,6 +339,7 @@ async function main() {
           `start_after=${selector.startAfter}`,
           `changed_since_hours=${selector.changedSinceHours ?? 'none'}`,
           `only_classified=${selector.onlyClassified}`,
+          `lifecycle_only=${selector.lifecycleOnly}`,
           `checkpoint=${args.checkpointPath || 'none'}`,
           `checkpoint_after=${checkpointAfter ? `${checkpointAfter.lastEnrichedAt}/${checkpointAfter.id}` : 'none'}`,
         ].join(' ');

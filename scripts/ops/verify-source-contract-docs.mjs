@@ -25,6 +25,7 @@ const SOURCE_INPUTS_DOC = 'docs/SOURCE_INPUTS.md';
 const DATA_SOURCES_DOC = 'docs/DATA_SOURCES.md';
 const DATA_DICTIONARY_DOC = 'docs/DATA_DICTIONARY.md';
 const OSM_EXPORTER = 'scripts/ops/export-osm-source.mjs';
+const FRESHNESS_REPORT = 'scripts/ops/source-freshness-report.mjs';
 
 const CANONICAL_PIZZA_STYLES = PIZZA_STYLES;
 const CANONICAL_PRICE_RANGES = ['$', '$$', '$$$', '$$$$'];
@@ -87,6 +88,7 @@ function main() {
   const dataSources = read(DATA_SOURCES_DOC);
   const dictionary = read(DATA_DICTIONARY_DOC);
   const osmExporter = read(OSM_EXPORTER);
+  const freshnessReport = read(FRESHNESS_REPORT);
 
   assertIncludes(contract, '# Source Provenance Contract', CONTRACT_DOC);
   assertIncludes(contract, '## Current Table Count', CONTRACT_DOC);
@@ -105,6 +107,10 @@ function main() {
   assertIncludes(sourceInputs, 'Source adapters do not promote canonical fields.', SOURCE_INPUTS_DOC);
   assertIncludes(dataSources, 'Google Maps is an outbound navigation destination, not an ingestion source.', DATA_SOURCES_DOC);
   assertIncludes(dataSources, 'Do not backfill TacoBout yet.', DATA_SOURCES_DOC);
+  assert(
+    (freshnessReport.match(/DISTINCT ON \(ps\.entity_type, ps\.place_id, ps\.source\)/g) || []).length >= 2,
+    `${FRESHNESS_REPORT} must evaluate the latest row per place/source pair`,
+  );
 
   for (const style of CANONICAL_PIZZA_STYLES) {
     assertIncludes(dictionary, `| ${style} |`, DATA_DICTIONARY_DOC);

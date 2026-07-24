@@ -22,14 +22,9 @@ const SOURCE_POLICY = JSON.parse(readFileSync('config/source-policy.json', 'utf8
 const SERVER = readFileSync('server/index.js', 'utf8');
 const ADMIN_PANEL = readFileSync('src/admin/AdminSourceProvenancePanel.js', 'utf8');
 const ALLOWED_FIELDS = ['website_url', 'phone'];
-const EXPECTED_DEFAULT_SOURCES = [
-  'official_website',
-  'osm',
-  'fsq_os_places',
-  'all_the_places',
-  'overture_places',
-  'wikidata',
-];
+const EXPECTED_DEFAULT_SOURCES = Object.entries(SOURCE_POLICY.sources || {})
+  .sort(([, left], [, right]) => Number(right.priority) - Number(left.priority))
+  .map(([source]) => source);
 const IDENTITY_FIELDS = ['address', 'name', 'lat', 'lng', 'state', 'google_place_id', 'brand', 'operator'];
 const EVIDENCE_ONLY_FIELDS = ['menu_url', 'email', 'instagram_url', 'facebook_url', 'hours', 'delivery', 'takeaway'];
 const NON_SOURCE_FIELDS = ['style', 'price', 'price_range', 'style_confidence', 'rating', 'notes', 'status', 'photos'];

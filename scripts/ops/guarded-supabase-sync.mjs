@@ -24,6 +24,7 @@ function parseArgs(argv) {
     reconcile: false,
     concurrency: parseInt(process.env.APIZZA_SYNC_CONCURRENCY || '1', 10),
     bulkRpc: /^(1|true|yes)$/i.test(String(process.env.APIZZA_SYNC_BULK_RPC || '').trim()),
+    lifecycleOnly: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -36,6 +37,7 @@ function parseArgs(argv) {
     else if (arg === '--reconcile') out.reconcile = true;
     else if (arg === '--concurrency') out.concurrency = parseInt(argv[++i], 10);
     else if (arg === '--bulk-rpc') out.bulkRpc = true;
+    else if (arg === '--lifecycle-only') out.lifecycleOnly = true;
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--insert-missing-reviewed-new') out.insertMissingReviewedNew = true;
     else if (arg === '--apply') out.apply = true;
@@ -56,6 +58,7 @@ Options:
   --apply            Perform the bounded write after all gates pass
   --concurrency <n> Run independent Supabase writes concurrently
   --bulk-rpc        Apply updates through the installed low-I/O batch RPC
+  --lifecycle-only  Publish only lifecycle fields for explicit IDs; skips classifier QA
 `);
       process.exit(0);
     } else {
@@ -72,6 +75,15 @@ Options:
   if (!Number.isFinite(out.maxBatches) || out.maxBatches <= 0) throw new Error('Invalid --max-batches');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
   if (!Number.isInteger(out.concurrency) || out.concurrency <= 0) throw new Error('Invalid --concurrency');
+  if (out.lifecycleOnly) {
+    if (!out.ids.length) throw new Error('--lifecycle-only requires explicit --ids');
+    if (out.reconcile || out.insertMissingReviewedNew || out.checkpoint !== 'scripts/.supabase-sync-checkpoint.json') {
+      throw new Error('--lifecycle-only only supports explicit IDs, batching, dry-run, and bulk RPC');
+    }
+    if (!/^(1|true|yes)$/i.test(String(process.env.ENABLE_LIFECYCLE_SYNC || '').trim())) {
+      throw new Error('--lifecycle-only requires ENABLE_LIFECYCLE_SYNC=1');
+    }
+  }
   return out;
 }
 
@@ -131,6 +143,7 @@ function syncArgs(options, { dryRun = false } = {}) {
   if (dryRun) args.push('--dry-run');
   if (options.insertMissingReviewedNew) args.push('--insert-missing-reviewed-new');
   if (options.bulkRpc) args.push('--bulk-rpc');
+  if (options.lifecycleOnly) args.push('--lifecycle-only');
   return args;
 }
 
@@ -174,6 +187,25 @@ function runQaWithRepair(options) {
   return qa;
 }
 
+function verifyBulkRpc(options) {
+  if (!options.bulkRpc) return null;
+
+  const report = run(NODE, [
+    'scripts/ops/supabase-sync-status-report.mjs',
+    '--hours', String(options.hours),
+    '--batch', '1',
+    '--sample', '1',
+    '--require-bulk-rpc',
+    '--json',
+  ], { json: true });
+  const capability = report.bulkRpc || {};
+  console.log(`bulk_rpc=${capability.state || 'unknown'}, available=${capability.available ?? 'unknown'}`);
+  if (capability.state !== 'ready') {
+    throw new Error(`bulk RPC gate failed: ${capability.detail || 'the configured bulk RPC is not ready'}`);
+  }
+  return capability;
+}
+
 async function main() {
   const options = parseArgs(process.argv);
   const startedAt = new Date().toISOString();
@@ -187,6 +219,7 @@ async function main() {
   console.log(`Checkpoint: ${options.ids.length ? 'none (id-scoped)' : options.checkpoint}`);
   if (options.reconcile) console.log('Mode: ID-based reconciliation');
   console.log(`Insert missing reviewed-new: ${options.insertMissingReviewedNew ? 'yes' : 'no'}`);
+  if (options.lifecycleOnly) console.log('Scope: lifecycle-only; no classifier or enrichment fields are eligible');
 
   step('Health Gate');
   const health = run(NODE, ['scripts/ops/classifier-health-report.mjs', '--json'], { json: true });
@@ -207,12 +240,16 @@ async function main() {
     console.log(`health warnings do not block sync: ${JSON.stringify(health.health.warnings || [])}`);
   }
 
-  step('QA Gate');
-  const qa = runQaWithRepair(options);
-  console.log(`state=${qa.state}, hard_issues=${qa.issueCount}, soft_warnings=${qa.warningCount}, inspected=${qa.totals.inspected}`);
-  // Warnings are reported for review but do not block safe sync; hard issues
-  // remain represented by FAIL and still stop the write.
-  assertState('classification QA', qa.state, ['OK', 'WARN']);
+  if (options.lifecycleOnly) {
+    console.log('\n## QA Gate\nSkipped: lifecycle-only scope cannot modify classifier fields.');
+  } else {
+    step('QA Gate');
+    const qa = runQaWithRepair(options);
+    console.log(`state=${qa.state}, hard_issues=${qa.issueCount}, soft_warnings=${qa.warningCount}, inspected=${qa.totals.inspected}`);
+    // Warnings are reported for review but do not block safe sync; hard issues
+    // remain represented by FAIL and still stop the write.
+    assertState('classification QA', qa.state, ['OK', 'WARN']);
+  }
 
   step('Readiness Gate');
   const readiness = run(NODE, [
@@ -220,6 +257,7 @@ async function main() {
     '--batch', String(options.batch),
     '--sample', String(options.sample),
     '--json',
+    ...(options.lifecycleOnly ? ['--lifecycle-only'] : []),
     ...(options.ids.length
       ? ['--ids', options.ids.join(',')]
       : options.reconcile
@@ -244,8 +282,16 @@ async function main() {
   // Reconciliation must scan past protected/already-current rows so its ID
   // checkpoint can advance to later rows that may still need updates.
   if (!options.reconcile && readiness.totals.wouldUpdate === 0 && readiness.totals.missingSupabaseRows === 0) {
-    console.log('No rows to update; stopping cleanly.');
+    console.log('No rows to update; stopping cleanly without requiring the bulk RPC.');
     return;
+  }
+
+  // Check the expensive/required publication capability only after readiness
+  // proves there is work to publish. This keeps idle launchd runs healthy and
+  // still prevents any real write from falling back to row-level I/O.
+  if (options.bulkRpc) {
+    step('Bulk RPC Gate');
+    verifyBulkRpc(options);
   }
 
   step('Dry Run');
@@ -273,10 +319,14 @@ async function main() {
     console.log(`post health warnings do not block sync: ${JSON.stringify(postHealth.health.warnings || [])}`);
   }
 
-  step('Post QA Gate');
-  const postQa = runQaWithRepair(options);
-  console.log(`state=${postQa.state}, hard_issues=${postQa.issueCount}, soft_warnings=${postQa.warningCount}, inspected=${postQa.totals.inspected}`);
-  assertState('post classification QA', postQa.state, ['OK', 'WARN']);
+  if (options.lifecycleOnly) {
+    console.log('\n## Post QA Gate\nSkipped: lifecycle-only scope cannot modify classifier fields.');
+  } else {
+    step('Post QA Gate');
+    const postQa = runQaWithRepair(options);
+    console.log(`state=${postQa.state}, hard_issues=${postQa.issueCount}, soft_warnings=${postQa.warningCount}, inspected=${postQa.totals.inspected}`);
+    assertState('post classification QA', postQa.state, ['OK', 'WARN']);
+  }
 
   console.log('');
   console.log(`Completed: ${new Date().toISOString()}`);

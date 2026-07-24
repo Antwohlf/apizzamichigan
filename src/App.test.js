@@ -1,10 +1,18 @@
 import { render, screen } from '@testing-library/react'
 import App, {
   compareSearchResults,
+  fetchPlacesForState,
   placeSearchRank,
+  dedupeSearchRows,
   remoteSearchTerms,
   remoteSearchableColumns,
+  legacyRemoteSearchableColumns,
+  fetchPlacesForSearch,
+  fetchStateCounts,
   publicSearchSelect,
+  publicPlaceSelect,
+  publicPlaceSelectForTable,
+  publicSearchSelectForTable,
   readPublicMapQuery,
   normalizeLifecycleStatus,
   searchResultPriority,
@@ -12,7 +20,9 @@ import App, {
   stateScopedNameTerms,
   isAnthonysPick,
 } from './App'
-import { __mockFrom, __setMockTable } from './supabaseClient'
+import { __mockFrom, __setMockTable, supabase } from './supabaseClient'
+import { publicPlaceLegacySelectForTable } from './lib/publicPlaceFields'
+import { normalizePizzaStyle } from './data/pizzaStyles'
 
 jest.mock('./supabaseClient')
 const mockFetchTacoPlaces = jest.fn(() => Promise.resolve({ data: [], error: null }))
@@ -97,13 +107,72 @@ describe('App routing themes', () => {
   })
 
   test('preserves shareable search state on the first render', async () => {
-    window.history.pushState({}, '', '/?q=Anthony%27s%20Pizza&status=visited,golden&picks=1')
+    window.history.pushState({}, '', '/?q=Anthony%27s%20Pizza&style=Detroit,Sicilian&price=%24%24&status=visited,golden&picks=1&history=1')
 
     render(<App />)
 
     await screen.findByRole('heading', { name: /a pizza michigan/i })
 
-    expect(window.location.search).toBe('?q=Anthony%27s+Pizza&status=visited%2Cgolden&picks=1')
+    expect(window.location.search).toBe('?q=Anthony%27s+Pizza&style=Detroit%2CSicilian&price=%24%24&status=visited%2Cgolden&picks=1&history=1')
+  })
+
+  test('reads shareable style and price filters', () => {
+    expect(readPublicMapQuery('?style=Detroit,Sicilian&price=%24%24')).toEqual(expect.objectContaining({
+      styles: ['Detroit', 'Sicilian'],
+      prices: ['$$'],
+    }))
+  })
+})
+
+describe('state map loading migration compatibility', () => {
+  test('counts Anthony\'s Picks using the same rating threshold as the filter', async () => {
+    __setMockTable('pizza_places', [
+      { id: 1, state: 'MI', rating: 8 },
+      { id: 2, state: 'MI', rating: 7.9 },
+      { id: 3, state: 'NY', rating: 9 },
+    ])
+
+    await expect(fetchStateCounts('pizza_places', {
+      includeStates: ['MI'],
+      includeStatuses: ['visited', 'golden'],
+      requireRating: true,
+      minimumRating: 8,
+    })).resolves.toEqual({ MI: 1, NY: 1 })
+  })
+
+  test('retries with legacy fields when lifecycle columns are unavailable', async () => {
+    const selects = []
+    const makeQuery = result => {
+      const query = {
+        select: jest.fn(columns => {
+          selects.push(columns)
+          return query
+        }),
+        eq: jest.fn(() => query),
+        range: jest.fn(() => Promise.resolve(result)),
+      }
+      return query
+    }
+    const originalFrom = supabase.from
+    supabase.from = jest.fn()
+      .mockReturnValueOnce(makeQuery({
+        data: null,
+        error: { message: 'column pizza_places.lifecycle_status does not exist' },
+      }))
+      .mockReturnValueOnce(makeQuery({
+        data: [{ id: 1, name: 'Legacy Pizza' }],
+        error: null,
+      }))
+
+    try {
+      await expect(fetchPlacesForState('pizza_places', 'MI')).resolves.toEqual([
+        { id: 1, name: 'Legacy Pizza' },
+      ])
+      expect(selects[0]).toContain('lifecycle_status')
+      expect(selects[1]).not.toContain('lifecycle_status')
+    } finally {
+      supabase.from = originalFrom
+    }
   })
 })
 
@@ -111,9 +180,25 @@ describe('remoteSearchTerms', () => {
   test('restores shareable map search and Picks state from the URL', () => {
     expect(readPublicMapQuery('?q=Anthony%27s%20Pizza&status=visited,golden&picks=1')).toEqual({
       query: "Anthony's Pizza",
+      styles: [],
+      prices: [],
       statuses: ['visited', 'golden'],
       anthonysPicks: true,
+      showHistorical: false,
+      showAllMarkets: false,
     })
+  })
+
+  test('restores the shareable historical-places filter from the URL', () => {
+    expect(readPublicMapQuery('?history=1')).toEqual(expect.objectContaining({
+      showHistorical: true,
+    }))
+  })
+
+  test('restores the explicit all-markets scope from the URL', () => {
+    expect(readPublicMapQuery('?scope=all')).toEqual(expect.objectContaining({
+      showAllMarkets: true,
+    }))
   })
 
   test('defines Anthony\'s Picks as rated 8 or higher', () => {
@@ -121,6 +206,19 @@ describe('remoteSearchTerms', () => {
     expect(isAnthonysPick({ rating: '9.5' })).toBe(true)
     expect(isAnthonysPick({ rating: 7.9 })).toBe(false)
     expect(isAnthonysPick({ rating: null })).toBe(false)
+  })
+
+  test('supports an entity-specific Anthony\'s Picks threshold', () => {
+    expect(isAnthonysPick({ rating: 7.5 }, { minimumRating: 7.5 })).toBe(true)
+    expect(isAnthonysPick({ rating: 7.4 }, { minimumRating: 7.5 })).toBe(false)
+  })
+
+  test('normalizes legacy and multi-label pizza styles to one primary style', () => {
+    expect(normalizePizzaStyle('Traditional')).toBe('Standard Round')
+    expect(normalizePizzaStyle('Traditional, Detroit')).toBe('Detroit')
+    expect(normalizePizzaStyle('Chicago, Sicilian, New York')).toBe('Sicilian')
+    expect(normalizePizzaStyle('Breakfast')).toBe('Unknown')
+    expect(normalizePizzaStyle('')).toBeNull()
   })
 
   test('keeps public search payload bounded to display and ranking fields', () => {
@@ -133,13 +231,98 @@ describe('remoteSearchTerms', () => {
     expect(publicSearchSelect).not.toContain('scrape_notes')
     expect(publicSearchSelect).toContain('website_url')
     expect(publicSearchSelect).toContain('phone')
+    expect(publicPlaceSelect).toBe(publicSearchSelect)
+    expect(publicPlaceSelect).not.toContain('osm_tags')
+    expect(publicPlaceSelect).not.toContain('menu_data')
+    expect(publicPlaceSelectForTable('taco_places')).not.toContain('price_range')
+    expect(publicPlaceSelectForTable('taco_places')).not.toContain('brand')
+    expect(publicSearchSelectForTable('taco_places')).toBe(publicPlaceSelectForTable('taco_places'))
+  })
+
+  test('keeps public search fallback bounded instead of using select star', () => {
+    expect(publicSearchSelect).not.toBe('*')
+    expect(publicSearchSelectForTable('taco_places')).not.toBe('*')
+    expect(publicPlaceLegacySelectForTable('pizza_places')).toContain('website_url')
+    expect(publicPlaceLegacySelectForTable('pizza_places')).toContain('brand')
+    expect(publicPlaceLegacySelectForTable('pizza_places')).not.toContain('city')
+    expect(publicPlaceLegacySelectForTable('pizza_places')).not.toContain('lifecycle_status')
   })
 
   test('uses only columns present in the canonical tables', () => {
     expect(remoteSearchableColumns('pizza_places')).toEqual([
       'name', 'address', 'website_url', 'phone', 'state', 'style', 'status', 'price_range', 'brand', 'operator',
     ])
-    expect(remoteSearchableColumns('taco_places')).not.toContain('city')
+    expect(remoteSearchableColumns('taco_places')).toEqual([
+      'name', 'address', 'state', 'style', 'status', 'price',
+    ])
+    expect(remoteSearchableColumns('taco_places')).not.toContain('website_url')
+    expect(remoteSearchableColumns('taco_places')).not.toContain('phone')
+  })
+
+  test('downgrades search filter columns when an older public schema rejects newer columns', async () => {
+    const queries = []
+    const makeQuery = result => {
+      const query = {
+        select: jest.fn(columns => {
+          queries.push({ select: columns })
+          return query
+        }),
+        or: jest.fn(filter => {
+          queries[queries.length - 1].filter = filter
+          return query
+        }),
+        order: jest.fn(() => query),
+        limit: jest.fn(() => Promise.resolve(result)),
+      }
+      return query
+    }
+    const originalFrom = supabase.from
+    supabase.from = jest.fn()
+      .mockReturnValueOnce(makeQuery({ data: null, error: { message: 'column pizza_places.city does not exist' } }))
+      .mockReturnValueOnce(makeQuery({ data: [{ id: 42, name: 'Legacy Pizza' }], error: null }))
+
+    try {
+      await expect(fetchPlacesForSearch('pizza_places', ['ann arbor'], 'Ann Arbor')).resolves.toEqual([
+        { id: 42, name: 'Legacy Pizza' },
+      ])
+      expect(queries).toHaveLength(2)
+      expect(queries[0].filter).not.toContain('city.ilike.')
+      expect(queries[1].filter).not.toContain('city.ilike.')
+      expect(queries[1].select).toBe(publicPlaceLegacySelectForTable('pizza_places'))
+      expect(legacyRemoteSearchableColumns('pizza_places')).not.toContain('city')
+    } finally {
+      supabase.from = originalFrom
+    }
+  })
+
+  test('reuses the legacy search shape after the public schema rejects a column', async () => {
+    const selects = []
+    const makeQuery = result => {
+      const query = {
+        select: jest.fn(columns => {
+          selects.push(columns)
+          return query
+        }),
+        or: jest.fn(() => query),
+        order: jest.fn(() => query),
+        limit: jest.fn(() => Promise.resolve(result)),
+      }
+      return query
+    }
+    const originalFrom = supabase.from
+    supabase.from = jest.fn()
+      .mockReturnValueOnce(makeQuery({ data: null, error: { message: 'column pizza_places.city does not exist' } }))
+      .mockReturnValueOnce(makeQuery({ data: [{ id: 42, name: 'Legacy Pizza' }], error: null }))
+      .mockReturnValueOnce(makeQuery({ data: [{ id: 42, name: 'Legacy Pizza' }], error: null }))
+
+    try {
+      await fetchPlacesForSearch('pizza_places', ['ann arbor'], 'Ann Arbor')
+      await fetchPlacesForSearch('pizza_places', ['ann arbor'], 'Ann Arbor')
+      expect(selects).toHaveLength(3)
+      expect(selects[2]).toBe(publicPlaceLegacySelectForTable('pizza_places'))
+    } finally {
+      supabase.from = originalFrom
+    }
   })
 
   test('uses specific terms instead of generic pizza terms when possible', () => {
@@ -154,6 +337,17 @@ describe('remoteSearchTerms', () => {
     expect(normalizeLifecycleStatus('Permanently closed')).toBe('closed')
     expect(normalizeLifecycleStatus('replaced by a new business')).toBe('replaced')
     expect(remoteSearchTerms('historical pizza')).toContain('closed')
+  })
+
+  test('matches lifecycle searches when personal visit status is blank', () => {
+    const historicalPlace = {
+      name: 'Former Pizza Place',
+      status: null,
+      lifecycle_status: 'closed',
+      state: 'MI',
+    }
+    expect(placeSearchRank(historicalPlace, 'closed')).toBeLessThan(99)
+    expect(placeSearchRank({ ...historicalPlace, lifecycle_status: 'replaced' }, 'historical')).toBeLessThan(99)
   })
 
   test('adds conservative punctuation variants for elided names', () => {
@@ -199,6 +393,12 @@ describe('remoteSearchTerms', () => {
       'arbor',
       'ann',
     ])
+  })
+
+  test('expands the common NYPD shorthand to the stored place name', () => {
+    expect(remoteSearchTerms('NYPD')).toEqual(['new york pizza depot', 'nypd'])
+    expect(placeSearchRank({ name: 'New York Pizza Depot', city: 'Ann Arbor', state: 'MI' }, 'nypd', ['nypd']))
+      .toBeLessThan(99)
   })
 
   test('expands compact chain names for remote lookup', () => {
@@ -350,6 +550,50 @@ describe('placeSearchRank', () => {
     expect(placeSearchRank(place, query, terms)).toBeLessThan(6)
     expect(placeSearchRank(place, query, terms))
       .toBeLessThan(placeSearchRank(generic, query, terms))
+  })
+
+  test('does not treat a conflicting street name as a city match', () => {
+    const place = {
+      name: "Domino's",
+      address: '1043 West Ann Arbor Road',
+      city: 'Plymouth',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(place, 'ann arbor', ['ann', 'arbor'])).toBe(99)
+    expect(placeSearchRank({ ...place, city: null }, 'ann arbor', ['ann', 'arbor'])).toBe(99)
+    expect(placeSearchRank(place, '1043 ann arbor road')).toBeLessThan(99)
+    expect(placeSearchRank({
+      ...place,
+      website_url: 'https://example.com/ann-arbor-road',
+    }, 'ann arbor', ['ann', 'arbor'])).toBe(99)
+    expect(placeSearchRank({
+      ...place,
+      website_url: 'https://littlecaesars.com/en-us/store/8742',
+    }, 'littlecaesars.com/en-us/store/8742')).toBeLessThan(99)
+  })
+
+  test('matches a city in a comma-separated address when city is not a separate field', () => {
+    expect(placeSearchRank({
+      name: 'Backroom Pizza',
+      address: '605 Church Street, Ann Arbor, MI 48104',
+      city: null,
+      state: 'MI',
+    }, 'ann arbor', ['ann', 'arbor'])).toBeLessThan(99)
+  })
+
+  test('does not treat a personal name in a place query as a review-status filter', () => {
+    const query = "Anthony's Pizza Ann Arbor"
+    const terms = ['anthony', 's', 'pizza', 'ann', 'arbor']
+    const unrelatedReviewedPlace = {
+      name: "Domino's",
+      status: 'visited',
+      rating: 8,
+      city: 'Ann Arbor',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(unrelatedReviewedPlace, query, terms)).toBe(99)
   })
 
   test('finds brand and location matches when users put the city first', () => {
@@ -540,6 +784,27 @@ describe('searchResultPriority', () => {
   })
 })
 
+describe('dedupeSearchRows', () => {
+  test('prefers a located row over an unusable same-name regional placeholder', () => {
+    const rows = dedupeSearchRows([
+      { id: 30, name: "Anthony's Gourmet Pizza", state: 'MI', address: '1508 N Maple Rd, Ann Arbor, MI 48103' },
+      { id: 31, name: "Anthony's Gourmet Pizza", state: 'MI', address: '1924 Packard St, Ann Arbor, MI 48104' },
+      { id: 242, name: "Anthony's Gourmet Pizza", state: 'MI', address: 'MI' },
+    ])
+
+    expect(rows.map(row => row.id)).toEqual([30, 31])
+  })
+
+  test('keeps same-name branches when both have usable addresses', () => {
+    const rows = dedupeSearchRows([
+      { id: 1, name: 'Little Caesars', state: 'MI', address: '1 Main St, Detroit, MI' },
+      { id: 2, name: 'Little Caesars', state: 'MI', address: '2 Main St, Detroit, MI' },
+    ])
+
+    expect(rows.map(row => row.id)).toEqual([1, 2])
+  })
+})
+
 describe('compareSearchResults', () => {
   test('uses reviewed status as a tie-break after text relevance', () => {
     const reviewed = {
@@ -571,5 +836,25 @@ describe('compareSearchResults', () => {
     }
 
     expect([reviewedWeakerMatch, exactName].sort(compareSearchResults)).toEqual([exactName, reviewedWeakerMatch])
+  })
+
+  test('prefers configured primary-market states for broad searches', () => {
+    const overseasExact = {
+      name: "Anthony's Pizza",
+      state: 'DE',
+      status: 'unvisited',
+      _searchRank: 0,
+    }
+    const michiganMatch = {
+      name: "Anthony's Gourmet Pizza",
+      state: 'MI',
+      status: 'visited',
+      rating: 7,
+      _searchRank: 3,
+    }
+
+    expect([overseasExact, michiganMatch].sort((left, right) => compareSearchResults(left, right, {
+      preferredStates: ['MI', 'NY'],
+    }))).toEqual([michiganMatch, overseasExact])
   })
 })

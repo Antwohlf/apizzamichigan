@@ -7,9 +7,11 @@ const jsonResponse = data => ({ ok: true, json: async () => ({ data }) })
 
 describe('AdminSystemPanel lifecycle actions', () => {
   let fetchMock
+  let preflightPayload
 
   beforeEach(() => {
     window.location.hash = '#lifecycle-quality'
+    preflightPayload = { acceptedTotal: 0, candidateReady: 0, rowsInspected: 0, rowsNotInspected: 0, readinessCounts: [], candidates: [] }
     fetchMock = jest.fn((url, options = {}) => {
       if (options.method === 'PATCH') return Promise.resolve(jsonResponse({ id: 42, lifecycle_status: 'closed' }))
       if (url.includes('/source-provenance')) {
@@ -25,17 +27,36 @@ describe('AdminSystemPanel lifecycle actions', () => {
         return Promise.resolve(jsonResponse({
           available: true,
           total: 1,
+          latest_input_observation_counts: { observed: 0, unobserved: 1, unavailable: 0 },
           rows: [{
             place_id: 42,
             name: 'Old Town Pizza',
             source: 'osm',
+            source_url: 'https://www.openstreetmap.org/node/42',
             retrieved_at: '2025-01-01T00:00:00Z',
             freshness_days: 30,
+            latest_input_observation: 'unobserved_in_latest_input',
           }],
         }))
       }
       if (url.includes('/import-preflight')) {
-        return Promise.resolve(jsonResponse({ acceptedTotal: 0, candidateReady: 0, rowsInspected: 0, rowsNotInspected: 0, candidates: [] }))
+        return Promise.resolve(jsonResponse(preflightPayload))
+      }
+      if (url.includes('/source-review-conflicts')) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          available: true,
+          total: 1,
+          data: [{
+            id: 7,
+            source: 'all_the_places',
+            source_name: 'New chain listing',
+            source_id: 'new-7',
+            source_url: 'https://example.com/new-7',
+            conflict_id: 8,
+            conflict_source_name: 'Existing chain listing',
+            conflict_distance_m: 0,
+          }],
+        }) })
       }
       return Promise.resolve(jsonResponse({}))
     })
@@ -54,7 +75,9 @@ describe('AdminSystemPanel lifecycle actions', () => {
     await userEvent.selectOptions(lifecycleSelect, 'stale')
     expect(await screen.findByText('Old Town Pizza')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Mark closed' })).not.toBeInTheDocument()
-    expect(screen.getByText(/refresh evidence before making a lifecycle decision/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 stale row were not seen in the latest OSM refresh/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'View place' })).toHaveAttribute('href', '/places/42')
+    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', 'https://www.openstreetmap.org/node/42')
     expect(fetchMock.mock.calls.some(([url, options]) => options?.method === 'PATCH' && String(url).includes('/api/admin/places/'))).toBe(false)
   })
 
@@ -83,5 +106,94 @@ describe('AdminSystemPanel lifecycle actions', () => {
 
     await screen.findByText('Approved-place import')
     expect(await screen.findByRole('button', { name: 'Import 0 ready' })).toBeDisabled()
+  })
+
+  test('renders configured coverage regions instead of a fixed Michigan/New York list', async () => {
+    window.location.hash = ''
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (options.method === 'PATCH') return Promise.resolve(jsonResponse({ id: 42 }))
+      if (url.includes('/source-provenance')) return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      if (url.includes('/source-review-summary')) {
+        return Promise.resolve(jsonResponse({
+          lifecycle: {},
+          basicFieldCoverage: {
+            scope: ['MI', 'CA'],
+            overall: { total: 2, needsAttention: 1, missing: { address: 0, website_url: 1, phone: 0, style: 0, price_range: 0 } },
+            byState: {
+              MI: { total: 1, needsAttention: 0, missing: {} },
+              CA: { total: 1, needsAttention: 1, missing: { website_url: 1 } },
+            },
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText('California')).toBeInTheDocument()
+    expect(screen.getByText('Michigan')).toBeInTheDocument()
+    expect(screen.queryByText('New York')).not.toBeInTheDocument()
+  })
+
+  test('explains same-source coordinate conflicts before import', async () => {
+    preflightPayload = {
+      acceptedTotal: 20,
+      candidateReady: 0,
+      rowsInspected: 20,
+      rowsNotInspected: 0,
+      readinessCounts: [{ readiness: 'duplicate_accepted_source_coordinate', rows: 2 }],
+      candidates: [],
+    }
+    window.location.hash = '#approved-import'
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText(/2 approved records overlap another record from the same source/i)).toBeInTheDocument()
+  })
+
+  test('shows accepted conflict pairs without offering an automatic data change', async () => {
+    preflightPayload = {
+      acceptedTotal: 2,
+      candidateReady: 0,
+      rowsInspected: 2,
+      rowsNotInspected: 0,
+      readinessCounts: [{ readiness: 'duplicate_accepted_source_coordinate', rows: 1 }],
+      candidates: [],
+    }
+    window.location.hash = '#approved-import'
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText('New chain listing')).toBeInTheDocument()
+    expect(screen.getByText('Existing chain listing')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', 'https://example.com/new-7')
+    expect(screen.queryByRole('button', { name: /link|update|import new chain/i })).not.toBeInTheDocument()
+  })
+
+  test('shows pending publication updates separately from protected conflicts', async () => {
+    window.location.hash = ''
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (url.includes('/source-provenance')) {
+        return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      }
+      if (url.includes('/source-review-summary')) {
+        return Promise.resolve(jsonResponse({ lifecycle: {} }))
+      }
+      if (url.includes('/supabase-sync-readiness')) {
+        return Promise.resolve(jsonResponse({
+          state: 'blocked',
+          label: 'Blocked by Supabase setup',
+          detail: 'Apply the bulk sync migration before publishing.',
+          pendingAfterCheckpoint: 40,
+          wouldUpdate: 40,
+          protectedFieldConflicts: 6,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText(/40 local updates waiting/i)).toBeInTheDocument()
+    expect(screen.getByText(/6 protected-field conflicts need review/i)).toBeInTheDocument()
   })
 })

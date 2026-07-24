@@ -79,4 +79,37 @@ describe('BugReportModal', () => {
     })
     expect(body.mapsUrl).toContain('query_place_id=ChIJ12345678')
   })
+
+  test('preserves replacement context in a report about a historical place', async () => {
+    const onSuccess = jest.fn()
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    })
+
+    render(
+      <BugReportModal
+        onClose={jest.fn()}
+        onSuccess={onSuccess}
+        selectedPlace={{
+          ...selectedPlace,
+          lifecycle_status: 'replaced',
+          lifecycle_replaced_by_id: 456,
+        }}
+      />
+    )
+
+    fireEvent.change(screen.getByLabelText(/what went wrong/i), {
+      target: { value: 'This historical place points to the wrong successor.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /send report/i }))
+
+    await waitFor(() => expect(onSuccess).toHaveBeenCalled())
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.selectedPlace).toMatchObject({
+      lifecycle_status: 'replaced',
+      lifecycle_replaced_by_id: 456,
+    })
+  })
 })

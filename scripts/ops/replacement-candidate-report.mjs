@@ -3,7 +3,9 @@
 /**
  * Read-only report for source records whose business name changed at the same
  * exact OSM identity. Personal history is deliberately reported separately;
- * this script never changes a place or a review decision.
+ * this script never changes a place or a review decision. An exact OSM
+ * identity does not prove that a business rename is safe: the same location
+ * can contain a successor business.
  */
 
 import pg from 'pg'
@@ -39,7 +41,7 @@ try {
       CASE
         WHEN p.status <> 'unvisited' OR p.rating IS NOT NULL OR NULLIF(btrim(p.notes), '') IS NOT NULL
         THEN 'history_requires_review'
-        ELSE 'safe_unreviewed_update'
+        ELSE 'unreviewed_identity_change_requires_review'
       END AS handling
     FROM source_review_queue srq
     JOIN ${tables[entity]} p ON p.id = srq.nearest_place_id
@@ -57,7 +59,7 @@ try {
     entity,
     generated_at: new Date().toISOString(),
     total: rows.length,
-    safe_unreviewed_update: rows.filter(row => row.handling === 'safe_unreviewed_update').length,
+    unreviewed_identity_change_requires_review: rows.filter(row => row.handling === 'unreviewed_identity_change_requires_review').length,
     history_requires_review: rows.filter(row => row.handling === 'history_requires_review').length,
     rows,
   }
@@ -67,7 +69,7 @@ try {
   } else {
     console.log(`Replacement candidates (${entity})`)
     console.log(`Total: ${report.total}`)
-    console.log(`Safe unreviewed updates: ${report.safe_unreviewed_update}`)
+    console.log(`Unreviewed identity changes requiring review: ${report.unreviewed_identity_change_requires_review}`)
     console.log(`History requires review: ${report.history_requires_review}`)
     for (const row of rows) {
       console.log(`- #${row.id}: ${row.current_name} -> ${row.source_name} [${row.handling}]`)

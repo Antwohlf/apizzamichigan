@@ -18,12 +18,13 @@ function assertMatches(pattern, label = pattern.source) {
 
 assertIncludes("import { inferPriceFromChain, inferStyleFromName } from '../lib/style-inference.mjs';", 'style inference import');
 assertIncludes('Default mode is dry-run.', 'dry-run help text');
-assertIncludes('Use --ids or both --min-place-id and --max-place-id.', 'exact scope guard');
-assertIncludes('Use --ids or an ID range, not both.', 'ambiguous scope guard');
+assertIncludes('Use --ids, --states, or both --min-place-id and --max-place-id.', 'exact scope guard');
+assertIncludes('Use --ids, --states, or an ID range, not multiple selectors.', 'ambiguous scope guard');
 assertIncludes('It never writes Supabase.', 'Supabase safety text');
 assertMatches(/UPDATE pizza_places\s+SET style = COALESCE\(style, \$2\),/, 'fill-if-null local style update');
 assertIncludes("style_confidence = COALESCE(style_confidence, $4)", 'fill-if-null confidence update');
-assertIncludes("styleResult.style ? 'inferred' : null", 'inferred confidence policy');
+assertIncludes("deterministicStyle ? 'inferred' : null", 'inferred confidence policy');
+assertIncludes("styleResult.source === 'address_keyword' ? null : styleResult.style", 'address-only style guard');
 assertIncludes('last_enriched_at = NOW()', 'local enrichment timestamp');
 assertIncludes('if (args.json) console.log(JSON.stringify(payload, null, 2));', 'json report mode');
 

@@ -8,7 +8,7 @@
 
 import pg from 'pg'
 import 'dotenv/config'
-import { LEGACY_PIZZA_STYLE_ALIASES } from '../lib/pizza-style-taxonomy.mjs'
+import { PIZZA_STYLES, normalizePizzaStyle } from '../lib/pizza-style-taxonomy.mjs'
 
 const args = new Set(process.argv.slice(2))
 const apply = args.has('--apply')
@@ -31,25 +31,35 @@ const client = new pg.Client({
 
 await client.connect()
 try {
-  const values = Object.entries({ ...LEGACY_PIZZA_STYLE_ALIASES, Standard: 'Standard Round' })
   const counts = await client.query(`
     SELECT style, COUNT(*)::int AS count
     FROM pizza_places
-    WHERE style = ANY($1::text[])
+    WHERE style IS NOT NULL
     GROUP BY style
     ORDER BY style
-  `, [values.map(([style]) => style)])
+  `)
+  const migrations = counts.rows
+    .map(row => ({
+      from: row.style,
+      to: normalizePizzaStyle(row.style),
+      count: row.count,
+    }))
+    .filter(row => row.to && row.to !== row.from)
 
   console.log(`# Pizza Style Migration (${apply ? 'apply' : 'dry-run'})`)
-  console.table(counts.rows)
+  console.table(migrations)
+  const canonical = counts.rows.filter(row => PIZZA_STYLES.includes(row.style))
+  const unresolved = counts.rows.filter(row => !PIZZA_STYLES.includes(row.style) && !normalizePizzaStyle(row.style))
+  console.log(`Canonical values: ${canonical.length}; changes available: ${migrations.length}; unresolved: ${unresolved.length}`)
+  if (unresolved.length) console.table(unresolved)
 
   if (apply) {
-    for (const [legacy, current] of values) {
+    for (const { from, to } of migrations) {
       const result = await client.query(
         'UPDATE pizza_places SET style = $1 WHERE style = $2 RETURNING id',
-        [current, legacy]
+        [to, from]
       )
-      console.log(`${legacy} -> ${current}: ${result.rowCount} rows`)
+      console.log(`${from} -> ${to}: ${result.rowCount} rows`)
     }
   }
 } finally {

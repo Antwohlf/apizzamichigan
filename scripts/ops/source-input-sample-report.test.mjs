@@ -6,6 +6,7 @@ import {
   normalizeSourceUrl,
   sourceIdentifierMatch,
   sourceMatchMethod,
+  isWithinScope,
 } from './source-input-sample-report.mjs'
 
 test('normalizes phone identifiers conservatively', () => {
@@ -54,4 +55,11 @@ test('treats OSM disused, abandoned, and demolished statuses as closed evidence'
     }, 'osm')
     assert.equal(row.is_closed, true, operatingStatus)
   }
+})
+
+test('rejects explicit neighboring state records inside a broad regional bbox', () => {
+  const scope = { region_scope: 'US', regions: [{ key: 'NY', bbox: [40.4, -79.8, 45.1, -71.7], region_codes: ['NY'] }] }
+  assert.equal(isWithinScope({ lat: 40.46, lng: -79.70, region: 'PA' }, scope), false)
+  assert.equal(isWithinScope({ lat: 40.71, lng: -74.00, region: 'NY' }, scope), true)
+  assert.equal(isWithinScope({ lat: 40.71, lng: -74.00, region: null }, scope), true)
 })

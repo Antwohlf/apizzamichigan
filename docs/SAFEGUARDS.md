@@ -75,6 +75,15 @@ Manual run:
 node scripts/ops/create-local-backup.mjs --retention 7
 ```
 
+Read-only content verification for the newest completed run:
+
+```bash
+node scripts/ops/verify-local-backup.mjs --json
+```
+
+This checks the manifest hashes, SQLite integrity, and the custom Postgres dump
+header. It does not restore data or contact Supabase.
+
 Backups are machine-local and ignored by git. Copy completed run directories
 to separate storage if they are intended to protect against machine loss.
 Restore Postgres into a new database first with `pg_restore`; restoring over

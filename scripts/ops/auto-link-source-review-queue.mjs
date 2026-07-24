@@ -160,6 +160,7 @@ function parseArgs(argv) {
     minNameScore: 0.98,
     maxDistanceM: 100,
     brandRules: false,
+    includeScoreDistance: false,
     exactIdentifiers: false,
     exactSourceId: false,
     sourceIdentity: false,
@@ -178,6 +179,7 @@ function parseArgs(argv) {
     else if (arg === '--min-name-score') args.minNameScore = parseFloat(argv[++i]);
     else if (arg === '--max-distance-m') args.maxDistanceM = parseFloat(argv[++i]);
     else if (arg === '--brand-rules') args.brandRules = true;
+    else if (arg === '--include-score-distance') args.includeScoreDistance = true;
     else if (arg === '--exact-identifiers') args.exactIdentifiers = true;
     else if (arg === '--exact-source-id') args.exactSourceId = true;
     else if (arg === '--source-identity') args.sourceIdentity = true;
@@ -227,7 +229,8 @@ Options:
   --report-file <file>           Optional source review report filter
   --min-name-score <n>           Minimum nearest_name_score, 0-1 (default 0.98)
   --max-distance-m <n>           Maximum nearest distance in meters (default 100)
-  --brand-rules                  Also include explicit report/brand rules
+  --brand-rules                  Use explicit report/brand rules only
+  --include-score-distance       Add the generic name/distance class to brand rules
   --exact-identifiers            Require exact address, phone, store URL, and nearby location
   --min-exact-identifiers <n>    Compatibility flag; exact mode requires 3 (default 3)
   --exact-source-id              Require an exact OSM source ID and unchanged source name
@@ -400,6 +403,7 @@ async function fetchCandidates(client, args) {
   const values = [args.entity, args.minNameScore, args.maxDistanceM];
   const filters = [
     'srq.entity_type = $1',
+    '$2::double precision IS NOT NULL AND $3::double precision IS NOT NULL',
     "srq.review_kind = 'ambiguous'",
     "srq.status = 'pending'",
     'srq.nearest_place_id IS NOT NULL',
@@ -417,10 +421,11 @@ async function fetchCandidates(client, args) {
     values.push(args.ids);
     filters.push(`srq.id = ANY($${values.length}::bigint[])`);
   } else {
-    // Exact-identifier automation must not inherit the broader spatial/name
-    // rule. Operators can still invoke the high-score path explicitly when
-    // they are intentionally reviewing that risk class.
-    if (!args.exactIdentifiers) {
+    // Exact-match automation must not inherit the broader spatial/name rule.
+    // Brand-rule mode is explicit-only unless an operator opts into both
+    // classes, so a named brand report cannot silently pull generic candidates.
+    const includeScoreDistance = !args.brandRules || args.includeScoreDistance;
+    if (includeScoreDistance && !args.exactIdentifiers && !args.exactSourceId && !args.sourceIdentity) {
       eligibility.push('(srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3)');
     }
 
@@ -434,11 +439,11 @@ async function fetchCandidates(client, args) {
       const exactSource = args.source || 'all_the_places';
       const exactSourceParam = values.push(exactSource);
       filters.push(`srq.source = $${exactSourceParam}`);
-      const sourceAddress = `regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'address', ''), NULLIF(srq.source_data->>'addr:full', ''), '')), '[^a-z0-9]', '', 'g')`;
+      const sourceAddress = `regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'address', ''), NULLIF(srq.source_data->>'full_address', ''), NULLIF(srq.source_data->>'addr:full', ''), '')), '[^a-z0-9]', '', 'g')`;
       const canonicalAddress = `regexp_replace(lower(coalesce(canonical.address, '')), '[^a-z0-9]', '', 'g')`;
-      const sourcePhone = `right(regexp_replace(coalesce(NULLIF(srq.source_data->>'phone', ''), NULLIF(srq.source_data->>'contact:phone', ''), ''), '[^0-9]', '', 'g'), 10)`;
+      const sourcePhone = `right(regexp_replace(coalesce(NULLIF(srq.source_data->>'phone', ''), NULLIF(srq.source_data->>'phone_number', ''), NULLIF(srq.source_data->>'contact:phone', ''), ''), '[^0-9]', '', 'g'), 10)`;
       const canonicalPhone = `right(regexp_replace(coalesce(canonical.phone, ''), '[^0-9]', '', 'g'), 10)`;
-      const sourceWebsite = `regexp_replace(regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'website', ''), NULLIF(srq.source_data->>'contact:website', ''), '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
+      const sourceWebsite = `regexp_replace(regexp_replace(lower(coalesce(NULLIF(srq.source_data->>'website', ''), NULLIF(srq.source_data->>'website_url', ''), NULLIF(srq.source_data->>'contact:website', ''), '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
       const canonicalWebsite = `regexp_replace(regexp_replace(lower(coalesce(canonical.website_url, '')), '^https?://(www\\.)?', '', ''), '/+$', '', 'g')`;
       const exactIdentifierMatches = `(
         CASE WHEN ${sourceAddress} <> '' AND ${sourceAddress} = ${canonicalAddress} THEN 1 ELSE 0 END
@@ -548,7 +553,7 @@ async function fetchCandidates(client, args) {
           THEN 'exact_source_id'
         WHEN ${sourceIdentityReason || 'FALSE'}
           THEN 'source_identity'
-        WHEN srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3
+        WHEN ${args.includeScoreDistance || !args.brandRules ? `srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3` : 'FALSE'}
           THEN 'score_distance'
         ${brandRuleReasons.join('\n        ')}
         ELSE 'unknown'
@@ -566,7 +571,7 @@ async function fetchCandidates(client, args) {
         WHEN ${exactIdentifierReason || 'FALSE'} THEN 0
         WHEN ${exactSourceIdReason || 'FALSE'} THEN 0
         WHEN ${sourceIdentityReason || 'FALSE'} THEN 0
-        WHEN srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3 THEN 0
+        WHEN ${args.includeScoreDistance || !args.brandRules ? `srq.nearest_name_score >= $2 AND srq.nearest_distance_m <= $3` : 'FALSE'} THEN 0
         ELSE 1
       END ASC,
       srq.nearest_name_score DESC,
@@ -707,6 +712,7 @@ function outputReport({ args, candidates, applyResult }) {
     min_name_score: args.minNameScore,
     max_distance_m: args.maxDistanceM,
     brand_rules: args.brandRules,
+    include_score_distance: args.includeScoreDistance,
     min_exact_identifiers: args.exactIdentifiers ? args.minExactIdentifiers : null,
     source_identity: args.sourceIdentity,
     exact_source_id: args.exactSourceId,
@@ -729,7 +735,8 @@ function outputReport({ args, candidates, applyResult }) {
   console.log(`Source: ${args.source || 'all'}`);
   console.log(`Report file: ${args.reportFile || 'all'}`);
   console.log(`Thresholds: name_score >= ${args.minNameScore}, distance <= ${args.maxDistanceM}m`);
-  console.log(`Brand rules: ${args.brandRules ? 'enabled' : 'disabled'}`);
+  console.log(`Brand rules: ${args.brandRules ? 'explicit-only' : 'disabled'}`);
+  console.log(`Generic score/distance class: ${args.brandRules ? (args.includeScoreDistance ? 'enabled' : 'disabled') : 'enabled'}`);
   console.log(`Exact identifiers: ${args.exactIdentifiers ? 'enabled' : 'disabled'}`);
   console.log(`Source identity: ${args.sourceIdentity ? 'enabled' : 'disabled'}`);
   console.log(`Exact source ID: ${args.exactSourceId ? 'enabled' : 'disabled'}`);

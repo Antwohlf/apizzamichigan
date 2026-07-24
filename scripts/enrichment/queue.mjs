@@ -246,7 +246,17 @@ export class JobQueue {
    */
   complete(jobId, outputData = null) {
     const complete = this.db.transaction(() => {
-      const job = this.db.prepare('SELECT worker_id FROM jobs WHERE id = ?').get(jobId)
+      const job = this.db.prepare('SELECT worker_id, data FROM jobs WHERE id = ?').get(jobId)
+      let data = outputData
+      if (outputData !== null) {
+        let previous = {}
+        try {
+          previous = job?.data ? JSON.parse(job.data) : {}
+        } catch {
+          previous = {}
+        }
+        data = { ...previous, ...outputData }
+      }
 
       this.db.prepare(`
         UPDATE jobs
@@ -254,7 +264,7 @@ export class JobQueue {
             completed_at = datetime('now'),
             data = CASE WHEN ? IS NOT NULL THEN ? ELSE data END
         WHERE id = ?
-      `).run(outputData ? JSON.stringify(outputData) : null, outputData ? JSON.stringify(outputData) : null, jobId)
+      `).run(data !== null ? JSON.stringify(data) : null, data !== null ? JSON.stringify(data) : null, jobId)
 
       if (job?.worker_id) {
         this.db.prepare(`
@@ -269,6 +279,42 @@ export class JobQueue {
     })
 
     this.withBusyRetry(() => complete.immediate())
+  }
+
+  /**
+   * Give a completed classification job one bounded retry when its output
+   * was partial. This preserves the queue's unique job identity and records
+   * the retry count in job data so the feeder cannot create an endless loop.
+   */
+  requeueCompleted(jobId, errorMessage, { maxRequeues = 1 } = {}) {
+    const requeue = this.db.transaction(() => {
+      const job = this.db.prepare('SELECT status, data FROM jobs WHERE id = ?').get(jobId)
+      if (!job || job.status !== 'completed') return false
+
+      let data = {}
+      try {
+        data = job.data ? JSON.parse(job.data) : {}
+      } catch {
+        data = {}
+      }
+      const requeues = Number(data.partial_reprocess_count) || 0
+      if (requeues >= maxRequeues) return false
+
+      data.partial_reprocess_count = requeues + 1
+      this.db.prepare(`
+        UPDATE jobs
+        SET status = 'pending',
+            worker_id = NULL,
+            started_at = NULL,
+            completed_at = NULL,
+            last_error = ?,
+            data = ?
+        WHERE id = ? AND status = 'completed'
+      `).run(errorMessage, JSON.stringify(data), jobId)
+      return true
+    })
+
+    return this.withBusyRetry(() => requeue.immediate())
   }
 
   /**

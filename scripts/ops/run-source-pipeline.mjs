@@ -3,6 +3,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
+import { selectSourcePipelineRegions } from '../lib/source-pipeline-scope.mjs';
 
 const ROOT = process.cwd();
 const CONFIG_PATH = resolve(ROOT, 'config/source-pipeline.json');
@@ -14,17 +15,18 @@ const NODE = process.execPath;
 const OSM_PIPELINE_TIMEOUT_MS = Number.parseInt(process.env.OSM_PIPELINE_TIMEOUT_MS || '', 10) || 1200000;
 
 function args(argv) {
-  const out = { apply: false, source: 'all', regions: null, maxWorkUnits: 2, maxNewPlaces: 5, json: false, force: false };
+  const out = { apply: false, plan: false, source: 'all', regions: null, maxWorkUnits: 2, maxNewPlaces: 5, json: false, force: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--apply') out.apply = true;
     else if (argv[i] === '--dry-run') out.apply = false;
+    else if (argv[i] === '--plan') out.plan = true;
     else if (argv[i] === '--source') out.source = argv[++i];
     else if (argv[i] === '--regions') out.regions = argv[++i].split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
     else if (argv[i] === '--max-work-units') out.maxWorkUnits = Number(argv[++i]);
     else if (argv[i] === '--max-new-places') out.maxNewPlaces = Number(argv[++i]);
     else if (argv[i] === '--force') out.force = true;
     else if (argv[i] === '--json') out.json = true;
-    else if (argv[i] === '--help') { console.log('Usage: node scripts/ops/run-source-pipeline.mjs [--dry-run|--apply] [--source key|all] [--regions MI,NY] [--max-work-units n] [--max-new-places n] [--force] [--json]'); process.exit(0); }
+    else if (argv[i] === '--help') { console.log('Usage: node scripts/ops/run-source-pipeline.mjs [--plan|--dry-run|--apply] [--source key|all] [--regions MI,NY] [--max-work-units n] [--max-new-places n] [--force] [--json]'); process.exit(0); }
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   if (!Number.isInteger(out.maxWorkUnits) || out.maxWorkUnits < 1) throw new Error('Invalid --max-work-units');
@@ -34,6 +36,9 @@ function args(argv) {
 
 function loadJson(path, fallback) { return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback; }
 function saveJson(path, value) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`); }
+function parseJsonOutput(output) {
+  try { return JSON.parse(output); } catch { return null; }
+}
 function run(command, commandArgs, { timeout = 120000, env = process.env } = {}) {
   // Keep adapters attached to the launchd process group so a job restart cannot
   // orphan an exporter that continues writing a resumable manifest. The OSM
@@ -106,7 +111,12 @@ function osmBacklog(region, osmConfig) {
     const manifest = loadJson(manifestPath, null);
     const total = Number(manifest?.total_tiles || Object.keys(manifest?.tiles || {}).length || 0);
     const success = Number(manifest?.statuses?.success || Object.values(manifest?.tiles || {}).filter(tile => tile.status === 'success').length || 0);
-    return Math.max(0, total - success);
+    const refreshAfterMs = Number(osmConfig.refresh_after_hours || 720) * 60 * 60 * 1000;
+    const stale = Object.values(manifest?.tiles || {}).filter(tile => (
+      tile.status === 'success'
+      && (!tile.completed_at || !Number.isFinite(Date.parse(tile.completed_at)) || Date.now() - Date.parse(tile.completed_at) >= refreshAfterMs)
+    )).length;
+    return Math.max(0, total - success) + stale;
   } catch {
     return null;
   }
@@ -144,6 +154,7 @@ function splitBbox(bbox) {
 }
 function runAdapter(source, region, output, config, state) {
   const [south, west, north, east] = region.bbox;
+  let osmProvenanceRefresh = null;
   if (source === 'osm') {
     // Keep the regional export and manifest stable across hourly runs. The
     // tiled runner resumes completed Overpass tiles instead of re-querying a
@@ -181,6 +192,20 @@ function runAdapter(source, region, output, config, state) {
   const paths = stampReport(source, region.key, output);
   run(NODE, ['scripts/ops/source-input-sample-report.mjs', '--source', source, '--input', paths.input, '--entity', config.entity, '--max-distance-m', '100', '--limit', String(config.limits.candidate_rows_per_source), '--sample', '10', '--review-output', paths.report, ...(config.apply ? ['--apply'] : [])], { timeout: 600000 });
   if (config.apply) {
+    if (source === 'osm') {
+      // Refresh exact existing OSM evidence independently of the review queue.
+      // This keeps freshness meaningful for already-linked places without
+      // creating places or promoting identity fields.
+      osmProvenanceRefresh = parseJsonOutput(run(NODE, [
+        'scripts/ops/refresh-osm-place-sources.mjs',
+        '--input', paths.input,
+        '--entity', config.entity,
+        '--states', (config.operational_regions || []).join(','),
+        '--max-updates', String(config.sources.osm.provenance_refresh_limit_per_run || 1000),
+        '--apply',
+        '--json',
+      ], { timeout: 180000 }));
+    }
     run(NODE, ['scripts/ops/import-source-review-queue.mjs', '--input-files', paths.report, '--entity', config.entity, '--apply'], { timeout: 180000 });
     // Exact store URLs or normalized phones, combined with a nearby
     // canonical location, are safe enough to link automatically for every
@@ -199,7 +224,7 @@ function runAdapter(source, region, output, config, state) {
       '--limit', '100',
     ], { timeout: 180000 });
   }
-  return paths;
+  return { ...paths, osmProvenanceRefresh };
 }
 function runAtp(region, config, state, apply, maxSpiders) {
   const manifest = loadJson(resolve(ROOT, 'config/atp-pizza-spiders.json'), { spiders: [] });
@@ -246,17 +271,27 @@ function promoteContactFields(config, apply) {
   return output.slice(-2000);
 }
 
-function populateClassifierQueue(config, apply) {
+function populateClassifierQueue(config, apply, regions) {
   if (!apply || config.entity !== 'pizza') return 'disabled';
   const limit = Number(config.limits.classify_queue_jobs_per_region_per_run || 50);
+  const partialRetryLimit = Number(config.limits.classify_partial_retry_jobs_per_region_per_run || 0);
   const outputs = [];
-  for (const state of ['MI', 'NY']) {
+  for (const state of regions.map(region => region.key)) {
     outputs.push(run(NODE, [
       'scripts/enrichment/populate-classify-from-db.mjs',
       '--state', state,
       '--limit', String(limit),
       '--skip-existing',
     ], { timeout: 180000 }).slice(-1200));
+    if (partialRetryLimit > 0) {
+      outputs.push(run(NODE, [
+        'scripts/enrichment/populate-classify-from-db.mjs',
+        '--state', state,
+        '--limit', String(partialRetryLimit),
+        '--skip-existing',
+        '--retry-partial',
+      ], { timeout: 180000 }).slice(-1200));
+    }
   }
   return outputs.join('\n');
 }
@@ -264,14 +299,72 @@ function populateClassifierQueue(config, apply) {
 const options = args(process.argv);
 const config = loadJson(CONFIG_PATH, null);
 if (!config) throw new Error(`Missing ${CONFIG_PATH}`);
-const regions = options.regions?.length
-  ? config.regions.filter(region => options.regions.includes(String(region.key).toUpperCase()))
-  : config.regions;
-if (!regions.length) throw new Error(`No configured regions matched --regions ${options.regions.join(',')}`);
-if (!acquireLock()) { console.log('source pipeline already running; exiting'); process.exit(0); }
+const regions = selectSourcePipelineRegions(config, options.regions);
+if (!regions.length) {
+  const requested = options.regions?.length ? ` --regions ${options.regions.join(',')}` : '';
+  throw new Error(`No configured operational regions matched${requested}`);
+}
 const now = Date.now();
 const state = loadJson(STATE_PATH, { sources: {}, region_index: 0, last_run: null });
 const selected = options.source === 'all' ? Object.keys(config.sources) : options.source.split(',').map(value => value.trim());
+
+if (options.plan) {
+  const plan = {
+    generated_at: new Date(now).toISOString(),
+    mode: 'plan',
+    source: options.source,
+    regions: regions.map(region => region.key),
+    max_work_units: options.maxWorkUnits,
+    force: options.force,
+    work_units: [],
+    skipped: [],
+  };
+  let plannedWorkUnits = 0;
+  for (const source of selected) {
+    const sourceConfig = config.sources[source];
+    if (!sourceConfig?.enabled) {
+      plan.skipped.push({ source, reason: 'disabled' });
+      continue;
+    }
+    if (plannedWorkUnits >= options.maxWorkUnits) {
+      plan.skipped.push({ source, reason: 'max_work_units_reached' });
+      continue;
+    }
+    const sourceState = state.sources[source] || {};
+    if (!options.force && !due({ ...sourceConfig, ...sourceState }, now)) {
+      plan.skipped.push({
+        source,
+        reason: 'cadence_not_due',
+        last_success: sourceState.last_success || null,
+        cadence_hours: sourceConfig.cadence_hours,
+      });
+      continue;
+    }
+    const regionIndex = Number.isInteger(Number(sourceState.region_index))
+      ? Number(sourceState.region_index)
+      : 0;
+    const region = source === 'osm'
+      ? selectOsmRegion(regions, config.sources.osm, regionIndex)
+      : regions[regionIndex % regions.length];
+    plan.work_units.push({
+      source,
+      region: region?.key || null,
+      last_success: sourceState.last_success || null,
+      cadence_hours: sourceConfig.cadence_hours,
+      capabilities: sourceConfig.capabilities || [],
+    });
+    plannedWorkUnits += 1;
+  }
+  if (options.json) console.log(JSON.stringify(plan, null, 2));
+  else {
+    console.log(`source pipeline plan: due=${plan.work_units.length} skipped=${plan.skipped.length}`);
+    for (const workUnit of plan.work_units) console.log(`  - ${workUnit.source}${workUnit.region ? ` (${workUnit.region})` : ''}`);
+    for (const skipped of plan.skipped) console.log(`  - ${skipped.source}: ${skipped.reason}`);
+  }
+  process.exit(0);
+}
+
+if (!acquireLock()) { console.log('source pipeline already running; exiting'); process.exit(0); }
 const report = { started_at: new Date(now).toISOString(), mode: options.apply ? 'apply' : 'dry-run', work_units: [], skipped: [], errors: [] };
 let workUnits = 0;
 try {
@@ -352,7 +445,12 @@ try {
           const output = resolve(ROOT, 'data/source-inputs', `${source}-${region.key}-${now}-${regionOffset}.json`);
           mkdirSync(dirname(output), { recursive: true });
           const paths = runAdapter(source, region, output, { ...config, apply: options.apply }, state);
-          report.work_units.push({ source, region: region.key, report_file: paths.reportFile });
+          report.work_units.push({
+            source,
+            region: region.key,
+            report_file: paths.reportFile,
+            ...(paths.osmProvenanceRefresh ? { osm_provenance_refresh: paths.osmProvenanceRefresh } : {}),
+          });
           processNew(paths.report, source, config, options.apply, options.maxNewPlaces);
           state.sources[source] = {
             ...(state.sources[source] || {}),
@@ -368,6 +466,9 @@ try {
         last_error: null,
         consecutive_failures: 0,
       };
+      if (source === 'osm') {
+        state.sources[source].region_index = (regions.findIndex(candidate => candidate.key === region.key) + 1) % regions.length;
+      }
       if (!['official_website', 'osm'].includes(source)) workUnits += 1;
     } catch (error) {
       const message = error?.stack || error?.message || String(error);
@@ -394,7 +495,7 @@ try {
     report.contact_promotion = promoteContactFields(config, options.apply);
   }
   if (options.apply) {
-    report.classifier_queue = populateClassifierQueue(config, options.apply);
+    report.classifier_queue = populateClassifierQueue(config, options.apply, regions);
   }
   // Keep the legacy aggregate cursor for older status tooling, but derive
   // actual work selection from each source's cursor above.

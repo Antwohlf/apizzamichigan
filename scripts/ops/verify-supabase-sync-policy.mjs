@@ -13,6 +13,7 @@ import {
   LOCAL_ONLY_SUPABASE_TABLES,
   SUPABASE_SYNC_TARGET_TABLE,
   assertSupabaseSyncTableBoundary,
+  buildSupabasePayload,
   localSyncSelect,
 } from '../lib/supabase-sync-policy.mjs';
 
@@ -53,6 +54,33 @@ function main() {
   assert(/\bfrom pizza_places\b/i.test(sql), 'Local sync SQL must select from pizza_places.');
   for (const tableName of LOCAL_ONLY_SUPABASE_TABLES) {
     assert(!new RegExp(`\\b${tableName}\\b`, 'i').test(sql), `Local sync SQL must not reference ${tableName}.`);
+  }
+
+  if (LIFECYCLE_SYNC_ENABLED) {
+    const lifecycleSql = localSyncSelect({ ids: [7], lifecycleOnly: true, batch: 1 }).sql;
+    assert(/lifecycle_status is not null|lifecycle_replaced_by_id is not null/i.test(lifecycleSql), 'Lifecycle-only SQL must select rows with lifecycle data.');
+    const payload = buildSupabasePayload(
+      {
+        id: 7,
+        lifecycle_status: 'closed',
+        lifecycle_replaced_by_id: null,
+        style: 'Standard Round',
+        website_url: 'https://example.test',
+      },
+      {
+        id: 7,
+        lifecycle_status: null,
+        lifecycle_replaced_by_id: null,
+        style: 'Traditional',
+        website_url: null,
+        qa_status: null,
+        qa_schema_version: null,
+      },
+      { lifecycleOnly: true },
+    );
+    assert(payload.lifecycle_status === 'closed', 'Lifecycle-only payload must include lifecycle status.');
+    assert(!('style' in payload) && !('website_url' in payload), 'Lifecycle-only payload must exclude enrichment fields.');
+    assert(!('qa_status' in payload) && !('qa_schema_version' in payload), 'Lifecycle-only payload must exclude QA defaults.');
   }
 
   if (LIFECYCLE_SYNC_ENABLED) {

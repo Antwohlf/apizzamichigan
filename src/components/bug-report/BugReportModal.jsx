@@ -30,6 +30,8 @@ function buildMetadata(selectedPlace) {
         price_range: selectedPlace.price_range ?? selectedPlace.priceRange ?? selectedPlace.price ?? null,
         status: selectedPlace.status ?? null,
         rating: typeof selectedPlace.rating === 'number' && Number.isFinite(selectedPlace.rating) ? selectedPlace.rating : null,
+        lifecycle_status: selectedPlace.lifecycle_status ?? selectedPlace.lifecycleStatus ?? null,
+        lifecycle_replaced_by_id: selectedPlace.lifecycle_replaced_by_id ?? selectedPlace.lifecycleReplacedById ?? null,
         lat: typeof selectedPlace.lat === 'number' && Number.isFinite(selectedPlace.lat) ? selectedPlace.lat : null,
         lng: typeof selectedPlace.lng === 'number' && Number.isFinite(selectedPlace.lng) ? selectedPlace.lng : null,
       }

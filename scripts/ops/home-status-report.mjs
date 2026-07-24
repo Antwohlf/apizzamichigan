@@ -9,7 +9,7 @@
 import Database from 'better-sqlite3'
 import pg from 'pg'
 import 'dotenv/config'
-import { existsSync, statSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { execFileSync, spawnSync } from 'child_process'
 
@@ -317,14 +317,33 @@ function launchdServiceReport(label) {
     return match ? match[1].trim() : ''
   }
 
+  const state = field('state')
+  const pid = field('pid')
+  const runs = field('runs')
+  const lastExitCode = field('last exit code')
+  const runInterval = field('run interval')
+  const calendarHour = result.stdout.match(/"Hour"\s*=>\s*(\d+)/)?.[1]
+  const calendarMinute = result.stdout.match(/"Minute"\s*=>\s*(\d+)/)?.[1]
+  const calendarSchedule = calendarHour !== undefined && calendarMinute !== undefined
+    ? `${String(calendarHour).padStart(2, '0')}:${String(calendarMinute).padStart(2, '0')} daily`
+    : ''
+  const schedule = runInterval || calendarSchedule
+  const operationalState = pid
+    ? 'running'
+    : schedule
+      ? (lastExitCode === '0' ? 'scheduled_idle' : 'scheduled_waiting')
+      : (state || 'unknown')
+
   return {
     label,
     ok: true,
-    state: field('state'),
-    pid: field('pid'),
-    runs: field('runs'),
-    lastExitCode: field('last exit code'),
-    runInterval: field('run interval')
+    state,
+    operationalState,
+    pid,
+    runs,
+    lastExitCode,
+    runInterval,
+    schedule
   }
 }
 
@@ -353,6 +372,36 @@ function syncLockReport() {
     return { path, exists: true, ageMinutes }
   } catch (error) {
     return { path, exists: true, error: errorMessage(error) }
+  }
+}
+
+function backupReport(root) {
+  const outputDir = process.env.APIZZA_BACKUP_DIR || join(root, 'backups')
+  if (!existsSync(outputDir)) return { ok: false, outputDir, error: 'backup directory not found' }
+
+  try {
+    const runs = readdirSync(outputDir)
+      .map(name => join(outputDir, name))
+      .filter(path => existsSync(join(path, 'manifest.json')))
+      .sort()
+      .reverse()
+    if (!runs.length) return { ok: false, outputDir, error: 'no backup manifests found' }
+
+    const latestRun = runs[0]
+    const manifest = JSON.parse(readFileSync(join(latestRun, 'manifest.json'), 'utf8'))
+    const generatedAt = manifest.generated_at || null
+    const ageMinutes = generatedAt ? (Date.now() - Date.parse(generatedAt)) / 60000 : null
+    return {
+      ok: true,
+      outputDir,
+      latestRun,
+      generatedAt,
+      ageMinutes: Number.isFinite(ageMinutes) ? ageMinutes : null,
+      files: Array.isArray(manifest.files) ? manifest.files.map(file => file.label) : [],
+      retainedRuns: runs.length,
+    }
+  } catch (error) {
+    return { ok: false, outputDir, error: errorMessage(error) }
   }
 }
 
@@ -407,7 +456,8 @@ async function main() {
   const launchd = [
     launchdServiceReport('com.apizzamichigan.classifier'),
     launchdServiceReport('com.apizzamichigan.scraper'),
-    launchdServiceReport('com.apizzamichigan.supabase-sync')
+    launchdServiceReport('com.apizzamichigan.supabase-sync'),
+    launchdServiceReport('com.apizzamichigan.backup'),
   ]
   const schedulers = [
     launchdServiceReport('com.apizzamichigan.source-pipeline'),
@@ -416,11 +466,12 @@ async function main() {
   ]
   const ollamaTunnel = ollamaTunnelReport()
   const syncLock = syncLockReport()
+  const backup = backupReport(root)
   const fsqSample = fsqSampleReport(root)
   const now = new Date().toISOString()
 
   if (args.has('--json')) {
-    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, schedulers, ollamaTunnel, syncLock, fsqSample, processes }, null, 2))
+    console.log(JSON.stringify({ generatedAt: now, root, git, queue, postgres, ollama, launchd, schedulers, ollamaTunnel, syncLock, backup, fsqSample, processes }, null, 2))
     return
   }
 
@@ -494,24 +545,26 @@ async function main() {
   console.log(``)
 
   console.log(`## Launchd Services`)
-  console.log(table(['label', 'state', 'pid', 'runs', 'lastExitCode', 'runInterval', 'status'], launchd.map(service => ({
+  console.log(table(['label', 'state', 'operationalState', 'pid', 'runs', 'lastExitCode', 'schedule', 'status'], launchd.map(service => ({
     label: service.label,
     state: service.state || '',
+    operationalState: service.operationalState || '',
     pid: service.pid || '',
     runs: service.runs || '',
     lastExitCode: service.lastExitCode || '',
-    runInterval: service.runInterval || '',
+    schedule: service.schedule || '',
     status: service.ok ? 'ok' : `failed: ${service.error}`
   }))))
   console.log(``)
   console.log(`### Scheduled Jobs`)
-  console.log(table(['label', 'state', 'pid', 'runs', 'lastExitCode', 'runInterval', 'status'], schedulers.map(service => ({
+  console.log(table(['label', 'state', 'operationalState', 'pid', 'runs', 'lastExitCode', 'schedule', 'status'], schedulers.map(service => ({
     label: service.label,
     state: service.state || '',
+    operationalState: service.operationalState || '',
     pid: service.pid || '',
     runs: service.runs || '',
     lastExitCode: service.lastExitCode || '',
-    runInterval: service.runInterval || '',
+    schedule: service.schedule || '',
     status: service.ok ? 'ok' : `failed: ${service.error}`
   }))))
   console.log(``)
@@ -530,6 +583,20 @@ async function main() {
   }
   if (syncLock.error) {
     console.log(`- error: ${syncLock.error}`)
+  }
+  console.log(``)
+
+  console.log(`## Local Backups`)
+  if (!backup.ok) {
+    console.log(`- status: failed`)
+    console.log(`- directory: \`${backup.outputDir}\``)
+    console.log(`- error: ${backup.error}`)
+  } else {
+    console.log(`- status: ok`)
+    console.log(`- latest: ${backup.generatedAt || '(unknown)'}`)
+    console.log(`- age_minutes: ${backup.ageMinutes == null ? '(unknown)' : backup.ageMinutes.toFixed(1)}`)
+    console.log(`- contents: ${backup.files.join(', ') || '(unknown)'}`)
+    console.log(`- retained_runs: ${backup.retainedRuns}`)
   }
   console.log(``)
 

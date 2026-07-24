@@ -718,6 +718,85 @@
   border-top: 1px solid var(--admin-border);
 }
 
+.admin-system-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  border: 1px solid var(--admin-border);
+  border-left: 3px solid var(--admin-orange);
+  border-radius: 6px;
+  padding: 16px 18px;
+  background: #171a1d;
+}
+
+.admin-system-status h2 {
+  margin: 2px 0 4px;
+  font-size: 17px;
+}
+
+.admin-eyebrow {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-system-status p:last-child {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.admin-system-status__state {
+  flex: 0 0 auto;
+  color: #f8fafc;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.admin-system-status__state--ready,
+.admin-system-status__state--nothing_waiting {
+  color: #86efac;
+}
+
+.admin-system-status__state--blocked,
+.admin-system-status__state--unavailable {
+  color: #fbbf24;
+}
+
+.admin-home-publishing {
+  margin: 0 0 24px;
+}
+
+.admin-home-publishing__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .admin-system-status {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-home-publishing {
+    margin-bottom: 16px;
+  }
+
+  .admin-home-publishing__actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
 .admin-system-section > summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -770,6 +849,26 @@
   margin-top: 3px;
   color: var(--admin-muted);
   font-size: 11px;
+}
+
+.admin-table__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.admin-table__actions a {
+  color: var(--admin-accent);
+  font-weight: 700;
+}
+
+.admin-table__success {
+  color: #86efac;
+}
+
+.admin-table__warning {
+  color: #fbbf24;
 }
 
 .admin-table td .admin-button {

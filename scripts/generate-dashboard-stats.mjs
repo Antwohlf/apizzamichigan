@@ -8,6 +8,7 @@
  * Usage:
  *   node scripts/generate-dashboard-stats.mjs           # Use Supabase (production)
  *   node scripts/generate-dashboard-stats.mjs --local   # Use local PostgreSQL
+ *   node scripts/generate-dashboard-stats.mjs --strict  # Fail if the source is unavailable
  *
  * The generated file is served statically - no Supabase queries on page load.
  */
@@ -24,6 +25,7 @@ const OUTPUT_FILE = join(OUTPUT_DIR, 'dashboard-stats.json')
 
 // Parse args
 const useLocal = process.argv.includes('--local')
+const strict = process.argv.includes('--strict') || process.env.STRICT_STATS_GENERATION === '1'
 
 // Initialize database client
 let supabase = null
@@ -451,8 +453,15 @@ async function main() {
     console.log(`\nThe /data page will now load this static file (zero egress).`)
 
   } catch (error) {
+    if (existsSync(OUTPUT_FILE) && !strict) {
+      console.warn(`Warning: stats generation failed: ${error.message}`)
+      console.warn(`Keeping the existing static stats file: ${OUTPUT_FILE}`)
+      console.warn('Use --strict when a fresh stats file is required.')
+      return
+    }
+
     console.error('Error:', error.message)
-    process.exit(1)
+    process.exitCode = 1
   } finally {
     // Clean up local connection
     if (pgClient) {

@@ -20,11 +20,18 @@ import {
   DEFAULT_MAP_ZOOM,
   FOCUSED_PLACE_ZOOM,
   MIN_INDIVIDUAL_MARKERS_ZOOM,
+  CLUSTER_FIT_MAX_ZOOM,
   clusterFitOptions,
+  clusterNavigation,
+  clusterRadiusForZoom,
   focusedPlaceZoom,
   isPlaceViewportFocused,
+  captureLightboxViewport,
   lightboxRestoreViewport,
+  searchFitOptions,
+  searchNavigation,
 } from './viewport'
+import { saveMapReturnState } from './mapReturnState'
 
 const CLUSTER_ICONS = {
   pizza: { visited: pizzaIconColored, unvisited: pizzaIconGrey, golden: pizzaIconGold },
@@ -70,7 +77,7 @@ const createClusterIcon = (site, showCounts) => (cluster) => {
 
   return L.divIcon({
     html: `
-      <div style="position: relative; width: 44px; height: 44px;">
+      <div role="img" aria-label="${count} ${site} places" title="${count} ${site} places" style="position: relative; width: 44px; height: 44px;">
         <img src="${icon}" alt="" aria-hidden="true" style="width: 44px; height: 44px;" />
         ${badgeHtml}
       </div>
@@ -142,6 +149,7 @@ export function PlacesLayer({
   flyToLocation,
   resetKey,
   forceIndividualMarkers = false,
+  searchFocusKey = '',
 }) {
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
@@ -155,6 +163,8 @@ export function PlacesLayer({
   const isMountedRef = useRef(true)
   const lightboxViewportRef = useRef(null)
   const activePlaceRef = useRef(null)
+  const lastSearchFocusKeyRef = useRef('')
+  const searchViewportRef = useRef(null)
 
   // Track mount state and map stability for safe cleanup
   useEffect(() => {
@@ -293,7 +303,10 @@ export function PlacesLayer({
     let lateRestoreTimer = null
 
     const handleLightboxOpen = () => {
-      lightboxViewportRef.current = captureMapViewport(map)
+      lightboxViewportRef.current = captureLightboxViewport({
+        capturedViewport: captureMapViewport(map),
+        activePlace: activePlaceRef.current,
+      })
     }
 
     const handleLightboxClose = () => {
@@ -384,6 +397,29 @@ export function PlacesLayer({
     const bounds = cluster.getBounds()
     if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return
 
+    const southwest = typeof bounds.getSouthWest === 'function' ? bounds.getSouthWest() : null
+    const northeast = typeof bounds.getNorthEast === 'function' ? bounds.getNorthEast() : null
+    const navigation = clusterNavigation({
+      latitudeSpan: southwest && northeast ? northeast.lat - southwest.lat : 0,
+      longitudeSpan: southwest && northeast ? northeast.lng - southwest.lng : 0,
+      currentZoom: typeof map.getZoom === 'function' ? map.getZoom() : DEFAULT_ZOOM,
+      // Keep wide-cluster expansion at neighborhood context. Leaflet's global
+      // max zoom is a rendering limit, not the product's navigation target.
+      maxZoom: CLUSTER_FIT_MAX_ZOOM,
+    })
+
+    if (navigation.mode === 'step' && typeof bounds.getCenter === 'function') {
+      const center = bounds.getCenter()
+      if (center && typeof map.flyTo === 'function') {
+        map.flyTo([center.lat, center.lng], navigation.zoom, {
+          duration: 0.6,
+          easeLinearity: 0.25,
+          animate: true,
+        })
+        return
+      }
+    }
+
     map.fitBounds(bounds, clusterFitOptions())
   }, [map])
 
@@ -414,6 +450,60 @@ export function PlacesLayer({
       console.warn('[PlacesLayer] flyToLocation error:', err)
     }
   }, [map, flyToLocation])
+
+  // Search results arrive independently from the regional map data. Bring the
+  // map to the committed result set once so the result list and map tell the
+  // same story without refocusing on every render.
+  useEffect(() => {
+    if (!searchFocusKey) {
+      // Search navigation is temporary. Return to the context the user was
+      // browsing before the result moved the map to another city or market.
+      const previousViewport = searchViewportRef.current
+      const shouldRestore = Boolean(map && lastSearchFocusKeyRef.current && previousViewport)
+      searchViewportRef.current = null
+      // Allow the same query to focus the map again after the user clears it.
+      lastSearchFocusKeyRef.current = ''
+
+      if (shouldRestore) {
+        // Let the result-driven region update settle before restoring the
+        // viewport; otherwise the map can immediately snap back to the
+        // result bounds on the same render.
+        const restoreTimer = setTimeout(() => {
+          restoreMapViewport(map, previousViewport)
+        }, 0)
+        return () => clearTimeout(restoreTimer)
+      }
+      return
+    }
+    if (!map || !searchFocusKey || !places.length || lastSearchFocusKeyRef.current === searchFocusKey) return
+    const validPlaces = places.filter(place => (
+      typeof place.lat === 'number' && Number.isFinite(place.lat) &&
+      typeof place.lng === 'number' && Number.isFinite(place.lng)
+    ))
+    if (!validPlaces.length) return
+
+    if (!lastSearchFocusKeyRef.current && !searchViewportRef.current) {
+      searchViewportRef.current = captureMapViewport(map)
+    }
+    lastSearchFocusKeyRef.current = searchFocusKey
+    const navigation = searchNavigation(validPlaces)
+    if (navigation.mode === 'place' && navigation.place) {
+      if (navigation.zoom && typeof map.flyTo === 'function') {
+        map.flyTo([navigation.place.lat, navigation.place.lng], navigation.zoom, {
+          duration: 0.7,
+          easeLinearity: 0.25,
+          animate: true,
+        })
+      } else {
+        flyToPlace(navigation.place.lat, navigation.place.lng, { duration: 0.7 })
+      }
+      return
+    }
+
+    const bounds = L.latLngBounds(navigation.places.map(place => [place.lat, place.lng]))
+    if (!bounds.isValid() || typeof map.fitBounds !== 'function') return
+    map.fitBounds(bounds, searchFitOptions())
+  }, [map, places, searchFocusKey, flyToPlace])
 
   useEffect(() => {
     const marker = openEntry?.id ? markerRefs.current.get(`${openEntry.type}:${openEntry.id}`) : null
@@ -481,6 +571,10 @@ export function PlacesLayer({
     activePlaceRef.current = activePlace
     const placeId = String(activePlace.id)
     const target = { id: placeId, lat: activePlace.lat, lng: activePlace.lng, type: site }
+    const replacementId = activePlace.lifecycle_replaced_by_id ?? activePlace.lifecycleReplacedById ?? null
+    const replacementPlace = replacementId
+      ? places.find(place => String(place.id) === String(replacementId))
+      : null
     const href = site === 'taco' ? `/tacos/places/${encodeURIComponent(placeId)}` : `/places/${encodeURIComponent(placeId)}`
     setSelectedPlace({
       id: activePlace.id ?? activePlace.place_id ?? null,
@@ -495,16 +589,38 @@ export function PlacesLayer({
       price_range: activePlace.price_range ?? activePlace.priceRange ?? activePlace.price ?? null,
       status: activePlace.statusRaw ?? activePlace.status ?? null,
       rating: typeof activePlace.rating === 'number' && Number.isFinite(activePlace.rating) ? activePlace.rating : null,
+      lifecycle_status: activePlace.lifecycle_status ?? activePlace.lifecycleStatus ?? null,
+      lifecycle_replaced_by_id: activePlace.lifecycle_replaced_by_id ?? activePlace.lifecycleReplacedById ?? null,
       lat: activePlace.lat,
       lng: activePlace.lng,
     })
     popup.expand(target, node =>
-      renderExpanded(node, { ...activePlace, id: placeId, type: site, href }, () => {
-        popup.hide()
-        close()
-      })
+      renderExpanded(
+        node,
+        {
+          ...activePlace,
+          id: placeId,
+          type: site,
+          href,
+          lifecycle_replaced_by_name: replacementPlace?.name || null,
+        },
+        () => {
+          popup.hide()
+          close()
+        },
+        () => {
+          const viewport = captureMapViewport(map)
+          if (!viewport || typeof window === 'undefined') return
+          saveMapReturnState({
+            pathname: window.location.pathname,
+            search: window.location.search,
+            center: { lat: viewport.lat, lng: viewport.lng },
+            zoom: viewport.zoom,
+          })
+        },
+      )
     )
-  }, [close, openEntry, places, popup, site, setSelectedPlace])
+  }, [close, map, openEntry, places, popup, site, setSelectedPlace])
 
   useEffect(
     () => () => {
@@ -542,6 +658,7 @@ export function PlacesLayer({
           <Marker
             key={markerKey}
             position={[lat, lng]}
+            title={place.name || `${site} place`}
             icon={getMarkerIcon(site, status)}
             eventHandlers={{
               click: event => {
@@ -635,18 +752,23 @@ export function PlacesLayer({
     <>
       <MapClickCloser close={close} />
       {showIndividualMarkers && (
-        <MarkerClusterGroup
-          key={`cluster-${site}-${showClusterCounts}`}
-          chunkedLoading
-          maxClusterRadius={80}
-          spiderfyOnMaxZoom
-          zoomToBoundsOnClick={false}
-          onClick={handleClusterClick}
-          showCoverageOnHover={false}
-          iconCreateFunction={createClusterIcon(site, showClusterCounts)}
-        >
-          {markers}
-        </MarkerClusterGroup>
+        forceIndividualMarkers ? markers : (
+          <MarkerClusterGroup
+            key={`cluster-${site}-${showClusterCounts}`}
+            chunkedLoading
+            maxClusterRadius={clusterRadiusForZoom}
+            // Keep dense locations in normal map space. Spiderfying makes a
+            // place cluster jump away from its real geography at max zoom.
+            spiderfyOnMaxZoom={false}
+            disableClusteringAtZoom={15}
+            zoomToBoundsOnClick={false}
+            onClick={handleClusterClick}
+            showCoverageOnHover={false}
+            iconCreateFunction={createClusterIcon(site, showClusterCounts)}
+          >
+            {markers}
+          </MarkerClusterGroup>
+        )
       )}
       {showStateAggregates && (
         <StateAggregateLayer

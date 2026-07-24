@@ -30,6 +30,17 @@ describe('buildGoogleMapsUrl', () => {
     })).toBe('https://www.google.com/maps/place/Test/@42,-83,12z')
   })
 
+  test('does not duplicate city or state already present in a full address', () => {
+    expect(buildGoogleMapsUrl({
+      name: 'Mama Pizza',
+      address: '5 N Hamilton St, Ypsilanti, MI 48197',
+      city: 'Ypsilanti',
+      state: 'MI',
+    })).toBe(
+      'https://www.google.com/maps/search/?api=1&query=Mama%20Pizza%205%20N%20Hamilton%20St%2C%20Ypsilanti%2C%20MI%2048197'
+    )
+  })
+
   test('ignores unsafe stored URLs and non-Google external IDs', () => {
     expect(isGooglePlaceId('fsq:abc123')).toBe(false)
     expect(buildGoogleMapsUrl({

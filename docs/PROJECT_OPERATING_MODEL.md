@@ -56,6 +56,11 @@ Descriptors such as breakfast, frozen, white pizza, slice, pan, square, or
 tomato pie are useful secondary attributes, but should not become additional
 primary-style values without a product decision.
 
+Anthony's Picks is an editorial filter, not a source or classifier result. Its
+minimum rating is configured per entity profile (currently 8/10 for Pizza and
+Taco), and the public map count and place filter must use that same configured
+value.
+
 ## Source precedence
 
 1. Official website for first-party contact and menu facts.
@@ -92,6 +97,8 @@ because the address is unchanged.
 `config/entity-profiles.json` is the reuse boundary. It identifies what varies
 by entity. The canonical contract remains shared; source pipelines may be
 enabled per entity as their adapters and schemas become production-ready.
-Pizza is operationally active today. Taco has a canonical table and public/admin
-surface, but its source feeder should remain disabled until it has its own
+Each profile declares this explicitly through `source_pipeline.enabled` and,
+when enabled, the path to its pipeline configuration. Pizza is operationally
+active today. Taco has a canonical table and public/admin surface, but its
+`source_pipeline.enabled` flag is deliberately false until it has its own
 validated policy and runbook.

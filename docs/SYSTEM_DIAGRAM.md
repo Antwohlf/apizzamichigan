@@ -142,7 +142,9 @@ graph TD
 - Classifier output cap: `OLLAMA_NUM_PREDICT=80`
 - Classifier timeout: `OLLAMA_TIMEOUT_MS=240000`
 - Sync service: `com.apizzamichigan.supabase-sync`, one guarded 100-row batch every 30 minutes
-- Scrape/OSM services: manual only in this phase
+- OSM source refresh: launchd-managed through the bounded source pipeline
+- Website scraping: launchd-managed through the single scraper worker
+- Menu parsing: paused/manual slowlane
 
 ## Key Files
 

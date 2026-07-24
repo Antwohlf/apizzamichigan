@@ -26,8 +26,9 @@ const maxRuntimeMs = positiveInt(process.env.OSM_EXPORT_MAX_RUNTIME_MS, 15 * 60 
 const refreshAfterHours = positiveInt(process.env.OSM_REFRESH_AFTER_HOURS, 30 * 24)
 const refreshAfterMs = refreshAfterHours * 60 * 60 * 1000
 const retryFailed = args['retry-failed'] === true || args['retry-failed'] === 'true'
+const planOnly = args.plan === true || args.plan === 'true'
 if (![south, west, north, east].every(Number.isFinite) || !output) {
-  throw new Error('Usage: export-osm-tiles.mjs --bbox south,west,north,east --output file [--step 0.5] [--manifest file]')
+  throw new Error('Usage: export-osm-tiles.mjs --bbox south,west,north,east --output file [--step 0.5] [--manifest file] [--plan]')
 }
 if (south >= north || west >= east || step <= 0) throw new Error('Invalid bbox or step')
 
@@ -44,6 +45,51 @@ manifest.bbox = [south, west, north, east]
 manifest.step = step
 manifest.total_tiles = tiles.length
 manifest.tiles = manifest.tiles || {}
+
+if (planOnly) {
+  const now = Date.now()
+  const statusCounts = Object.values(manifest.tiles).reduce((out, tile) => {
+    out[tile.status] = (out[tile.status] || 0) + 1
+    return out
+  }, {})
+  const nextTiles = []
+  let deferredTiles = 0
+  for (const tile of [...tiles].sort((left, right) => tilePriority(left, right, manifest, retryFailed))) {
+    const prior = manifest.tiles[tileKey(tile)]
+    const completedAt = prior?.completed_at ? Date.parse(prior.completed_at) : NaN
+    const successIsFresh = prior?.status === 'success'
+      && Number.isFinite(completedAt)
+      && now - completedAt < refreshAfterMs
+    if (successIsFresh && args.resume !== 'false') continue
+    if (prior?.status === 'failed' && !retryFailed && prior.next_retry_at && Date.parse(prior.next_retry_at) > now && args.resume !== 'false') {
+      deferredTiles += 1
+      continue
+    }
+    nextTiles.push({
+      key: tileKey(tile),
+      bbox: tile.bbox,
+      prior_status: prior?.status || 'unprocessed',
+      retry_count: Number(prior?.retry_count || 0),
+      next_retry_at: prior?.next_retry_at || null,
+    })
+  }
+  const planLimit = Math.min(maxTiles, 25)
+  console.log(JSON.stringify({
+    mode: 'plan',
+    source: 'osm',
+    bbox: [south, west, north, east],
+    step,
+    manifest: manifestPath,
+    total_tiles: tiles.length,
+    status_counts: statusCounts,
+    unprocessed_tiles: tiles.filter(tile => !manifest.tiles[tileKey(tile)]).length,
+    retryable_tiles: nextTiles.length,
+    deferred_tiles: deferredTiles,
+    estimated_runs_at_max_tiles: maxTiles === Number.MAX_SAFE_INTEGER ? null : Math.ceil(nextTiles.length / maxTiles),
+    next_tiles: nextTiles.slice(0, planLimit),
+  }, null, 2))
+  process.exit(0)
+}
 
 const rowsById = new Map()
 for (const tile of Object.values(manifest.tiles)) {
@@ -160,6 +206,18 @@ function sameNumbers(left, right) {
   return Array.isArray(left)
     && left.length === right.length
     && left.every((value, index) => Number(value) === Number(right[index]))
+}
+
+function tilePriority(left, right, manifest, retryFailed) {
+  const leftPrior = manifest.tiles[tileKey(left)]
+  const rightPrior = manifest.tiles[tileKey(right)]
+  const retryPriority = prior => {
+    if (!prior || !['failed', 'partial'].includes(prior.status)) return 1
+    if (retryFailed) return 0
+    if (prior.next_retry_at && Date.parse(prior.next_retry_at) > Date.now()) return 2
+    return 0
+  }
+  return retryPriority(leftPrior) - retryPriority(rightPrior)
 }
 
 function buildTiles(s, w, n, e, size) {

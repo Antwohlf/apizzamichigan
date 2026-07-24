@@ -482,9 +482,20 @@ function isWithinScope(candidate, scope) {
   if (!scope.regions.length || scope.region_scope === 'global') return true;
   return scope.regions.some(region => {
     const [south, west, north, east] = region.bbox || [];
-    return [south, west, north, east].every(Number.isFinite)
+    const insideBox = [south, west, north, east].every(Number.isFinite)
       && candidate.lat >= south && candidate.lat <= north
       && candidate.lng >= west && candidate.lng <= east;
+    if (!insideBox) return false;
+
+    // Regional bboxes can cross state borders. When a source supplies an
+    // explicit region code, reject a known neighboring state; records without
+    // that tag remain eligible because incomplete OSM addresses are common.
+    const allowedRegions = Array.isArray(region.region_codes)
+      ? region.region_codes.map(value => String(value).trim().toUpperCase()).filter(Boolean)
+      : [];
+    if (!allowedRegions.length) return true;
+    const candidateRegion = String(candidate.region || '').trim().toUpperCase();
+    return !candidateRegion || allowedRegions.includes(candidateRegion);
   });
 }
 
@@ -508,6 +519,8 @@ export function normalizeSourceUrl(value) {
     .replace(/^https?:\/\/(www\.)?/, '')
     .replace(/\/+$/, '')
 }
+
+export { isWithinScope };
 
 export function sourceIdentifierMatch(candidate, place) {
   const sourcePhone = normalizeSourcePhone(candidate?.phone)

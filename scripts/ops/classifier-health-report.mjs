@@ -9,7 +9,7 @@
 import Database from 'better-sqlite3'
 import pg from 'pg'
 import 'dotenv/config'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { execFileSync, spawnSync } from 'child_process'
 import os from 'os'
@@ -307,7 +307,76 @@ function queueReport(root) {
   }
 }
 
-async function postgresReport() {
+function operationalRegions(root) {
+  try {
+    const config = JSON.parse(readFileSync(join(root, 'config/source-pipeline.json'), 'utf8'))
+    return Array.isArray(config.operational_regions) ? config.operational_regions : []
+  } catch {
+    return []
+  }
+}
+
+function parseJobData(value) {
+  if (!value) return {}
+  try {
+    return JSON.parse(value)
+  } catch {
+    return {}
+  }
+}
+
+function classificationBacklogReport(root, rows) {
+  const dbPath = process.env.QUEUE_DB_PATH || join(root, 'scripts/.job-queue.db')
+  const regions = operationalRegions(root)
+  const base = {
+    ok: false,
+    regions,
+    candidates: rows.length,
+    missingJob: 0,
+    pending: 0,
+    processing: 0,
+    retryablePartial: 0,
+    exhaustedPartial: 0,
+    failed: 0,
+    other: 0
+  }
+  if (!regions.length) return { ...base, error: 'no operational regions configured' }
+  if (!existsSync(dbPath)) return { ...base, error: 'queue DB not found' }
+
+  let db
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true })
+    const jobs = new Map(db.prepare(`
+      SELECT osm_id, status, data
+      FROM jobs
+      WHERE job_type = 'classify'
+    `).all().map(job => [job.osm_id, job]))
+
+    const counts = { ...base }
+    for (const row of rows) {
+      const job = jobs.get(row.google_place_id)
+      if (!job) {
+        counts.missingJob += 1
+        continue
+      }
+      if (job.status === 'pending') counts.pending += 1
+      else if (job.status === 'processing') counts.processing += 1
+      else if (job.status === 'failed') counts.failed += 1
+      else if (job.status === 'completed') {
+        const retries = Number(parseJobData(job.data).partial_reprocess_count) || 0
+        if (retries < 1) counts.retryablePartial += 1
+        else counts.exhaustedPartial += 1
+      } else counts.other += 1
+    }
+    return { ...counts, ok: true, dbPath }
+  } catch (error) {
+    return { ...base, dbPath, error: errorMessage(error) }
+  } finally {
+    if (db) db.close()
+  }
+}
+
+async function postgresReport(root) {
   const client = new pg.Client({
     host: process.env.PGHOST || 'localhost',
     port: process.env.PGPORT ? Number.parseInt(process.env.PGPORT, 10) : 5432,
@@ -322,6 +391,8 @@ async function postgresReport() {
       SELECT
         COUNT(*)::int as total,
         COUNT(*) FILTER (WHERE style IS NOT NULL OR price_range IS NOT NULL OR style_confidence IS NOT NULL)::int as classified_or_priced,
+        COUNT(*) FILTER (WHERE style IS NULL AND price_range IS NULL AND style_confidence IS NULL)::int as missing_all_classification,
+        COUNT(*) FILTER (WHERE style IS NULL OR price_range IS NULL)::int as incomplete_classification,
         COUNT(*) FILTER (WHERE last_enriched_at >= now() - ($1::text || ' hours')::interval)::int as enriched_in_window,
         MAX(last_enriched_at) as last_enriched_at
       FROM pizza_places
@@ -334,7 +405,34 @@ async function postgresReport() {
       LIMIT $1
     `, [MAX_ROWS])
 
-    return { ok: true, summary: summary.rows[0], recent: recent.rows }
+    const regions = operationalRegions(root)
+    const candidates = regions.length
+      ? await client.query(`
+          SELECT google_place_id
+          FROM pizza_places
+          WHERE state = ANY($1::text[])
+            AND NULLIF(BTRIM(google_place_id), '') IS NOT NULL
+            AND (
+              scrape_method IN ('fetch', 'browser')
+              OR osm_tags IS NOT NULL
+              OR EXISTS (
+                SELECT 1
+                FROM place_sources ps
+                WHERE ps.entity_type = 'pizza'
+                  AND ps.place_id = pizza_places.id
+                  AND ps.match_confidence >= 0.9
+              )
+            )
+            AND (style IS NULL OR price_range IS NULL)
+        `, [regions])
+      : { rows: [] }
+
+    return {
+      ok: true,
+      summary: summary.rows[0],
+      recent: recent.rows,
+      classificationBacklog: classificationBacklogReport(root, candidates.rows)
+    }
   } catch (error) {
     return { ok: false, error: errorMessage(error) }
   } finally {
@@ -434,7 +532,7 @@ async function main() {
   const processes = processReport()
   const tunnel = tunnelReport()
   const queue = queueReport(root)
-  const [postgres, ollama] = await Promise.all([postgresReport(), ollamaReport()])
+  const [postgres, ollama] = await Promise.all([postgresReport(root), ollamaReport()])
   const health = classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgres, ollama, tunnel })
 
   const payload = { generatedAt, root, health, git, launchd, tunnelLaunchd, processes, tunnel, queue, postgres, ollama }
@@ -465,6 +563,15 @@ async function main() {
   if (postgres.ok) {
     console.log(`- Postgres writes last ${WINDOW_HOURS}h: ${postgres.summary.enriched_in_window}`)
     console.log(`- classified_or_priced: ${postgres.summary.classified_or_priced}`)
+    console.log(`- missing_all_classification: ${postgres.summary.missing_all_classification}`)
+    console.log(`- incomplete_classification: ${postgres.summary.incomplete_classification}`)
+    if (postgres.classificationBacklog?.ok) {
+      const backlog = postgres.classificationBacklog
+      console.log(`- operational classification backlog (${backlog.regions.join(', ')}): ${backlog.candidates}`)
+      console.log(`- backlog queue state: pending=${backlog.pending}, processing=${backlog.processing}, retryable_partial=${backlog.retryablePartial}, missing_job=${backlog.missingJob}, exhausted_partial=${backlog.exhaustedPartial}`)
+    } else if (postgres.classificationBacklog) {
+      console.log(`- operational classification backlog: unavailable (${postgres.classificationBacklog.error})`)
+    }
     console.log(`- last_enriched_at: ${postgres.summary.last_enriched_at || ''}`)
   } else {
     console.log(`- Postgres: unavailable (${postgres.error})`)

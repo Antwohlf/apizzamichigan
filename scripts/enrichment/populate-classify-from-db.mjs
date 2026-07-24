@@ -36,7 +36,8 @@ function parseArgs() {
   const priorityBoost = args.includes('--priority-boost') ? parseInt(args[args.indexOf('--priority-boost') + 1], 10) : 0
   const limit = args.includes('--limit') ? parseInt(args[args.indexOf('--limit') + 1], 10) : 200
   const skipExisting = args.includes('--skip-existing')
-  return { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit, skipExisting }
+  const retryPartial = args.includes('--retry-partial')
+  return { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit, skipExisting, retryPartial }
 }
 
 function printHelp() {
@@ -52,6 +53,7 @@ Options:
   --priority-boost <n>      Boost matching pending classify jobs after add
   --limit <n>               Maximum candidates to inspect (default 200)
   --skip-existing           Skip places that already have any classify job
+  --retry-partial           Requeue completed jobs with partial classification once
   --dry-run                 Count candidates without adding or boosting jobs
   --help                    Print this help and exit
 
@@ -62,7 +64,7 @@ classifier yet; use --type pizza explicitly in generated handoff commands.
 }
 
 async function main() {
-  const { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit, skipExisting } = parseArgs()
+  const { help, dryRun, type, state, ids, idPrefix, minPlaceId, maxPlaceId, priorityBoost, limit, skipExisting, retryPartial } = parseArgs()
   if (help) {
     printHelp()
     return
@@ -80,7 +82,7 @@ async function main() {
   })
 
   await client.connect()
-  const queue = dryRun ? null : getQueue()
+  const queue = dryRun && !retryPartial ? null : getQueue()
 
   const clauses = [
     "NULLIF(BTRIM(google_place_id), '') IS NOT NULL",
@@ -131,7 +133,7 @@ async function main() {
   }
 
   const { rows } = await client.query(
-    `SELECT id, google_place_id, state
+    `SELECT id, google_place_id, state, style, price_range
      FROM pizza_places
      WHERE ${clauses.join(' AND ')}
      ORDER BY id ASC
@@ -139,10 +141,39 @@ async function main() {
     params
   )
 
-  const existingIds = skipExisting && !dryRun
-    ? new Set(queue.db.prepare("SELECT osm_id FROM jobs WHERE job_type = 'classify'").all().map(row => row.osm_id))
-    : new Set()
-  const eligibleRows = skipExisting ? rows.filter(row => !existingIds.has(row.google_place_id)) : rows
+  const existingJobs = skipExisting && queue
+    ? new Map(queue.db.prepare("SELECT osm_id, status, data, id FROM jobs WHERE job_type = 'classify'").all().map(row => [row.osm_id, row]))
+    : new Map()
+  const newRows = []
+  const partialRows = []
+  let skippedExisting = 0
+  for (const row of rows) {
+    const existing = existingJobs.get(row.google_place_id)
+    if (!skipExisting || !existing) {
+      newRows.push(row)
+      continue
+    }
+
+    let jobData = {}
+    try {
+      jobData = existing.data ? JSON.parse(existing.data) : {}
+    } catch {
+      jobData = {}
+    }
+    const partialRetryCount = Number(jobData.partial_reprocess_count) || 0
+    if (
+      retryPartial
+      && existing.status === 'completed'
+      && partialRetryCount < 1
+      && (row.style === null || row.price_range === null)
+    ) {
+      partialRows.push({ row, job: existing })
+    } else {
+      skippedExisting += 1
+    }
+  }
+
+  const eligibleRows = newRows
   const jobs = eligibleRows.slice(0, limit).map((r) => ({
     jobType: 'classify',
     osmId: r.google_place_id,
@@ -152,6 +183,13 @@ async function main() {
   }))
 
   const added = dryRun ? 0 : queue.addJobs(jobs)
+  const partialBatch = partialRows.slice(0, limit)
+  let requeuedPartial = 0
+  if (!dryRun && retryPartial) {
+    for (const { job } of partialBatch) {
+      if (queue.requeueCompleted(job.id, 'Bounded retry for partial classification output')) requeuedPartial += 1
+    }
+  }
   let boosted = 0
 
   if (!dryRun && Number.isFinite(priorityBoost) && priorityBoost > 0 && jobs.length) {
@@ -176,7 +214,8 @@ async function main() {
   }
 
   console.log(`Found ${rows.length} candidates`)
-  if (skipExisting) console.log(`Skipped ${rows.length - eligibleRows.length} places with existing classify jobs`)
+  if (skipExisting) console.log(`Skipped ${skippedExisting} places with existing classify jobs`)
+  if (retryPartial) console.log(`${dryRun ? 'Eligible' : 'Requeued'} ${dryRun ? partialBatch.length : requeuedPartial} partial completed classify jobs`)
   console.log(`Mode: ${dryRun ? 'dry-run' : 'apply'}`)
   console.log(`Added ${added} classify jobs to SQLite queue`)
   if (priorityBoost > 0) console.log(`Boosted ${boosted} pending classify jobs by ${priorityBoost}`)

@@ -34,6 +34,10 @@
     <string>1</string>
     <key>APIZZA_SYNC_CONCURRENCY</key>
     <string>1</string>
+    <key>APIZZA_SYNC_RUN_RECONCILIATION</key>
+    <string>false</string>
+    <key>APIZZA_SYNC_BULK_RPC</key>
+    <string>true</string>
     <key>ENABLE_LIFECYCLE_SYNC</key>
     <string>1</string>
   </dict>

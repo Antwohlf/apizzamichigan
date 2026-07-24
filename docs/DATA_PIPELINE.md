@@ -33,13 +33,31 @@ values from fresh, high-confidence `place_sources` evidence, capped by
 editorial, classifier, or Supabase data.
 
 Current production rollout is classifier-first with guarded automated Supabase
-sync. The iMac launchd source feeder refreshes Michigan and New York OSM tiles
-on a bounded cadence, records source evidence, and promotes only approved blank
-contact fields. Website scraping and menu parsing remain separately managed so
-they cannot create an unbounded second writer.
+sync. The iMac launchd source feeder refreshes the configured operational
+regions (currently Michigan and New York), records source evidence, and
+promotes only approved blank contact fields. Website scraping is separately
+managed by its launchd worker, while menu parsing remains paused, so these
+workers cannot create an unbounded second writer. California and Texas are
+cataloged as future source-pipeline regions but are not active by default.
+
+Before an operator starts or retries a regional OSM run, use the runner's
+read-only plan mode to see the next tiles, retry cooldowns, and remaining work:
+
+```bash
+node scripts/ops/export-osm-tiles.mjs \
+  --bbox 40.4,-79.8,45.1,-71.7 \
+  --step 0.25 \
+  --output reports/osm/ny-pizza.json \
+  --manifest reports/osm/ny-pizza.json.manifest.json \
+  --max-tiles 8 \
+  --plan
+```
+
+Plan mode does not create output files, update manifests, call Overpass, or
+write any database. A normal run uses the same arguments without `--plan`.
 
 The authenticated admin home exposes a regional basic-field coverage view for
-active Michigan and New York places. It reports missing address, website, phone,
+active operational places. It reports missing address, website, phone,
 style, and price values without pretending that every gap is safe to fill
 automatically: contact blanks can use accepted evidence, while identity and
 editorial fields remain review- or classifier-owned.
@@ -55,9 +73,11 @@ state and are not public sync targets.
 The public map keeps its existing substring search across names, addresses,
 styles, brands, and operators. Apply
 `scripts/enrichment/supabase-production-migration.sql` in the Supabase SQL
-editor after the table columns are present. It enables `pg_trgm` and adds
-idempotent indexes for the fields searched by both the pizza and taco sites;
-the migration does not change records or search behavior.
+editor after the table columns are present. This enables the guarded
+publication path without building indexes. Apply
+`scripts/enrichment/supabase-search-index-migration.sql` separately when the
+instance can absorb the one-time index build; search remains functional before
+that optional performance step.
 
 The normal automated path is the guarded recent-classification window:
 

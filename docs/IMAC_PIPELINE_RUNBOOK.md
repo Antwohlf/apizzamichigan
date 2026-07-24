@@ -22,17 +22,14 @@ Supabase sync runs as a bounded launchd interval job and should not overlap.
 
 ## Baseline Checks
 
+The iMac's non-interactive SSH environment does not include `/usr/local/bin` in
+`PATH`. Use the installed Node runtime explicitly in remote commands; this is
+also the path used by the launchd templates.
+
 Run from the MacBook:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs'
-```
-
-If a non-interactive SSH command reports `node: command not found`, run the
-same command through the iMac login shell so the normal PATH is loaded:
-
-```bash
-ssh apizza-imac 'zsh -lc "cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs"'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/home-status-report.mjs'
 ```
 
 Healthy baseline before starting services:
@@ -47,8 +44,8 @@ Healthy baseline before starting services:
 Clean stale worker metadata:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs --apply'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/stale-worker-cleanup.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/stale-worker-cleanup.mjs --apply'
 ```
 
 The cleanup script does not mutate jobs. It refuses to delete stale worker rows
@@ -71,10 +68,24 @@ ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && \
 Check status:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/classifier-health-report.mjs'
 ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
 ssh apizza-imac 'tail -100 /tmp/apizzamichigan/classifier.log'
 ```
+
+For a scoped classification coverage check, inspect only the public operating
+states and ask for rows where the classifier produced no usable output:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && \
+  /usr/local/bin/node scripts/ops/classification-qa-report.mjs \
+    --states MI,NY --missing --limit 100 --sample 25 --json'
+```
+
+This is read-only. It reports the scoped total, classified/priced coverage,
+the remaining rows with no style, price, or confidence, and a bounded sample
+for follow-up. It does not infer a style, requeue a job, or write Postgres or
+Supabase.
 
 Stop service:
 
@@ -150,10 +161,13 @@ fields. The promotion rechecks freshness, confidence, source priority, and
 match method, and does not publish to Supabase. The limit is
 `config/source-pipeline.json` -> `limits.contact_promotions_per_run`.
 
-Each apply tick also feeds a small, deduplicated classifier batch for Michigan
-and New York. It skips any place that already has a classify job, including
-completed jobs, so the feeder advances through the missing-style/price backlog
-without duplicating work or creating a second classifier process.
+Each apply tick also feeds a small, deduplicated classifier batch for the
+selected operational regions. It skips any place that already has a classify
+job, including completed jobs, so the feeder advances through the
+missing-style/price backlog without duplicating work or creating a second
+classifier process. The default regions come from
+`config/source-pipeline.json`; an explicit `--regions` selection is honored by
+both discovery and classifier feeding.
 
 Each regional OSM export has a resumable manifest. The exporter refuses to
 reuse a manifest when the requested bounding box or tile step differs from the
@@ -161,6 +175,20 @@ manifest metadata. This prevents an accidental retry for one region from
 mixing tiles into another region's checkpoint. When a manifest is suspect,
 preserve it for audit and start a clean export with a new output and manifest
 path; do not overwrite the existing artifact.
+
+After an applied OSM export, the runner also refreshes up to the configured
+`provenance_refresh_limit_per_run` exact source IDs that already exist in local
+`place_sources`. This keeps OSM evidence freshness meaningful even when a row
+is already linked and therefore no longer appears in the review queue. The
+refresh updates only source evidence and retrieval time; it never creates a
+canonical place, changes identity or lifecycle fields, promotes values, or
+syncs Supabase. It is scoped to the configured operational states so broad
+regional bounding boxes do not spend the refresh budget outside the public
+product geography. Rows beyond the per-run limit are handled by later
+scheduled runs. The applied scheduler report records the refresh result under
+the OSM work unit as `osm_provenance_refresh`, including `existingLinks`,
+`refreshed`, and `skippedByLimit`, so operators can distinguish remaining
+stale evidence from evidence outside the current bounded input slice.
 
 The deterministic menu parser is a separate slowlane. It may be installed from
 `infra/local/launchd/com.apizzamichigan.menu-parser.plist.template` after the
@@ -173,15 +201,22 @@ To prioritize places that already have a discovered menu URL but have never
 been parsed, preview and then apply a bounded backfill:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/populate-menu-parse-from-db.mjs --state MI --limit 100'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/populate-menu-parse-from-db.mjs --state MI --limit 100 --apply'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/populate-menu-parse-from-db.mjs --state MI --limit 100'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/populate-menu-parse-from-db.mjs --state MI --limit 100 --apply'
 ```
 
 The helper only queues rows with `menu_url` and a null
 `menu_last_parsed_at`; it does not modify canonical fields or Supabase.
 
+The source scheduler also performs a separate, very small partial-classification
+retry pass. It may requeue at most two completed jobs per operational region per
+run when a prior classifier result filled only one of `style` or `price_range`.
+Each job can receive this retry once; fully classified, failed, and active jobs
+are left alone. This prevents a completed-but-partial result from disappearing
+from the feeder while keeping Ollama load bounded.
+
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/run-source-pipeline.mjs --dry-run --max-work-units 2 --json'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/run-source-pipeline.mjs --dry-run --max-work-units 2 --json'
 ```
 
 For a bounded operator recovery, add `--force` to bypass source cadence while
@@ -249,14 +284,14 @@ Then verify APizza has only the launchd classifier process:
 
 ```bash
 ssh apizza-imac 'ps -axo pid,ppid,command | egrep "watchdog-keepalive|keepalive.mjs|coordinator.mjs|llm-classifier.mjs" | grep -v egrep || true'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/classifier-health-report.mjs'
 ```
 
 For a single machine-readable alert gate covering classifier health, queue
 balance, stale jobs, and scrape-failure categories:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/pipeline-alert-report.mjs --json'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/pipeline-alert-report.mjs --json'
 ```
 
 The command is read-only. It exits nonzero only for actionable failures;
@@ -287,7 +322,7 @@ population:
 
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && \
-  node scripts/ops/requeue-scrape-failures.mjs \
+  /usr/local/bin/node scripts/ops/requeue-scrape-failures.mjs \
     --category transient --source fsq_os_places --limit 100 --json'
 ```
 
@@ -322,7 +357,7 @@ classifier process is gone:
 
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && cp infra/local/launchd/com.apizzamichigan.classifier-reconciler.plist.template ~/Library/LaunchAgents/com.apizzamichigan.classifier-reconciler.plist && plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.classifier-reconciler.plist && launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.classifier-reconciler.plist && launchctl enable "gui/$(id -u)/com.apizzamichigan.classifier-reconciler" && launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.classifier-reconciler"'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/reconcile-classifier-queue.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/reconcile-classifier-queue.mjs'
 ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier-reconciler"'
 ```
 
@@ -331,6 +366,9 @@ ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier-rec
 Supabase sync is automated through `com.apizzamichigan.supabase-sync`, but only
 through the guarded wrapper. The wrapper runs health, QA, readiness, dry-run,
 bounded write, and post-check gates before applying at most one configured batch.
+It checks bulk-RPC availability before running local confidence repair; when the
+production migration is missing, the scheduled run skips cleanly and leaves the
+capability status visible without doing unnecessary local writes.
 
 The sync target is intentionally narrow: only canonical `pizza_places` rows are
 eligible. The scheduled job may insert a missing canonical row only when
@@ -344,9 +382,16 @@ operator uses the results.
 An expected `WARN` with `missingSupabaseRows > 0` is not a failed sync service:
 it means the selected batch contains local canonical rows that are absent from
 Supabase and therefore cannot use the ordinary update-only path. The scheduled
-wrapper separately reconciles all approved reviewed-new rows in bounded groups
-of 250, so this warning should drain without manual intervention. Rows without
-`reviewed_new_import` proof remain intentionally blocked until reviewed.
+wrapper inserts approved reviewed-new rows when they are encountered by the
+normal checkpointed sync. Broad reviewed-new reconciliation is intentionally
+not part of the 30-minute hot path because it scans a larger local and remote
+set. Run it explicitly during maintenance when needed:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && APIZZA_SYNC_RUN_RECONCILIATION=true /usr/local/bin/node scripts/ops/auto-guarded-supabase-sync.mjs'
+```
+
+Rows without `reviewed_new_import` proof remain intentionally blocked until reviewed.
 
 Supabase network failures use bounded retry/backoff. Inserts confirm the row by
 ID before retrying after an uncertain response, preventing duplicate rows.
@@ -354,89 +399,89 @@ ID before retrying after an uncertain response, preventing duplicate rows.
 Verify the sync boundary before changing sync scripts or running a manual sync:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-supabase-sync-policy.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-supabase-sync-policy.mjs'
 ```
 
 Verify the source promotion boundary before changing source adapters or
 promotion scripts:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-promotion-policy.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-source-promotion-policy.mjs'
 ```
 
 Verify that the written source/provenance contract still matches the promotion
 and Supabase sync policy modules:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-contract-docs.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-source-contract-docs.mjs'
 ```
 
 Summarize the whole source-pipeline backlog before choosing the next source
 task:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/source-pipeline-readiness-report.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/source-pipeline-readiness-report.mjs'
 ```
 
 Verify source matching still uses the canonical-row prefetch and in-memory grid
 path before running large source batches:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-matching-prefetch.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-source-matching-prefetch.mjs'
 ```
 
 Verify the curated ATP spider manifest before rerunning ATP chain/regional
 batches:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-atp-spider-manifest.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-atp-spider-manifest.mjs'
 ```
 
 Verify the generic source-input adapter contract before adding FSQ, Overture,
 Wikidata, government, DENUE, or official-website samples:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-input-adapters.mjs'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-fsq-sample-workflow.mjs'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-fsq-review-summary.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-source-input-adapters.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-fsq-sample-workflow.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-fsq-review-summary.mjs'
 ```
 
 Verify the source review workflow boundary before changing admin review actions
 or reviewed-new import code:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-source-review-workflow.mjs'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/verify-reviewed-new-backlog-report.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-source-review-workflow.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/verify-reviewed-new-backlog-report.mjs'
 ```
 
 Run QA before any sync:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
 ```
 
 Preview the selected sync batch and protected-field behavior:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --batch 50 --sample 20'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --sample 20'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --batch 50 --sample 20'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --sample 20'
 ```
 
 Dry-run first:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --batch 25 --max-batches 1'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --batch 50 --max-batches 1'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --max-batches 1'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/sync-local-to-supabase.mjs --dry-run --batch 25 --max-batches 1'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --batch 50 --max-batches 1'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/sync-local-to-supabase.mjs --dry-run --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --max-batches 1'
 ```
 
 Preferred guarded runner:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50 --apply'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50 --apply'
 ```
 
 For reviewed-new canonical rows that are missing from Supabase, use exact IDs
@@ -444,22 +489,23 @@ and the explicit reviewed-new insert flag. The lower-level sync still requires
 local `place_sources.match_method='reviewed_new_import'` before inserting:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 182432,182527 --insert-missing-reviewed-new'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --ids 182432,182527 --insert-missing-reviewed-new --apply'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/guarded-supabase-sync.mjs --ids 182432,182527 --insert-missing-reviewed-new'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/guarded-supabase-sync.mjs --ids 182432,182527 --insert-missing-reviewed-new --apply'
 ```
 
 The production sync service uses the same guarded runner through a launchd-safe
 wrapper:
 
 ```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/auto-guarded-supabase-sync.mjs'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/auto-guarded-supabase-sync.mjs'
 ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"'
 ssh apizza-imac 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
 ```
 
-The service applies at most one 100-row ordinary batch plus one guarded
-reviewed-new reconciliation batch of up to 250 rows every 30 minutes. It should
-remain disabled if classification QA is not healthy.
+The service applies at most one 100-row ordinary batch every 30 minutes. Broad
+reviewed-new reconciliation is maintenance-only and must be explicitly enabled
+with `APIZZA_SYNC_RUN_RECONCILIATION=true`; it should remain disabled if
+classification QA is not healthy.
 
 The wrapper owns `/tmp/apizzamichigan/supabase-sync.lock` to avoid overlapping
 runs. If a prior process exits badly, locks older than 25 minutes are treated as

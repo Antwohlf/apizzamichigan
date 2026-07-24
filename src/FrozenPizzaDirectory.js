@@ -1,13 +1,9 @@
 // src/FrozenPizzaDirectory.js
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabaseClient'
-import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
+import { DEFAULT_THEME_KEY } from './themes/siteTheme'
 import { frozenTacosFallback } from './data/frozenTacos'
-
-const TABLE_BY_THEME = {
-  [ThemeKeys.PIZZA]: 'frozen_pizzas',
-  [ThemeKeys.TACO]: 'frozen_tacos',
-}
+import { entityConfigForTheme } from './config/entityConfig'
 
 export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAULT_THEME_KEY }) {
   const [pizzas, setPizzas] = useState([])
@@ -22,8 +18,9 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
   useEffect(() => {
     async function fetchPizzas() {
       setLoading(true)
-      const table = TABLE_BY_THEME[themeKey] || TABLE_BY_THEME[DEFAULT_THEME_KEY]
-      const fallbackRows = themeKey === ThemeKeys.TACO ? frozenTacosFallback : []
+      const entity = entityConfigForTheme(themeKey || DEFAULT_THEME_KEY)
+      const table = entity.frozenTable
+      const fallbackRows = entity.entity === 'taco' ? frozenTacosFallback : []
 
       const canQuery = typeof supabase?.from === 'function'
       let data = null
@@ -59,7 +56,7 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
           ...p,
           Type: p.Type === 'Standard' || p.Type === 'Traditional' ? 'Standard Round' : p.Type,
         }))
-        if (normalized.length === 0 && themeKey === ThemeKeys.TACO) {
+        if (normalized.length === 0 && entity.entity === 'taco') {
           setPizzas(frozenTacosFallback)
           setError(null)
         } else {
@@ -126,7 +123,7 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
       }}
     >
       <h2 style={{ color: theme.palette.accent, margin: '0 auto 1rem', textAlign: 'center' }}>
-        {themeKey === ThemeKeys.TACO ? 'Frozen Taco Directory' : 'Frozen Pizza Directory'}
+        {entityConfigForTheme(themeKey).entity === 'taco' ? 'Frozen Taco Directory' : 'Frozen Pizza Directory'}
       </h2>
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
         <thead>

@@ -21,12 +21,12 @@ describe('searchResultReason', () => {
     }, 'papa johns ann arbor')).toBe("Operator match: Papa John's")
   })
 
-  test('shows location matches for location-only searches', () => {
+  test('does not repeat the location already shown below the name', () => {
     expect(searchResultReason({
       name: 'Slice Shop',
       city: 'New York',
       state: 'NY',
-    }, 'new york')).toBe('Location match: New York, NY')
+    }, 'new york')).toBe('')
   })
 
   test('shows address matches when a street term explains the result', () => {
@@ -67,7 +67,7 @@ describe('searchResultReason', () => {
       price_range: '$',
       city: 'Detroit',
       state: 'MI',
-    }, '$$ detroit')).toBe('Location match: Detroit, MI')
+    }, '$$ detroit')).toBe('')
   })
 
   test('shows reviewed status matches when users search for visited places', () => {
@@ -88,6 +88,14 @@ describe('searchResultReason', () => {
       state: 'MI',
     }, 'pizza hut')).toBe('')
   })
+
+  test('does not repeat a non-exact name match', () => {
+    expect(searchResultReason({
+      name: "Anthony's Gourmet Pizza",
+      city: 'Ann Arbor',
+      state: 'MI',
+    }, "anthony's pizza")).toBe('')
+  })
 })
 
 describe('MapControls search results', () => {
@@ -97,6 +105,42 @@ describe('MapControls search results', () => {
     city: 'Detroit',
     state: 'MI',
   }))
+
+  test('does not show an Unknown style label in a search result', () => {
+    render(
+      <MapControls
+        searchQuery="Anthony's Gourmet Pizza"
+        filteredPlaces={[{
+          id: 'unknown-style',
+          name: "Anthony's Gourmet Pizza",
+          state: 'MI',
+          style: 'Unknown',
+        }]}
+        onSearchChange={jest.fn()}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    expect(screen.getByRole('option')).not.toHaveTextContent('Unknown')
+  })
+
+  test('offers a direct all-markets scope toggle', () => {
+    const onToggle = jest.fn()
+    render(
+      <MapControls
+        searchQuery="pizza"
+        filteredPlaces={[]}
+        onSearchChange={jest.fn()}
+        onPlaceClick={jest.fn()}
+        onAllMarketsToggle={onToggle}
+      />
+    )
+
+    const scopeButton = screen.getByRole('button', { name: /search all markets/i })
+    expect(scopeButton).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(scopeButton)
+    expect(onToggle).toHaveBeenCalledWith(true)
+  })
 
   test('lets users expand beyond the initial search result page', () => {
     render(
@@ -164,6 +208,24 @@ describe('MapControls search results', () => {
     })).toBe('Suggestion')
   })
 
+  test('treats serialized numeric ratings as reviewed data', () => {
+    expect(searchResultBadge({
+      id: 'reviewed-serialized',
+      status: 'visited',
+      rating: '8.8',
+    })).toBe('Reviewed')
+
+    expect(searchResultSummary([
+      { id: 'reviewed-serialized', status: 'visited', rating: '8.8' },
+      { id: 'suggestion-1', status: 'unvisited' },
+    ])).toEqual({
+      total: 2,
+      reviewed: 1,
+      suggestions: 1,
+      averageDistance: null,
+    })
+  })
+
   test('labels historical lifecycle records distinctly', () => {
     expect(searchResultBadge({ lifecycleStatus: 'closed', status: 'visited', rating: 8 })).toBe('Historical')
   })
@@ -183,6 +245,45 @@ describe('MapControls search results', () => {
 
     expect(screen.getByRole('option', { name: /reviewed pizza/i })).toHaveTextContent('Reviewed')
     expect(screen.getByRole('option', { name: /suggested pizza/i })).toHaveTextContent('Suggestion')
+  })
+
+  test('does not show an unreviewed zero as a real rating', () => {
+    render(
+      <MapControls
+        searchQuery="pizza"
+        filteredPlaces={[{
+          id: 'suggestion-zero-rating',
+          name: 'Suggested Pizza',
+          city: 'Detroit',
+          state: 'MI',
+          rating: 0,
+          status: 'unvisited',
+        }]}
+        onSearchChange={jest.fn()}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    const result = screen.getByRole('option', { name: /suggested pizza/i })
+    expect(result).not.toHaveTextContent('★ 0')
+    expect(result).toHaveTextContent('Suggestion')
+  })
+
+  test('uses accessible map control icons instead of text glyphs', () => {
+    render(
+      <MapControls
+        searchQuery="pizza"
+        filteredPlaces={[]}
+        onSearchChange={jest.fn()}
+        onNearMeToggle={jest.fn()}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    expect(screen.getByRole('combobox', { name: /search places/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /near me/i })).toBeInTheDocument()
+    expect(screen.queryByText('🔍')).not.toBeInTheDocument()
+    expect(screen.queryByText('📍')).not.toBeInTheDocument()
   })
 
   test('can prioritize Anthony-reviewed results without losing suggestions', () => {

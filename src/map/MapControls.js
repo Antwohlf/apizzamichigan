@@ -1,28 +1,39 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { MapPin, Search, X } from 'lucide-react'
+import { isHistoricalLifecycle, lifecycleBadgeLabel } from '../lib/lifecycle'
 import './MapControls.css'
 
 const placePrice = place => place?.price_range || place?.priceRange || place?.price || ''
+const placeRating = place => {
+  const rawRating = place?.rating
+  if (rawRating === null || rawRating === undefined || String(rawRating).trim() === '') return null
+  const rating = Number(rawRating)
+  // A zero in imported/public data means "not reviewed", not a score.
+  return Number.isFinite(rating) && rating > 0 ? rating : null
+}
 const placeLocation = place => {
   const parts = [place?.address, place?.city, place?.state].filter(Boolean)
   return [...new Set(parts)].join(' · ')
 }
 const isReviewedPlace = place => {
   const status = String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
+  const rating = placeRating(place)
   return (
     (status.startsWith('visited') || status.startsWith('golden')) &&
-    typeof place?.rating === 'number' &&
-    !Number.isNaN(place.rating)
+    rating !== null
   )
 }
-const isHistoricalPlace = place => ['closed', 'replaced', 'demolished'].includes(place?.lifecycleStatus)
+const isHistoricalPlace = place => isHistoricalLifecycle(place?.lifecycleStatus || place?.lifecycle_status)
 const placeMeta = place => {
   const statusLabel = isHistoricalPlace(place)
-    ? 'Historical location'
+    ? lifecycleBadgeLabel(place.lifecycleStatus || place.lifecycle_status)
     : isReviewedPlace(place)
       ? 'Anthony reviewed'
       : ''
-  const parts = [place?.style, placePrice(place), statusLabel].filter(Boolean)
-  if (typeof place?.rating === 'number' && !Number.isNaN(place.rating)) parts.unshift(`★ ${place.rating}`)
+  const style = String(place?.style || '').trim()
+  const parts = [style && style.toLowerCase() !== 'unknown' ? style : '', placePrice(place), statusLabel].filter(Boolean)
+  const rating = placeRating(place)
+  if (rating !== null) parts.unshift(`★ ${rating}`)
   return parts.join(' · ')
 }
 
@@ -58,7 +69,7 @@ export const searchResultSummary = places => {
 
 const reviewedSortScore = place => {
   if (!isReviewedPlace(place)) return -1
-  const rating = typeof place?.rating === 'number' && Number.isFinite(place.rating) ? place.rating : 0
+  const rating = placeRating(place) ?? 0
   return 100 + rating
 }
 
@@ -96,15 +107,20 @@ export const searchResultReason = (place, query = '') => {
   const terms = normalizeSearchText(query).split(/\s+/).filter(term => term.length >= 2)
   if (!place) return ''
 
-  const name = normalizeSearchText(place.name)
-  const brand = place.brand && normalizeSearchText(place.brand) !== name ? place.brand : ''
-  const operator = place.operator && normalizeSearchText(place.operator) !== name && normalizeSearchText(place.operator) !== normalizeSearchText(brand) ? place.operator : ''
+  const normalizedName = normalizeSearchText(place.name)
+  const brand = place.brand && normalizeSearchText(place.brand) !== normalizedName ? place.brand : ''
+  const operator = place.operator && normalizeSearchText(place.operator) !== normalizedName && normalizeSearchText(place.operator) !== normalizeSearchText(brand) ? place.operator : ''
   const address = place.address || ''
-  const location = [place.city, place.state].filter(Boolean).join(', ')
   const style = place.style || place.type || ''
   const price = placePrice(place)
   const reviewed = isReviewedPlace(place)
   if (!terms.length && !queryMatchesPrice(price, query)) return ''
+
+  if (brand && termMatches(brand, terms)) return `Brand match: ${brand}`
+  if (operator && termMatches(operator, terms)) return `Operator match: ${operator}`
+  if (style && termMatches(style, terms) && !termMatches(place.name, terms)) return `Style match: ${style}`
+  if (queryMatchesPrice(price, query) && !termMatches(place.name, terms)) return `Price match: ${price}`
+  if (reviewed && termMatches('reviewed visited tried favorite favorites', terms) && !termMatches(place.name, terms)) return 'Status match: Anthony reviewed'
   const addressOnlyTerms = address
     ? terms.filter(term =>
       termMatches(address, [term]) &&
@@ -113,14 +129,7 @@ export const searchResultReason = (place, query = '') => {
       (!operator || !termMatches(operator, [term]))
     )
     : []
-
-  if (brand && termMatches(brand, terms)) return `Brand match: ${brand}`
-  if (operator && termMatches(operator, terms)) return `Operator match: ${operator}`
-  if (style && termMatches(style, terms) && !termMatches(place.name, terms)) return `Style match: ${style}`
-  if (queryMatchesPrice(price, query) && !termMatches(place.name, terms)) return `Price match: ${price}`
-  if (reviewed && termMatches('reviewed visited anthony tried favorite favorites', terms) && !termMatches(place.name, terms)) return 'Status match: Anthony reviewed'
   if (addressOnlyTerms.length) return `Address match: ${address}`
-  if (location && termMatches(location, terms) && !termMatches(place.name, terms)) return `Location match: ${location}`
   return ''
 }
 
@@ -143,7 +152,7 @@ function SearchBar({ value, onChange, onKeyDown, onFocus, resultsId, activeDesce
 
   return (
     <div className="map-search-bar">
-      <span className="map-search-icon">🔍</span>
+      <Search className="map-search-icon" size={17} strokeWidth={2} aria-hidden="true" />
       <input
         type="text"
         role="combobox"
@@ -173,7 +182,7 @@ function SearchBar({ value, onChange, onKeyDown, onFocus, resultsId, activeDesce
           aria-label="Clear search"
           type="button"
         >
-          ×
+          <X size={16} strokeWidth={2} aria-hidden="true" />
         </button>
       )}
     </div>
@@ -192,6 +201,8 @@ export function MapControls({
   onRadiusChange,
   filteredPlaces = [],
   onPlaceClick,
+  showAllMarkets = false,
+  onAllMarketsToggle,
 }) {
   const [isResultsOpen, setIsResultsOpen] = useState(true)
   const [activeResultIndex, setActiveResultIndex] = useState(0)
@@ -302,7 +313,7 @@ export function MapControls({
               onClick={onNearMeToggle}
               type="button"
             >
-              <span className="near-me-icon">📍</span>
+              <MapPin className="near-me-icon" size={16} strokeWidth={2} aria-hidden="true" />
               Near Me
             </button>
             {nearMeActive && onRadiusChange && (
@@ -319,6 +330,19 @@ export function MapControls({
               </select>
             )}
           </div>
+        )}
+
+        {onAllMarketsToggle && (
+          <button
+            className={`map-scope-btn${showAllMarkets ? ' active' : ''}`}
+            onClick={() => onAllMarketsToggle(!showAllMarkets)}
+            type="button"
+            aria-pressed={showAllMarkets}
+            aria-label={showAllMarkets ? 'Limit search to primary markets' : 'Search all markets'}
+            title={showAllMarkets ? 'Limit search to primary markets' : 'Search all markets'}
+          >
+            {showAllMarkets ? 'Primary markets' : 'All markets'}
+          </button>
         )}
       </div>
 

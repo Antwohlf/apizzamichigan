@@ -27,8 +27,12 @@ Run the read-only report before promotion or sync:
 node scripts/ops/source-freshness-report.mjs
 ```
 
-By default, freshness is scoped to the active regions in
-`config/source-pipeline.json` (currently MI, NY, CA, and TX for pizza). Use
+By default, freshness is scoped to the operational regions in
+`config/source-pipeline.json` (currently MI and NY for pizza). The same config
+also catalogs CA and TX as future expansion regions, but they are not part of
+the default production scope until `operational_regions` changes or an
+explicit region override is supplied. Historical or future-expansion regions
+remain queryable but do not make the core operational report look unhealthy. Use
 `--states MI,NY` or `SOURCE_FRESHNESS_STATES=MI,NY` for a narrower operational
 check. This prevents historical evidence outside the active geographic scope
 from masking the freshness of the production input pipeline.
@@ -46,6 +50,22 @@ legitimately have many older rows while its regional tile cycle is still
 healthy; the operational alert therefore warns when a source has no fresh
 evidence or when stale coverage exceeds its configured ratio threshold, rather
 than treating the historical row count alone as a failure.
+For OSM, when the current regional JSON inputs are present, the report also
+includes `stale_rows_observed_in_latest_input` and
+`stale_rows_unobserved_in_latest_input`. The first group can be refreshed by
+the normal exact-ID pass; the second group is retained for audit but is not
+present in the latest export, so it requires source-history review rather than
+repeated refresh attempts. These fields explain stale coverage without
+reclassifying it as fresh.
+To review the actual bounded candidate rows without changing provenance, run:
+
+```bash
+node scripts/ops/source-freshness-report.mjs --include-stale-rows --limit 100 --json
+```
+
+The output labels each OSM row as `observed_in_latest_input` or
+`unobserved_in_latest_input`. Absence from an OSM export is never, by itself,
+permission to mark a place closed, replaced, or demolished.
 The promotion CLI applies the same freshness, source-priority, match-method,
 and confidence rules again at query time, so a report cannot become a stale
 authorization to mutate canonical data.

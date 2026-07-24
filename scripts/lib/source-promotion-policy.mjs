@@ -1,19 +1,19 @@
+import { readFileSync } from 'node:fs';
+
 export const SOURCE_PROMOTION_POLICY_VERSION = 1;
+
+const sourcePolicy = JSON.parse(readFileSync(new URL('../../config/source-policy.json', import.meta.url), 'utf8'));
+const configuredSourceOrder = Object.entries(sourcePolicy.sources || {})
+  .sort(([, left], [, right]) => Number(right.priority) - Number(left.priority))
+  .map(([source]) => source);
 
 // Keep the default source order aligned with config/source-policy.json. All
 // configured sources may supply safe contact evidence; field policy still
 // limits automatic promotion to blank website_url and phone values.
 export const SOURCE_PROMOTION_DEFAULTS = {
-  entity: 'pizza',
+  entity: sourcePolicy.entity,
   // Highest configured priority wins for a blank field/place.
-  sources: [
-    'official_website',
-    'osm',
-    'fsq_os_places',
-    'all_the_places',
-    'overture_places',
-    'wikidata',
-  ],
+  sources: configuredSourceOrder,
   fields: ['website_url', 'phone'],
   matchMethods: ['exact_name_nearby', 'strong_spatial_name', 'imported_primary', 'reviewed_link', 'reviewed_new_import', 'scraped_first_party'],
   minConfidence: 0.9,

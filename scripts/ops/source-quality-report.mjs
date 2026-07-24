@@ -115,11 +115,12 @@ try {
     WITH accepted AS (
       SELECT id, source, source_name,
         regexp_replace(lower(coalesce(source_name, '')), '[^a-z0-9]+', '', 'g') AS name_key,
-        NULLIF(source_data->>'lat', '')::double precision AS lat,
-        NULLIF(source_data->>'lng', '')::double precision AS lng
+        COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', ''))::double precision AS lat,
+        COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', ''))::double precision AS lng
       FROM source_review_queue
       WHERE entity_type = $1 AND review_kind = 'likely_new' AND status = 'accepted'
-        AND source_data ? 'lat' AND source_data ? 'lng'
+        AND COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', '')) IS NOT NULL
+        AND COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', '')) IS NOT NULL
     ), pairs AS (
       SELECT a.id AS left_id, b.id AS right_id, a.source,
         a.source_name AS left_name, b.source_name AS right_name,
@@ -140,11 +141,12 @@ try {
     WITH accepted AS (
       SELECT id, source, source_name,
         regexp_replace(lower(coalesce(source_name, '')), '[^a-z0-9]+', '', 'g') AS name_key,
-        NULLIF(source_data->>'lat', '')::double precision AS lat,
-        NULLIF(source_data->>'lng', '')::double precision AS lng
+        COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', ''))::double precision AS lat,
+        COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', ''))::double precision AS lng
       FROM source_review_queue
       WHERE entity_type = $1 AND review_kind = 'likely_new' AND status = 'accepted'
-        AND source_data ? 'lat' AND source_data ? 'lng'
+        AND COALESCE(NULLIF(source_data->>'lat', ''), NULLIF(source_data->>'latitude', '')) IS NOT NULL
+        AND COALESCE(NULLIF(source_data->>'lng', ''), NULLIF(source_data->>'lon', ''), NULLIF(source_data->>'longitude', '')) IS NOT NULL
     )
     SELECT a.id AS left_id, b.id AS right_id, a.source,
       a.source_name AS left_name, b.source_name AS right_name,

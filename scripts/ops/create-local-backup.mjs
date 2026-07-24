@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
@@ -226,7 +227,7 @@ async function main() {
   const manifest = {
     schema_version: 1,
     generated_at: timestamp,
-    host: process.env.HOSTNAME || process.env.COMPUTERNAME || 'unknown',
+    host: process.env.HOSTNAME || process.env.COMPUTERNAME || hostname(),
     files,
     retention: options.retention,
   };

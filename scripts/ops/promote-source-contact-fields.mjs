@@ -75,7 +75,7 @@ Options:
   --entity <pizza|taco>          Canonical table to update (default pizza)
   --states <a,b>                 Optional uppercase state scope (for example MI,NY)
   --sources <a,b>                Source priority order
-                                 (default osm,all_the_places)
+                                 (default follows config/source-policy.json)
   --fields <a,b>                 Fields to promote: website_url,phone
                                  (default website_url,phone)
   --match-methods <a,b>          Eligible match methods
