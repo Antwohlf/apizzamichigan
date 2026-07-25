@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.apizzamichigan.pipeline-health</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/ant/clawd/projects/apizzamichigan &amp;&amp; /usr/local/bin/node scripts/ops/write-pipeline-status.mjs</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/ant/clawd/projects/apizzamichigan</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/apizzamichigan/pipeline-health.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/apizzamichigan/pipeline-health.log</string>
+</dict>
+</plist>

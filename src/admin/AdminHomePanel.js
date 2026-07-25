@@ -4,12 +4,21 @@ import { SOURCE_REVIEW_QUEUES } from './sourceReviewQueues'
 
 const numberFormat = new Intl.NumberFormat()
 const formatCount = value => value == null ? '—' : numberFormat.format(Number(value) || 0)
+const formatUpdatedAt = value => {
+  if (!value) return 'No source update recorded yet.'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Source update time unavailable.'
+  return `Last refreshed ${new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)}.`
+}
 
 export default function AdminHomePanel({ entity, navigate }) {
   const [summary, setSummary] = useState(null)
-  const [reviewStats, setReviewStats] = useState(null)
   const [suggestionCount, setSuggestionCount] = useState(null)
   const [syncReadiness, setSyncReadiness] = useState(null)
+  const [pipelineStatus, setPipelineStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
@@ -19,21 +28,21 @@ export default function AdminHomePanel({ entity, navigate }) {
     const load = async () => {
       setLoading(true)
       setError('')
-      const [summaryResult, reviewsResult, suggestionsResult, syncResult] = await Promise.allSettled([
+      const [summaryResult, suggestionsResult, syncResult, pipelineResult] = await Promise.allSettled([
         fetch(`/api/admin/source-review-summary?entity=${entity}`, { credentials: 'include' }).then(async response => {
           if (!response.ok) throw new Error('Data review status is unavailable.')
           return response.json()
         }),
-        fetch(`/api/admin/reviews?entity=${entity}`, { credentials: 'include' }).then(async response => {
-          if (!response.ok) throw new Error('Review photo status is unavailable.')
-          return response.json()
-        }),
-        fetch(`/api/admin/suggestions?entity=${entity}&status=pending`, { credentials: 'include' }).then(async response => {
+        fetch(`/api/admin/suggestions?entity=${entity}&status=pending&count=only`, { credentials: 'include' }).then(async response => {
           if (!response.ok) throw new Error('Suggestion status is unavailable.')
           return response.json()
         }),
         fetch(`/api/admin/supabase-sync-readiness?entity=${entity}`, { credentials: 'include' }).then(async response => {
           if (!response.ok) throw new Error('Publishing status is unavailable.')
+          return response.json()
+        }),
+        fetch(`/api/admin/pipeline-status?entity=${entity}`, { credentials: 'include' }).then(async response => {
+          if (!response.ok) throw new Error('Pipeline status is unavailable.')
           return response.json()
         }),
       ])
@@ -46,18 +55,8 @@ export default function AdminHomePanel({ entity, navigate }) {
         setError(summaryResult.reason?.message || 'Some admin status could not be loaded.')
       }
 
-      if (reviewsResult.status === 'fulfilled') {
-        const rows = Array.isArray(reviewsResult.value?.data) ? reviewsResult.value.data : []
-        setReviewStats({
-          total: rows.length,
-          needsPhotos: rows.filter(row => !Array.isArray(row.photos) || row.photos.length === 0).length,
-        })
-      } else {
-        setReviewStats(null)
-      }
-
       if (suggestionsResult.status === 'fulfilled') {
-        setSuggestionCount(Array.isArray(suggestionsResult.value?.data) ? suggestionsResult.value.data.length : 0)
+        setSuggestionCount(Number(suggestionsResult.value?.count) || 0)
       } else {
         setSuggestionCount(null)
       }
@@ -65,6 +64,11 @@ export default function AdminHomePanel({ entity, navigate }) {
         setSyncReadiness(syncResult.value?.data || null)
       } else {
         setSyncReadiness(null)
+      }
+      if (pipelineResult.status === 'fulfilled') {
+        setPipelineStatus(pipelineResult.value?.data || null)
+      } else {
+        setPipelineStatus(null)
       }
       setLoading(false)
     }
@@ -134,12 +138,16 @@ export default function AdminHomePanel({ entity, navigate }) {
       {
         id: 'photos',
         title: 'Add missing review photos',
-        detail: reviewStats ? `${reviewStats.total} reviewed places in this dataset.` : 'Find reviewed places that still need photos.',
-        count: reviewStats?.needsPhotos,
+        detail: 'Find reviewed places that still need photos.',
+        count: null,
         path: `/admin/reviews/photos?entity=${entity}`,
       },
     ]
-  }, [entity, reviewStats, suggestionCount, summary])
+  }, [entity, suggestionCount, summary])
+
+  const visibleTasks = useMemo(() => tasks.filter(task => (
+    task.count == null || Number(task.count) > 0
+  )), [tasks])
 
   const pendingPublishCount = Math.max(
     Number(syncReadiness?.pendingAfterCheckpoint) || 0,
@@ -169,23 +177,30 @@ export default function AdminHomePanel({ entity, navigate }) {
 
         {error ? <div className="admin-alert admin-alert--warning" role="status">{error}</div> : null}
 
-        <ul className="admin-task-list">
-          {tasks.map(task => (
-            <li className="admin-task" key={task.id}>
-              <div>
-                <p className="admin-task__title">{task.title}</p>
-                <p className="admin-task__detail">{task.detail}</p>
-              </div>
-              <div className="admin-task__count" aria-label={`${formatCount(task.count)} remaining`}>
-                {formatCount(task.count)}
-              </div>
-              <button className="admin-button" type="button" onClick={() => navigate(task.path)}>
-                Open
-                <ArrowRight size={16} aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ul>
+        {visibleTasks.length ? (
+          <ul className="admin-task-list">
+            {visibleTasks.map(task => (
+              <li className="admin-task" key={task.id}>
+                <div>
+                  <p className="admin-task__title">{task.title}</p>
+                  <p className="admin-task__detail">{task.detail}</p>
+                </div>
+                <div className="admin-task__count" aria-label={`${formatCount(task.count)} remaining`}>
+                  {formatCount(task.count)}
+                </div>
+                <button className="admin-button" type="button" onClick={() => navigate(task.path)}>
+                  Open
+                  <ArrowRight size={16} aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="admin-empty-state" role="status">
+            <strong>Nothing needs attention right now.</strong>
+            <p>Refresh later or open System to inspect source and publishing status.</p>
+          </div>
+        )}
       </section>
 
       <section className="admin-section">
@@ -194,9 +209,10 @@ export default function AdminHomePanel({ entity, navigate }) {
             <h2>Data status</h2>
             <p>
               {summary?.available
-                ? `${formatCount(summary.linkedPlaces)} places have source evidence attached.`
+                ? `${formatCount(summary.linkedPlaces)} places have source evidence attached across ${formatCount(summary.sourceRows)} source records.`
                 : 'Local source data is not currently available.'}
             </p>
+            {summary?.available ? <p className="admin-system-status__meta">{formatUpdatedAt(summary.latestSourceUpdate)}</p> : null}
           </div>
           <button
             className="admin-button admin-button--quiet"
@@ -232,6 +248,27 @@ export default function AdminHomePanel({ entity, navigate }) {
             className="admin-button admin-button--quiet"
             type="button"
             onClick={() => navigate(`/admin/reviews/system?entity=${entity}`)}
+          >
+            View details
+            <ArrowRight size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+
+      <section className="admin-system-status admin-home-publishing" aria-labelledby="home-pipeline-heading">
+        <div>
+          <p className="admin-eyebrow">Operations</p>
+          <h2 id="home-pipeline-heading">Pipeline status</h2>
+          <p>{pipelineStatus?.detail || 'Waiting for the latest read-only pipeline check.'}</p>
+        </div>
+        <div className="admin-home-publishing__actions">
+          <strong className={`admin-system-status__state admin-system-status__state--${pipelineStatus?.state || 'unknown'}`}>
+            {pipelineStatus?.label || 'Not checked'}
+          </strong>
+          <button
+            className="admin-button admin-button--quiet"
+            type="button"
+            onClick={() => navigate(`/admin/reviews/system?entity=${entity}#pipeline-status`)}
           >
             View details
             <ArrowRight size={16} aria-hidden="true" />

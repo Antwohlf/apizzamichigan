@@ -66,12 +66,14 @@ describe('AdminReviewsPage', () => {
               acceptedCoordinateConflicts: 20,
             },
             linkedPlaces: 1200,
+            sourceRows: 2500,
+            latestSourceUpdate: '2026-07-25T08:30:00.000Z',
           },
         })
       }
       if (url === '/api/admin/reviews?entity=pizza') return response({ data: reviewRows })
-      if (url === '/api/admin/suggestions?entity=pizza&status=pending') {
-        return response({ data: [{ id: 1, name: 'Suggested Pizza' }] })
+      if (url === '/api/admin/suggestions?entity=pizza&status=pending&count=only') {
+        return response({ data: [], count: 1 })
       }
       if (url === '/api/admin/supabase-sync-readiness?entity=pizza') {
         return response({ data: {
@@ -80,6 +82,15 @@ describe('AdminReviewsPage', () => {
           detail: 'Apply the production migration before publishing.',
           pendingAfterCheckpoint: 10,
           wouldUpdate: 10,
+        } })
+      }
+      if (url === '/api/admin/pipeline-status?entity=pizza') {
+        return response({ data: {
+          available: true,
+          state: 'warn',
+          label: 'Pipeline needs attention',
+          detail: '1 warning needs attention.',
+          checkedAt: '2026-07-25T08:45:00.000Z',
         } })
       }
       throw new Error(`Unexpected fetch: ${url}`)
@@ -113,6 +124,10 @@ describe('AdminReviewsPage', () => {
     expect(await screen.findByRole('heading', { name: 'Publishing status' })).toBeInTheDocument()
     expect(screen.getByText('Blocked by Supabase setup')).toBeInTheDocument()
     expect(screen.getByText('10 local updates waiting to publish.')).toBeInTheDocument()
+    expect(await screen.findByText('Pipeline needs attention')).toBeInTheDocument()
+    expect(screen.getByText('1,200 places have source evidence attached across 2,500 source records.')).toBeInTheDocument()
+    expect(screen.getByText(/Last refreshed/)).toBeInTheDocument()
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/admin/reviews?entity=pizza', { credentials: 'include' })
   })
 
   test('shows a bounded photo result list and only one selected editor', async () => {

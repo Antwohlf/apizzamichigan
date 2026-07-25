@@ -11,6 +11,7 @@ import { entityConfigForTheme, normalizeEntityStyle } from '../config/entityConf
 import { lifecycleCopy, normalizeLifecycleStatus, replacementCopy } from '../lib/lifecycle'
 import { readSupabase } from '../lib/supabaseRead'
 import { normalizeRating } from '../lib/ratings'
+import { formatHours, formatHoursEntries, normalizePhone, phoneHref } from '../lib/placeContact'
 import { isLegacyPublicSchema, markLegacyPublicSchema } from '../lib/publicSchemaCapabilities'
 import '../styles/place-detail.css'
 
@@ -28,18 +29,7 @@ export { lifecycleCopy, normalizeLifecycleStatus, replacementCopy }
 
 export const displayPlaceRating = value => normalizeRating(value)
 
-export function formatHours(hours) {
-  if (!hours) return ''
-  if (typeof hours === 'string') return hours.trim()
-  if (Array.isArray(hours)) return hours.filter(Boolean).join(' · ')
-  if (typeof hours === 'object') {
-    return Object.entries(hours)
-      .filter(([, value]) => value !== null && value !== undefined && String(value).trim())
-      .map(([day, value]) => `${day}: ${value}`)
-      .join(' · ')
-  }
-  return ''
-}
+export { formatHours, formatHoursEntries, normalizePhone, phoneHref }
 
 function normalizeLocationPart(value) {
   return String(value || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim()
@@ -50,6 +40,14 @@ function addressContainsPart(address, part) {
   const normalizedPart = normalizeLocationPart(part)
   if (!normalizedAddress || !normalizedPart) return false
   return ` ${normalizedAddress} `.includes(` ${normalizedPart} `)
+}
+
+function distinctIdentityLabel(value, name, otherValue = '') {
+  const label = String(value || '').trim()
+  if (!label) return ''
+  const normalized = normalizeLocationPart(label)
+  if (normalized === normalizeLocationPart(name) || normalized === normalizeLocationPart(otherValue)) return ''
+  return label
 }
 
 export function formatPlaceLocation({ address, city, state } = {}) {
@@ -69,6 +67,25 @@ export function displayEditorialStatus(status) {
   if (normalized.startsWith('golden')) return "Anthony's Pick"
   if (normalized.startsWith('visited')) return 'Anthony reviewed'
   return ''
+}
+
+export function placePageTitle(placeName, brandName) {
+  const name = String(placeName || '').trim()
+  const brand = String(brandName || '').trim()
+  if (name && brand) return `${name} | ${brand}`
+  return name || brand || 'Place details'
+}
+
+export function normalizeExternalUrl(value) {
+  const raw = String(value || '').trim()
+  if (!raw || /^javascript:/i.test(raw)) return null
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+  try {
+    const url = new URL(candidate)
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : null
+  } catch (error) {
+    return null
+  }
 }
 
 async function readOptionalDetailData(queryFactory, label) {
@@ -165,6 +182,15 @@ export default function PlaceDetailPage({ themeKey = ThemeKeys.PIZZA }) {
     return () => { active = false }
   }, [id, table, themeKey])
 
+  useEffect(() => {
+    if (state !== 'ready' || !place) return undefined
+    const previousTitle = document.title
+    document.title = placePageTitle(place.name, theme.brandName)
+    return () => {
+      document.title = previousTitle
+    }
+  }, [place, state, theme.brandName])
+
   if (state === 'loading') {
     return (
       <main className="place-detail-state place-detail-state--loading" aria-busy="true">
@@ -189,14 +215,23 @@ export default function PlaceDetailPage({ themeKey = ThemeKeys.PIZZA }) {
 
   const location = formatPlaceLocation(place)
   const mapsUrl = buildGoogleMapsUrl({ ...place, type: entity.entity })
+  const websiteUrl = normalizeExternalUrl(place.website_url)
+  const menuUrl = normalizeExternalUrl(place.menu_url)
   const lifecycleStatus = normalizeLifecycleStatus(place.lifecycle_status || place.lifecycleStatus)
   const lifecycle = lifecycleCopy(lifecycleStatus)
   const displayStyle = displayPlaceStyle(place.style, themeKey)
   const editorialStatus = displayEditorialStatus(place.status)
+  const brand = distinctIdentityLabel(place.brand, place.name)
+  const operator = distinctIdentityLabel(place.operator, place.name, brand)
   const replacementId = place.lifecycle_replaced_by_id || place.lifecycleReplacedById
   const replacementHref = replacementId
     ? `${entity.placeRoute}/${encodeURIComponent(String(replacementId))}`
     : null
+  const replacementLocation = replacementPlace ? formatPlaceLocation(replacementPlace) : ''
+  const phone = normalizePhone(place.phone)
+  const phoneUrl = phoneHref(phone)
+  const formattedHours = formatHours(place.hours)
+  const hoursEntries = formatHoursEntries(place.hours)
 
   return (
     <main className="place-detail" style={{ '--detail-accent': theme.palette.accent }}>
@@ -222,7 +257,8 @@ export default function PlaceDetailPage({ themeKey = ThemeKeys.PIZZA }) {
             <p>{lifecycle.message}</p>
             {lifecycleStatus === 'replaced' ? (
               <div className="place-detail__replacement">
-                <strong>{replacementCopy(replacementPlace?.name, replacementId)}</strong>
+                <strong>{replacementCopy(replacementPlace?.name, replacementId, place.name)}</strong>
+                {replacementLocation ? <span className="place-detail__replacement-location">{replacementLocation}</span> : null}
                 {replacementHref ? <Link to={replacementHref}>View current place</Link> : null}
               </div>
             ) : null}
@@ -230,17 +266,28 @@ export default function PlaceDetailPage({ themeKey = ThemeKeys.PIZZA }) {
         ) : null}
         {displayPlaceRating(place.rating) !== null ? <p className="place-detail__rating">★ {displayPlaceRating(place.rating).toFixed(1)}</p> : null}
         {photos.length ? <ReviewGallery photos={photos} placeName={place.name} /> : null}
-        {(place.phone || place.website_url || place.menu_url || place.hours || location) ? (
+        {(phone || websiteUrl || menuUrl || place.hours || location) ? (
           <dl className="place-detail__facts">
             {location ? <><dt>Address</dt><dd>{location}</dd></> : null}
-            {place.phone ? <><dt>Phone</dt><dd><a href={`tel:${place.phone}`}>{place.phone}</a></dd></> : null}
-            {formatHours(place.hours) ? <><dt>Hours</dt><dd>{formatHours(place.hours)}</dd></> : null}
+            {brand ? <><dt>Brand</dt><dd>{brand}</dd></> : null}
+            {operator ? <><dt>Operator</dt><dd>{operator}</dd></> : null}
+            {phone && phoneUrl ? <><dt>Phone</dt><dd><a href={phoneUrl}>{phone}</a></dd></> : null}
+            {formattedHours ? <><dt>Hours</dt><dd>{hoursEntries.length ? (
+              <ul className="place-detail__hours" aria-label="Opening hours">
+                {hoursEntries.map(({ label, value }, index) => (
+                  <li key={`${label}-${index}`}>
+                    {label ? <strong>{label}</strong> : null}<span>{value}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : formattedHours}</dd></> : null}
           </dl>
         ) : null}
         <div className="place-detail__actions">
-          <a href={mapsUrl} target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
-          {place.website_url ? <a href={place.website_url} target="_blank" rel="noopener noreferrer">Official website</a> : null}
-          {place.menu_url ? <a href={place.menu_url} target="_blank" rel="noopener noreferrer">View menu</a> : null}
+          <a className="place-detail__action place-detail__action--primary" href={mapsUrl} target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
+          {phoneUrl ? <a className="place-detail__action" href={phoneUrl}>Call restaurant</a> : null}
+          {websiteUrl ? <a className="place-detail__action" href={websiteUrl} target="_blank" rel="noopener noreferrer">Official website</a> : null}
+          {menuUrl ? <a className="place-detail__action" href={menuUrl} target="_blank" rel="noopener noreferrer">View menu</a> : null}
         </div>
       </article>
     </main>

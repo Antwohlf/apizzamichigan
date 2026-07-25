@@ -28,20 +28,32 @@
   font-weight: 700;
 }
 
-.place-detail__actions a {
+.place-detail__action {
   padding: 0.55rem 0.8rem;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   text-decoration: none;
 }
 
-.place-detail__actions a:hover,
-.place-detail__actions a:focus-visible {
+.place-detail__action:hover,
+.place-detail__action:focus-visible {
   border-color: var(--detail-accent, var(--app-accent));
   background: color-mix(in srgb, var(--detail-accent, #f97316) 10%, transparent);
 }
 
-.place-detail__actions a:focus-visible,
+.place-detail__actions a.place-detail__action--primary {
+  border-color: var(--detail-accent, var(--app-accent));
+  background: var(--detail-accent, var(--app-accent));
+  color: #151515;
+}
+
+.place-detail__actions a.place-detail__action--primary:hover,
+.place-detail__actions a.place-detail__action--primary:focus-visible {
+  background: color-mix(in srgb, var(--detail-accent, #f97316) 82%, white);
+  color: #151515;
+}
+
+.place-detail__action:focus-visible,
 .place-detail__back:focus-visible {
   outline: 2px solid var(--detail-accent, var(--app-accent));
   outline-offset: 2px;
@@ -129,6 +141,10 @@
   color: var(--app-text);
 }
 
+.place-detail__replacement-location {
+  color: var(--app-text-muted);
+}
+
 .place-detail__replacement a {
   margin-top: 0.55rem;
   color: var(--detail-accent, var(--app-accent));
@@ -159,6 +175,26 @@
 
 .place-detail__facts a {
   color: var(--detail-accent, var(--app-accent));
+}
+
+.place-detail__hours {
+  display: grid;
+  gap: 0.2rem;
+  max-width: 34rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.place-detail__hours li {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 7rem) 1fr;
+  gap: 0.75rem;
+}
+
+.place-detail__hours strong {
+  color: var(--app-text);
+  font-weight: 700;
 }
 
 .place-detail__actions {
@@ -283,12 +319,17 @@
     margin-bottom: 0.55rem;
   }
 
+  .place-detail__hours li {
+    grid-template-columns: minmax(5rem, 6.5rem) 1fr;
+    gap: 0.5rem;
+  }
+
   .place-detail__actions {
     display: grid;
     gap: 0.65rem;
   }
 
-  .place-detail__actions a {
+  .place-detail__action {
     justify-content: center;
   }
 }

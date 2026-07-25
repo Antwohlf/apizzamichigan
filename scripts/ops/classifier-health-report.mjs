@@ -13,6 +13,10 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { execFileSync, spawnSync } from 'child_process'
 import os from 'os'
+import {
+  estimateClassificationBacklog,
+  summarizeClassificationBacklog,
+} from '../lib/classification-backlog.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
@@ -338,7 +342,9 @@ function classificationBacklogReport(root, rows) {
     retryablePartial: 0,
     exhaustedPartial: 0,
     failed: 0,
-    other: 0
+    other: 0,
+    recentCompleted: 0,
+    recentWindowHours: WINDOW_HOURS,
   }
   if (!regions.length) return { ...base, error: 'no operational regions configured' }
   if (!existsSync(dbPath)) return { ...base, error: 'queue DB not found' }
@@ -351,6 +357,14 @@ function classificationBacklogReport(root, rows) {
       FROM jobs
       WHERE job_type = 'classify'
     `).all().map(job => [job.osm_id, job]))
+
+    const recentCompleted = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM jobs
+      WHERE job_type = 'classify'
+        AND status = 'completed'
+        AND completed_at >= datetime('now', '-' || ? || ' hours')
+    `).get(WINDOW_HOURS).count
 
     const counts = { ...base }
     for (const row of rows) {
@@ -368,7 +382,19 @@ function classificationBacklogReport(root, rows) {
         else counts.exhaustedPartial += 1
       } else counts.other += 1
     }
-    return { ...counts, ok: true, dbPath }
+    return {
+      ...counts,
+      ok: true,
+      dbPath,
+      recentCompleted: Number(recentCompleted) || 0,
+      recentWindowHours: WINDOW_HOURS,
+      ...estimateClassificationBacklog({
+        candidates: counts.candidates,
+        completedLastWindow: recentCompleted,
+        windowHours: WINDOW_HOURS,
+      }),
+      ...summarizeClassificationBacklog({ ...counts, ok: true }),
+    }
   } catch (error) {
     return { ...base, dbPath, error: errorMessage(error) }
   } finally {
@@ -492,8 +518,22 @@ function classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgre
   }
 
   if (!postgres.ok) issues.push(`Postgres unavailable: ${postgres.error}`)
-  else if (postgres.summary.enriched_in_window === 0 && queue.ok && queue.totals.pending > IDLE_WARNING_MINIMUM) {
-    warnings.push(`no Postgres enrichment writes in last ${WINDOW_HOURS}h`)
+  else {
+    const backlog = postgres.classificationBacklog
+    if (backlog?.ok) {
+      if (backlog.missingJob > 0) {
+        issues.push(`${backlog.missingJob} classification candidates have no queue job`)
+      }
+      if (backlog.retryablePartial > 0) {
+        warnings.push(`${backlog.retryablePartial} classification candidates are waiting for bounded partial-result retry`)
+      }
+      if (backlog.exhaustedPartial > 0) {
+        warnings.push(`${backlog.exhaustedPartial} classification candidates exhausted automatic retry and need review`)
+      }
+    }
+    if (postgres.summary.enriched_in_window === 0 && queue.ok && queue.totals.pending > IDLE_WARNING_MINIMUM) {
+      warnings.push(`no Postgres enrichment writes in last ${WINDOW_HOURS}h`)
+    }
   }
 
   if (!ollama.ok) issues.push(`Ollama unavailable: ${ollama.error}`)
@@ -569,6 +609,13 @@ async function main() {
       const backlog = postgres.classificationBacklog
       console.log(`- operational classification backlog (${backlog.regions.join(', ')}): ${backlog.candidates}`)
       console.log(`- backlog queue state: pending=${backlog.pending}, processing=${backlog.processing}, retryable_partial=${backlog.retryablePartial}, missing_job=${backlog.missingJob}, exhausted_partial=${backlog.exhaustedPartial}`)
+      console.log(`- backlog meaning: ${backlog.state} — ${backlog.recommendedAction}`)
+      const throughput = Number(backlog.throughputPerHour) || 0
+      const eta = backlog.estimatedDays === null
+        ? 'unavailable'
+        : `${backlog.estimatedDays.toFixed(1)} days`
+      console.log(`- backlog throughput: ${throughput.toFixed(1)} completed/hour (${backlog.estimateBasis || 'no observation window'})`)
+      console.log(`- backlog ETA: ${eta}`)
     } else if (postgres.classificationBacklog) {
       console.log(`- operational classification backlog: unavailable (${postgres.classificationBacklog.error})`)
     }

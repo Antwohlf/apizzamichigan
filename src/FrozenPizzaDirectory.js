@@ -123,7 +123,7 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
       }}
     >
       <h2 style={{ color: theme.palette.accent, margin: '0 auto 1rem', textAlign: 'center' }}>
-        {entityConfigForTheme(themeKey).entity === 'taco' ? 'Frozen Taco Directory' : 'Frozen Pizza Directory'}
+        {entityConfigForTheme(themeKey).frozenDirectoryTitle}
       </h2>
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
         <thead>

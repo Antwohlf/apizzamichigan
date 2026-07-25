@@ -100,7 +100,7 @@ function requireAdminAuth(req, res, next) {
 }
 
 const getPlaceTable = (entity = 'pizza') =>
-  entity === 'taco' ? 'taco_places' : 'pizza_places'
+  ENTITY_PROFILES.profiles?.[entity]?.canonical_table || ENTITY_PROFILES.profiles?.pizza?.canonical_table || 'pizza_places'
 
 const localPostgresConfig = () => ({
   host: process.env.PGHOST || process.env.LOCAL_DB_HOST || 'localhost',
@@ -126,6 +126,22 @@ const configuredCoverageRegions = entity => {
     .map(region => String(region || '').trim().toUpperCase())
     .filter(Boolean)
 }
+
+// Review work defaults to the active product geography. Operators can pass
+// state=all when deliberately expanding the worklist beyond that scope.
+const sourceReviewRegions = (entity, rawState) => {
+  const requested = String(rawState || '').trim().toLowerCase()
+  if (requested === 'all') return null
+  if (requested) {
+    return [...new Set(requested.split(',').map(value => value.trim().toUpperCase()).filter(Boolean))]
+  }
+  return configuredCoverageRegions(entity)
+}
+
+const sourceReviewRegionSql = (sourceAlias, placeAlias, parameterIndex) => `(
+  UPPER(COALESCE(${sourceAlias}.source_data->>'region', ${sourceAlias}.source_data->>'state', ${sourceAlias}.source_data->>'country', '')) = ANY($${parameterIndex}::text[])
+  OR UPPER(COALESCE(${placeAlias}.state, '')) = ANY($${parameterIndex}::text[])
+)`
 
 const buildBasicFieldCoverage = (totalRow = {}, stateRows = [], scope = []) => {
   const fields = ['address', 'website_url', 'phone', 'style', 'price_range']
@@ -1795,6 +1811,9 @@ app.post('/api/admin/submitPlace', async (req, res) => {
     city,
     url,
     style,
+    price,
+    status,
+    review,
     rating,
     notes,
     lat,
@@ -1813,6 +1832,9 @@ app.post('/api/admin/submitPlace', async (req, res) => {
     address,
     city: city || null,
     url: url || null,
+    price: price || null,
+    status: status || 'unvisited',
+    review: review || null,
     notes: notes || null,
     rating: typeof rating === 'number' ? rating : null,
     lat,
@@ -1825,7 +1847,7 @@ app.post('/api/admin/submitPlace', async (req, res) => {
     row.type = style
   }
 
-  const table = entity === 'pizza' ? 'pizza_places' : 'taco_places'
+  const table = getPlaceTable(entity)
 
   try {
     const { data, error } = await serviceClient.from(table).insert(row).select('*').single()
@@ -2112,6 +2134,7 @@ app.get('/api/admin/source-provenance', requireAdminAuth, async (req, res) => {
 
 app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) => {
   const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+  const reviewRegions = sourceReviewRegions(entity, req.query?.state)
 
   try {
     const payload = await withLocalPostgres(async client => {
@@ -2122,7 +2145,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
           AND table_name IN ('place_sources', 'source_review_queue')
       `)
       const tables = new Set(tableCheck.rows.map(row => row.table_name))
-      const placeTable = entity === 'taco' ? 'taco_places' : 'pizza_places'
+      const placeTable = getPlaceTable(entity)
       const placeColumnResult = await client.query(`
         SELECT column_name
         FROM information_schema.columns
@@ -2141,6 +2164,9 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
       const coverageRegionPredicate = placeColumns.has('state')
         ? `UPPER(COALESCE(${coverageStateExpression}, '')) = ANY($1::text[])`
         : 'FALSE'
+      const activeLifecyclePredicate = alias => placeColumns.has('lifecycle_status')
+        ? `COALESCE(${alias ? `${alias}.` : ''}lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')`
+        : 'TRUE'
       const coverageResult = await client.query(`
         SELECT
           COUNT(*)::int AS total,
@@ -2153,7 +2179,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         FROM ${placeTable}
         WHERE ${coverageRegionPredicate}
           AND lower(COALESCE(status, '')) NOT LIKE 'closed%'
-          AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+          AND ${activeLifecyclePredicate()}
       `, [coverageRegions])
       const coverageByStateResult = await client.query(`
         SELECT
@@ -2168,7 +2194,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         FROM ${placeTable}
         WHERE ${coverageRegionPredicate}
           AND lower(COALESCE(status, '')) NOT LIKE 'closed%'
-          AND COALESCE(lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+          AND ${activeLifecyclePredicate()}
         GROUP BY ${coverageStateExpression}
         ORDER BY ${coverageStateExpression}
       `, [coverageRegions])
@@ -2195,16 +2221,20 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         }
       }
 
+      const queueRegionFilter = reviewRegions ? `AND ${sourceReviewRegionSql('srq', 'review_place', 2)}` : ''
+      const queueQueryValues = reviewRegions ? [entity, reviewRegions] : [entity]
       const queueResult = await client.query(`
         SELECT
-          review_kind,
-          status,
-          ${sourceReviewReadinessSql} AS readiness,
+          srq.review_kind,
+          srq.status,
+          ${sourceReviewReadinessSqlForAlias} AS readiness,
           COUNT(*)::int AS rows
-        FROM source_review_queue
-        WHERE entity_type = $1
-        GROUP BY review_kind, status, readiness
-      `, [entity])
+        FROM source_review_queue srq
+        LEFT JOIN ${getPlaceTable(entity)} review_place ON review_place.id = srq.nearest_place_id
+        WHERE srq.entity_type = $1
+          ${queueRegionFilter}
+        GROUP BY srq.review_kind, srq.status, readiness
+      `, queueQueryValues)
       const sourceResult = tables.has('place_sources')
         ? await client.query(`
             SELECT
@@ -2215,6 +2245,8 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
             WHERE entity_type = $1
           `, [entity])
         : { rows: [{ source_rows: 0, linked_places: 0, latest_source_update: null }] }
+      const lifecycleRegionFilter = reviewRegions ? `AND ${sourceReviewRegionSql('srq', 'p', 2)}` : ''
+      const lifecycleQueryValues = reviewRegions ? [entity, reviewRegions] : [entity]
       const lifecycleResult = await client.query(`
           SELECT COUNT(*) FILTER (
             WHERE srq.source_id = p.google_place_id
@@ -2230,7 +2262,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
               WHERE ps.entity_type = $1
               ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
             ) latest_source
-            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} stale_place ON stale_place.id = latest_source.place_id
+            JOIN ${getPlaceTable(entity)} stale_place ON stale_place.id = latest_source.place_id
             WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
                 WHEN 'osm' THEN 30
                 WHEN 'official_website' THEN 30
@@ -2240,7 +2272,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
                 WHEN 'wikidata' THEN 365
                 ELSE 180 END)
               AND lower(coalesce(stale_place.status, '')) NOT LIKE 'closed%'
-              AND COALESCE(stale_place.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+              AND ${activeLifecyclePredicate('stale_place')}
           )` : '0'}::int AS stale_evidence,
           ${tables.has('place_sources') ? `(
             SELECT COUNT(DISTINCT stale_place.id)::int
@@ -2251,7 +2283,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
               WHERE ps.entity_type = $1
               ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
             ) latest_source
-            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} stale_place ON stale_place.id = latest_source.place_id
+            JOIN ${getPlaceTable(entity)} stale_place ON stale_place.id = latest_source.place_id
             WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
                 WHEN 'osm' THEN 30
                 WHEN 'official_website' THEN 30
@@ -2261,7 +2293,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
                 WHEN 'wikidata' THEN 365
                 ELSE 180 END)
               AND lower(coalesce(stale_place.status, '')) NOT LIKE 'closed%'
-              AND COALESCE(stale_place.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+              AND ${activeLifecyclePredicate('stale_place')}
           )` : '0'}::int AS stale_places
           , ${tables.has('place_sources') ? `(
             SELECT COUNT(*)::int
@@ -2272,18 +2304,19 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
               WHERE ps.entity_type = $1
               ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
             ) latest_closed_source
-            JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} closed_place ON closed_place.id = latest_closed_source.place_id
+            JOIN ${getPlaceTable(entity)} closed_place ON closed_place.id = latest_closed_source.place_id
             WHERE lower(coalesce(closed_place.status, '')) NOT LIKE 'closed%'
-              AND COALESCE(closed_place.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+              AND ${activeLifecyclePredicate('closed_place')}
               AND latest_closed_source.data->>'is_closed' = 'true'
           )` : '0'}::int AS closed_signals
           FROM source_review_queue srq
-          JOIN ${entity === 'taco' ? 'taco_places' : 'pizza_places'} p ON p.id = srq.nearest_place_id
+          JOIN ${getPlaceTable(entity)} p ON p.id = srq.nearest_place_id
           WHERE srq.entity_type = $1
             AND srq.status = 'pending'
             AND srq.review_kind = 'ambiguous'
             AND srq.source = 'osm'
-      `, [entity])
+            ${lifecycleRegionFilter}
+      `, lifecycleQueryValues)
 
       const countQueue = (reviewKind, status, readiness = null) => queueResult.rows
         .filter(row =>
@@ -2348,6 +2381,7 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
         linkedPlaces: normalizeCount(sourceTotals.linked_places),
         latestSourceUpdate: sourceTotals.latest_source_update || null,
         basicFieldCoverage: buildBasicFieldCoverage(coverageResult.rows[0], coverageByStateResult.rows, coverageRegions),
+        reviewScope: reviewRegions ? { regions: reviewRegions } : { regions: 'all' },
       }
     })
 
@@ -2432,6 +2466,7 @@ app.get('/api/admin/supabase-sync-readiness', requireAdminAuth, async (req, res)
         protectedFieldConflicts,
         bulkRpcState: bulkRpc.state || 'unknown',
         publishingReady,
+        lastRun: report.lastRun || null,
         generatedAt: report.generatedAt || new Date().toISOString(),
       },
     })
@@ -2444,6 +2479,91 @@ app.get('/api/admin/supabase-sync-readiness', requireAdminAuth, async (req, res)
         label: 'Sync status unavailable',
         detail: 'The read-only sync check could not complete. No sync was started.',
         generatedAt: new Date().toISOString(),
+      },
+    })
+  }
+})
+
+app.get('/api/admin/pipeline-status', requireAdminAuth, (req, res) => {
+  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
+  const statusPath = process.env.PIPELINE_STATUS_PATH || resolve(__dirname, '..', 'scripts/.pipeline-alert-status.json')
+  const maxAgeMinutes = Number.parseInt(process.env.PIPELINE_STATUS_MAX_AGE_MINUTES || '360', 10)
+  const now = Date.now()
+
+  if (entity === 'taco') {
+    return res.json({
+      data: {
+        available: false,
+        entity,
+        state: 'not_configured',
+        label: 'Taco pipeline not configured',
+        detail: 'Pipeline health is currently configured for the pizza dataset only.',
+        checkedAt: null,
+      },
+    })
+  }
+
+  if (!existsSync(statusPath)) {
+    return res.json({
+      data: {
+        available: false,
+        entity,
+        state: 'stale',
+        label: 'No recent pipeline check',
+        detail: 'The iMac has not published a recent read-only pipeline health report.',
+        checkedAt: null,
+      },
+    })
+  }
+
+  try {
+    const report = JSON.parse(readFileSync(statusPath, 'utf8'))
+    const checkedAt = report.checkedAt || report.generatedAt || null
+    const checkedAtMs = checkedAt ? Date.parse(checkedAt) : NaN
+    const ageMinutes = Number.isFinite(checkedAtMs) ? Math.max(0, Math.round((now - checkedAtMs) / 60000)) : null
+    const stale = ageMinutes == null || ageMinutes > maxAgeMinutes
+    const state = stale ? 'stale' : String(report.state || 'FAIL').toLowerCase()
+    const label = stale
+      ? 'Pipeline check is out of date'
+      : state === 'ok' ? 'Pipeline healthy'
+        : state === 'warn' ? 'Pipeline needs attention'
+          : 'Pipeline needs repair'
+    const detail = stale
+      ? `Last checked ${ageMinutes == null ? 'an unknown time ago' : `${ageMinutes} minutes ago`}.`
+      : state === 'ok'
+        ? 'The latest read-only check found no active issues.'
+        : `${(report.alerts || []).length} issue${(report.alerts || []).length === 1 ? '' : 's'} and ${(report.warnings || []).length} warning${(report.warnings || []).length === 1 ? '' : 's'} need attention.`
+
+    return res.json({
+      data: {
+        available: true,
+        entity,
+        state,
+        label,
+        detail,
+        checkedAt,
+        ageMinutes,
+        alerts: Array.isArray(report.alerts) ? report.alerts.slice(0, 10) : [],
+        warnings: Array.isArray(report.warnings) ? report.warnings.slice(0, 10) : [],
+        actions: Array.isArray(report.actions) ? report.actions.slice(0, 10) : [],
+        queue: report.queue || null,
+        classifier: report.classifier || null,
+        freshness: Array.isArray(report.freshness) ? report.freshness : null,
+        sourcePipeline: report.sourcePipeline || null,
+        sourceActivation: report.sourceActivation || null,
+        publication: report.publication || null,
+      },
+    })
+  } catch (error) {
+    console.error('[admin] Pipeline status error', error)
+    return res.json({
+      data: {
+        available: false,
+        entity,
+        state: 'unavailable',
+        label: 'Pipeline status unavailable',
+        detail: 'The latest health report could not be read. No pipeline work was started.',
+        checkedAt: null,
       },
     })
   }
@@ -2541,6 +2661,7 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
   const state = (req.query?.state || '').toString().trim().slice(0, 40)
   const search = (req.query?.search || '').toString().trim().slice(0, 120)
   const focus = (req.query?.focus || 'weekly').toString().trim().toLowerCase()
+  const reviewRegions = sourceReviewRegions(entity, state)
   const limit = safeInteger(req.query?.limit, 50, { min: 1, max: 100 })
   const offset = safeInteger(req.query?.offset, 0, { min: 0, max: 1000000 })
 
@@ -2591,14 +2712,12 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
       } else if (scope === 'independent') {
         filters.push("srq.source IN ('osm', 'fsq_os_places', 'overture_places')")
       }
-      if (state) {
-        values.push(state.toLowerCase())
+      if (reviewRegions) {
+        values.push(reviewRegions)
         filters.push(`(
-          lower(COALESCE(srq.source_data->>'region', '')) = $${values.length}
-          OR lower(COALESCE(srq.source_data->>'state', '')) = $${values.length}
-          OR lower(COALESCE(srq.source_data->>'country', '')) = $${values.length}
-          OR lower(COALESCE(nearest.state, '')) = $${values.length}
-          OR lower(COALESCE(decision_place.state, '')) = $${values.length}
+          UPPER(COALESCE(srq.source_data->>'region', srq.source_data->>'state', srq.source_data->>'country', '')) = ANY($${values.length}::text[])
+          OR UPPER(COALESCE(nearest.state, '')) = ANY($${values.length}::text[])
+          OR UPPER(COALESCE(decision_place.state, '')) = ANY($${values.length}::text[])
         )`)
       }
       if (search) {
@@ -2694,6 +2813,9 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
         WHERE ${where}
         ORDER BY
           CASE srq.review_kind WHEN 'ambiguous' THEN 0 ELSE 1 END,
+          -- Put the easiest, highest-confidence identity checks first. This
+          -- only changes review order; it never links or promotes a row.
+          CASE WHEN srq.review_kind = 'ambiguous' THEN ${sourceReviewEvidenceCountSql} END DESC,
           CASE WHEN srq.review_kind = 'ambiguous' THEN srq.nearest_distance_m END ASC NULLS LAST,
           CASE
             WHEN srq.review_kind = 'likely_new' AND ${sourceReviewReadinessSqlForAlias} = 'candidate_ready' THEN 0
@@ -2702,7 +2824,6 @@ app.get('/api/admin/source-review-queue', requireAdminAuth, async (req, res) => 
             ELSE 3
           END,
           CASE WHEN srq.review_kind = 'likely_new' THEN ${sourceReviewSignalCountSql} END DESC,
-          CASE WHEN srq.review_kind = 'ambiguous' THEN ${sourceReviewEvidenceCountSql} END DESC,
           CASE WHEN srq.review_kind = 'likely_new' THEN srq.nearest_distance_m END DESC NULLS LAST,
           CASE WHEN srq.review_kind = 'ambiguous' THEN srq.nearest_distance_m END ASC NULLS LAST,
           srq.source_name NULLS LAST,
@@ -3190,23 +3311,74 @@ app.get('/api/admin/source-review-queue/:id/ai-assessment', requireAdminAuth, as
           WHERE table_schema = 'public' AND table_name = 'source_review_ai_assessments'
         ) AS exists
       `)
-      if (!table.rows[0]?.exists) return { available: false, data: null }
-      const result = await client.query(`
-        SELECT assessment.review_queue_id, assessment.entity_type, assessment.model,
-          assessment.decision, assessment.confidence, assessment.reason,
-          assessment.supporting_evidence, assessment.needs_human_review,
-          assessment.decision_origin, assessment.created_at,
-          (assessment.created_at < queue.updated_at) AS stale
-        FROM source_review_ai_assessments assessment
-        JOIN source_review_queue queue ON queue.id = assessment.review_queue_id
-        WHERE assessment.review_queue_id = $1
-        ORDER BY assessment.created_at DESC, assessment.id DESC
-        LIMIT 1
+      let assessment = null
+      if (table.rows[0]?.exists) {
+        const result = await client.query(`
+          SELECT assessment.review_queue_id, assessment.entity_type, assessment.model,
+            assessment.decision, assessment.confidence, assessment.reason,
+            assessment.supporting_evidence, assessment.needs_human_review,
+            assessment.decision_origin, assessment.created_at,
+            (assessment.created_at < queue.updated_at) AS stale
+          FROM source_review_ai_assessments assessment
+          JOIN source_review_queue queue ON queue.id = assessment.review_queue_id
+          WHERE assessment.review_queue_id = $1
+          ORDER BY assessment.created_at DESC, assessment.id DESC
+          LIMIT 1
+        `, [id])
+        assessment = result.rows[0] || null
+      }
+
+      if (assessment && !assessment.stale) {
+        return { available: true, data: assessment, stale: false }
+      }
+
+      // Deterministic identity guidance is cheap and read-only. Make it
+      // available immediately even when the optional Ollama triage cache has
+      // not been populated yet; the UI still keeps the human decision gate.
+      const queueResult = await client.query(`
+        SELECT *
+        FROM source_review_queue
+        WHERE id = $1
       `, [id])
-      const assessment = result.rows[0] || null
+      const queueRow = queueResult.rows[0]
+      if (!queueRow) return { available: true, data: null, stale: Boolean(assessment?.stale) }
+
+      const entity = queueRow.entity_type === 'taco' ? 'taco' : 'pizza'
+      const placeTable = `${entity}_places`
+      const placeResult = queueRow.nearest_place_id
+        ? await client.query(`
+          SELECT id, google_place_id, address, phone, website_url, status, rating, notes,
+            brand_wikidata, operator_wikidata, osm_tags
+          FROM ${placeTable}
+          WHERE id = $1
+        `, [queueRow.nearest_place_id])
+        : { rows: [] }
+      const nearest = placeResult.rows[0] || {}
+      const reviewRow = {
+        ...queueRow,
+        nearest_current_google_place_id: nearest.google_place_id,
+        nearest_address: nearest.address,
+        nearest_phone: nearest.phone,
+        nearest_website_url: nearest.website_url,
+        nearest_status: nearest.status,
+        nearest_rating: nearest.rating,
+        nearest_notes: nearest.notes,
+        nearest_brand_wikidata: nearest.brand_wikidata,
+        nearest_operator_wikidata: nearest.operator_wikidata,
+        nearest_osm_tags: nearest.osm_tags,
+      }
+      const identity = await import('../scripts/lib/source-review-identity.mjs')
+      const evidence = identity.evidenceFor(reviewRow)
+      const deterministic = identity.deterministicDecision(reviewRow, evidence)
       return {
         available: true,
-        data: assessment?.stale ? null : assessment,
+        data: deterministic ? {
+          review_queue_id: id,
+          entity_type: entity,
+          model: 'deterministic-identity',
+          ...deterministic,
+          created_at: new Date().toISOString(),
+        } : null,
         stale: Boolean(assessment?.stale),
       }
     })
@@ -3819,11 +3991,13 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       .filter(Boolean)
 
     const entityParam = (req.query?.entity || '').toString().trim()
+    const countOnly = req.query?.count === 'only'
 
     let query = serviceClient
       .from(SUGGESTED_PLACES_TABLE)
-      .select('*')
-      .order('created_at', { ascending: false })
+      .select(countOnly ? 'id' : '*', countOnly ? { count: 'exact', head: true } : undefined)
+
+    if (!countOnly) query = query.order('created_at', { ascending: false })
 
     if (statusFilters.length > 0) {
       query = query.in('status', statusFilters)
@@ -3832,16 +4006,16 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       query = query.eq('entity', entityParam)
     }
 
-    const { data, error } = await query
+    const { data, error, count } = await query
     if (error) {
       if (error.code === 'PGRST205') {
         // Unified suggestions table not present; return empty to avoid 500s.
-        return res.json({ data: [] })
+        return res.json(countOnly ? { data: [], count: 0 } : { data: [] })
       }
       throw error
     }
 
-    return res.json({ data })
+    return res.json(countOnly ? { data: [], count: Number(count) || 0 } : { data })
   } catch (error) {
     console.error('[admin] suggestions fetch error', error)
     return res.status(500).json({ error: 'Failed to load suggestions.' })

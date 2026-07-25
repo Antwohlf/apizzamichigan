@@ -4,6 +4,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { selectSourcePipelineRegions } from '../lib/source-pipeline-scope.mjs';
+import { sourceAutoLinkArguments } from '../lib/source-auto-link-policy.mjs';
+import { summarizeOsmManifest } from '../lib/osm-refresh-summary.mjs';
 
 const ROOT = process.cwd();
 const CONFIG_PATH = resolve(ROOT, 'config/source-pipeline.json');
@@ -109,14 +111,8 @@ function osmBacklog(region, osmConfig) {
   if (!existsSync(manifestPath)) return null;
   try {
     const manifest = loadJson(manifestPath, null);
-    const total = Number(manifest?.total_tiles || Object.keys(manifest?.tiles || {}).length || 0);
-    const success = Number(manifest?.statuses?.success || Object.values(manifest?.tiles || {}).filter(tile => tile.status === 'success').length || 0);
     const refreshAfterMs = Number(osmConfig.refresh_after_hours || 720) * 60 * 60 * 1000;
-    const stale = Object.values(manifest?.tiles || {}).filter(tile => (
-      tile.status === 'success'
-      && (!tile.completed_at || !Number.isFinite(Date.parse(tile.completed_at)) || Date.now() - Date.parse(tile.completed_at) >= refreshAfterMs)
-    )).length;
-    return Math.max(0, total - success) + stale;
+    return summarizeOsmManifest(manifest, { refreshAfterHours: refreshAfterMs / (60 * 60 * 1000) }).refreshQueueTiles;
   } catch {
     return null;
   }
@@ -207,22 +203,21 @@ function runAdapter(source, region, output, config, state) {
       ], { timeout: 180000 }));
     }
     run(NODE, ['scripts/ops/import-source-review-queue.mjs', '--input-files', paths.report, '--entity', config.entity, '--apply'], { timeout: 180000 });
-    // Exact store URLs or normalized phones, combined with a nearby
-    // canonical location, are safe enough to link automatically for every
-    // feeder. The auto-link command still rejects conflicting source IDs and
-    // never promotes identity or lifecycle fields.
-    run(NODE, [
-      'scripts/ops/auto-link-source-review-queue.mjs',
-      '--entity', config.entity,
-      '--source', source,
-      ...(source === 'osm' ? ['--exact-source-id'] : ['--exact-identifiers']),
-      // Automatic linking is deliberately conservative: the trusted official
-      // website, normalized address, and normalized phone must all agree.
-      ...(source === 'all_the_places' || source === 'fsq_os_places' ? ['--min-exact-identifiers', '3'] : []),
-      ...(source === 'wikidata' ? ['--source-identity'] : []),
-      '--max-distance-m', '100',
-      '--limit', '100',
-    ], { timeout: 180000 });
+    // Only sources with a source-specific identity contract may auto-link.
+    // FSQ and Overture remain review candidates until their identifiers are
+    // explicitly validated; they must not inherit the official-chain rule.
+    const autoLinkArgs = sourceAutoLinkArguments(source);
+    if (autoLinkArgs.length) {
+      run(NODE, [
+        'scripts/ops/auto-link-source-review-queue.mjs',
+        '--entity', config.entity,
+        '--source', source,
+        ...autoLinkArgs,
+        '--max-distance-m', '100',
+        '--limit', '100',
+        ...(config.apply ? ['--apply'] : []),
+      ], { timeout: 180000 });
+    }
   }
   return { ...paths, osmProvenanceRefresh };
 }
@@ -421,7 +416,7 @@ try {
         const result = runAtp(region, config, state.sources, options.apply, config.sources[source].spiders_per_run || 3);
         report.work_units.push({ source, region: region.key, spiders: result?.selected || [] });
         if (options.apply) {
-          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--min-exact-identifiers', '3', '--max-distance-m', '10', '--limit', '100'], { timeout: 180000 }).slice(-2000);
+          report.auto_link = run(NODE, ['scripts/ops/auto-link-source-review-queue.mjs', '--entity', config.entity, '--source', source, '--exact-identifiers', '--min-exact-identifiers', '3', '--max-distance-m', '10', '--limit', '100', ...(options.apply ? ['--apply'] : [])], { timeout: 180000 }).slice(-2000);
         }
         for (const spider of result?.selected || []) {
           processNew(resolve(ROOT, 'reports/source-review', `${spider}-review.json`), source, config, options.apply, options.maxNewPlaces);

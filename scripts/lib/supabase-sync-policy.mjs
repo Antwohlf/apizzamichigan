@@ -1,5 +1,9 @@
-export const SUPABASE_SYNC_TARGET_TABLE = 'pizza_places';
-export const SUPABASE_BULK_SYNC_RPC = 'apply_pizza_places_sync_batch';
+import { SUPABASE_SYNCABLE_TABLES, supabaseSyncProfile } from './supabase-sync-profiles.mjs';
+
+const DEFAULT_SYNC_PROFILE = supabaseSyncProfile();
+
+export const SUPABASE_SYNC_TARGET_TABLE = DEFAULT_SYNC_PROFILE.targetTable;
+export const SUPABASE_BULK_SYNC_RPC = DEFAULT_SYNC_PROFILE.bulkRpc;
 
 // The public schema stores compact region codes. Keep the full source address
 // intact, but map the one current international subdivision that exceeds the
@@ -70,7 +74,10 @@ export const OVERWRITE_COLS = [
   'menu_last_parsed_at',
 ];
 
-export const FILL_IF_NULL_COLS = [
+// These are canonical classification values produced by the local database.
+// Source adapters are still prohibited from promoting them directly, but the
+// local canonical row is authoritative when mirroring to the public table.
+export const CANONICAL_MIRROR_COLS = [
   'style',
   'price',
   'price_range',
@@ -95,7 +102,7 @@ export const LOCAL_CONTEXT_COLS = [
 
 export const LOCAL_SYNC_COLS = [
   ...LOCAL_CONTEXT_COLS,
-  ...FILL_IF_NULL_COLS,
+  ...CANONICAL_MIRROR_COLS,
   ...OVERWRITE_COLS,
   ...LIFECYCLE_COLS,
 ];
@@ -105,27 +112,32 @@ const LOCAL_SYNC_CHECKPOINT_COL = `to_char(last_enriched_at at time zone 'UTC', 
 export const SUPABASE_SYNC_SELECT_COLS = [
   'id',
   ...OVERWRITE_COLS,
-  ...FILL_IF_NULL_COLS,
+  ...CANONICAL_MIRROR_COLS,
   ...QA_DEFAULT_COLS,
   ...LIFECYCLE_COLS,
 ];
 
 export const LOCAL_SYNC_VALUE_COLS = [
-  ...FILL_IF_NULL_COLS,
+  ...CANONICAL_MIRROR_COLS,
   ...OVERWRITE_COLS,
   ...LIFECYCLE_COLS,
 ];
 
 export function assertSupabaseSyncTableBoundary({
-  targetTable = SUPABASE_SYNC_TARGET_TABLE,
+  entity = null,
+  targetTable = entity ? supabaseSyncProfile(entity).targetTable : SUPABASE_SYNC_TARGET_TABLE,
   localOnlyTables = LOCAL_ONLY_SUPABASE_TABLES,
 } = {}) {
   if (localOnlyTables.includes(targetTable)) {
     throw new Error(`Refusing to sync local-only provenance/review table to Supabase: ${targetTable}`);
   }
 
-  if (targetTable !== SUPABASE_SYNC_TARGET_TABLE) {
+  if (!SUPABASE_SYNCABLE_TABLES.includes(targetTable)) {
     throw new Error(`Unsupported Supabase sync target table: ${targetTable}`);
+  }
+
+  if (entity && supabaseSyncProfile(entity).targetTable !== targetTable) {
+    throw new Error(`Sync entity ${entity} does not use target table ${targetTable}`);
   }
 
   return {
@@ -159,6 +171,10 @@ export function normalizeSyncSelectorOptions(options = {}) {
 
 export function localSyncSelect(options = {}) {
   const selector = normalizeSyncSelectorOptions(options);
+  const targetTable = options.targetTable || (options.entity
+    ? supabaseSyncProfile(options.entity).targetTable
+    : SUPABASE_SYNC_TARGET_TABLE);
+  assertSupabaseSyncTableBoundary({ entity: options.entity || null, targetTable });
   const params = [];
   const valueCols = selector.lifecycleOnly ? LIFECYCLE_COLS : LOCAL_SYNC_VALUE_COLS;
   const filters = [
@@ -205,7 +221,7 @@ export function localSyncSelect(options = {}) {
         select
           ${LOCAL_SYNC_COLS.join(',\n          ')},
           ${LOCAL_SYNC_CHECKPOINT_COL}
-        from pizza_places
+        from ${targetTable}
         where ${filters.join('\n          and ')}
         order by ${orderBy}
         limit $${limitParam}
@@ -244,10 +260,11 @@ export function buildSupabasePayload(local, current, {
     }
   }
 
-  for (const col of lifecycleOnly ? [] : FILL_IF_NULL_COLS) {
+  // A non-null local canonical value is authoritative for the public mirror.
+  // Null local values never clear a public value.
+  for (const col of lifecycleOnly ? [] : CANONICAL_MIRROR_COLS) {
     const localValue = local[col];
-    const supabaseValue = current[col];
-    if ((supabaseValue === null || supabaseValue === undefined) && localValue !== null && localValue !== undefined) {
+    if (localValue !== null && localValue !== undefined && !syncValuesEqual(localValue, current[col])) {
       payload[col] = localValue;
     }
   }
@@ -297,7 +314,7 @@ export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOStr
     }
   }
 
-  for (const col of [...OVERWRITE_COLS, ...FILL_IF_NULL_COLS, ...LIFECYCLE_COLS]) {
+  for (const col of [...OVERWRITE_COLS, ...CANONICAL_MIRROR_COLS, ...LIFECYCLE_COLS]) {
     const value = local[col];
     if (value !== null && value !== undefined) payload[col] = value;
   }
@@ -310,10 +327,10 @@ export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOStr
   return payload;
 }
 
-export function protectedFieldSkips(local, current) {
+export function canonicalMirrorMismatches(local, current) {
   if (!current) return [];
 
-  return FILL_IF_NULL_COLS
+  return CANONICAL_MIRROR_COLS
     .filter(col => local[col] !== null && local[col] !== undefined && current[col] !== null && current[col] !== undefined)
     .map(col => ({
       column: col,

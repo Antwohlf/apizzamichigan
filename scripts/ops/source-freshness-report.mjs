@@ -8,6 +8,7 @@
 import pg from 'pg';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { summarizeDatabaseError } from '../lib/source-freshness-status.mjs';
 
 const policyPath = resolve(process.cwd(), 'config/source-policy.json');
 const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
@@ -233,6 +234,23 @@ try {
       console.log('');
       console.log('Absence from the latest OSM input is not evidence that a place is closed or replaced. Review these rows before changing lifecycle data.');
     }
+  }
+} catch (error) {
+  const report = {
+    status: 'unavailable',
+    policy_version: policy.version,
+    entity: policy.entity,
+    checked_at: new Date().toISOString(),
+    scope: states.length ? { states } : { states: 'all' },
+    sources: [],
+    error: summarizeDatabaseError(error),
+    read_only: true,
+  };
+  if (json) console.log(JSON.stringify(report, null, 2));
+  else {
+    console.log(`# Source Freshness Report (${policy.entity})`);
+    console.log(`Status: unavailable (${report.error})`);
+    console.log(`Scope: ${states.length ? states.join(', ') : 'all states'}`);
   }
 } finally {
   await client.end().catch(() => {});

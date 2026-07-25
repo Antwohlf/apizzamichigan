@@ -33,6 +33,8 @@ for (const required of [
   'hostname()',
   'retention',
   '--dry-run',
+  'PG_DUMP_CANDIDATES',
+  'defaultPgDumpBin',
 ]) {
   assert(script.includes(required), `backup script is missing ${required}`);
 }

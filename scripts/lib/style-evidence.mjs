@@ -46,7 +46,11 @@ export function evidenceText(row) {
     row.name,
     row.website_url,
     toEvidenceText(row.osm_tags),
-    toEvidenceText(row.scrape_notes)
+    toEvidenceText(row.scrape_notes),
+    // Accepted source evidence is already part of the classifier's input
+    // contract. Include it in the final guardrail too, otherwise a valid
+    // source-backed style can be discarded after the model responds.
+    toEvidenceText(row.source_evidence)
   ].filter(Boolean).join(' ').toLowerCase()
 }
 

@@ -149,7 +149,7 @@ into explicit source IDs.
 | Official website | Restaurant-owned public facts and menu evidence | Can update supporting fields and evidence, but should not overwrite manual corrections blindly. |
 | Government/open data | Licensed public records | Good for validation and supplemental metadata. Track dataset/source name. |
 | OSM | Open community-maintained place data | Good broad default. Preserve OSM evidence and attribution. |
-| AI inference | Derived classification from evidence | Reviewable output. Sync guarded; protected user-facing fields are fill-if-null in Supabase. |
+| AI inference | Derived classification from evidence | Reviewable output. Local canonical classification is mirrored to Supabase only after the local workflow writes it; source adapters cannot promote it directly. |
 
 ## Current Column Ownership
 

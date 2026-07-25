@@ -39,6 +39,12 @@ BEGIN
     RAISE EXCEPTION 'p_rows must be a JSON array';
   END IF;
 
+  -- Keep each transaction bounded so the RPC cannot turn into a large
+  -- disk-I/O burst when called with an accidental oversized payload.
+  IF jsonb_array_length(p_rows) > 500 THEN
+    RAISE EXCEPTION 'p_rows cannot contain more than 500 rows';
+  END IF;
+
   IF EXISTS (
     SELECT 1
     FROM jsonb_array_elements(p_rows) AS item
@@ -137,10 +143,12 @@ BEGIN
     menu_parse_confidence = CASE WHEN incoming.patch ? 'menu_parse_confidence' THEN incoming.menu_parse_confidence ELSE target.menu_parse_confidence END,
     menu_parse_notes = CASE WHEN incoming.patch ? 'menu_parse_notes' THEN incoming.menu_parse_notes ELSE target.menu_parse_notes END,
     menu_last_parsed_at = CASE WHEN incoming.patch ? 'menu_last_parsed_at' THEN incoming.menu_last_parsed_at ELSE target.menu_last_parsed_at END,
-    style = CASE WHEN target.style IS NULL AND incoming.patch ? 'style' THEN incoming.style ELSE target.style END,
-    price = CASE WHEN target.price IS NULL AND incoming.patch ? 'price' THEN incoming.price ELSE target.price END,
-    price_range = CASE WHEN target.price_range IS NULL AND incoming.patch ? 'price_range' THEN incoming.price_range ELSE target.price_range END,
-    style_confidence = CASE WHEN target.style_confidence IS NULL AND incoming.patch ? 'style_confidence' THEN incoming.style_confidence ELSE target.style_confidence END,
+    -- Local pizza_places is the canonical classification source. A null local
+    -- value is omitted from the patch, so this never clears a public value.
+    style = CASE WHEN incoming.patch ? 'style' THEN incoming.style ELSE target.style END,
+    price = CASE WHEN incoming.patch ? 'price' THEN incoming.price ELSE target.price END,
+    price_range = CASE WHEN incoming.patch ? 'price_range' THEN incoming.price_range ELSE target.price_range END,
+    style_confidence = CASE WHEN incoming.patch ? 'style_confidence' THEN incoming.style_confidence ELSE target.style_confidence END,
     qa_status = CASE WHEN incoming.patch ? 'qa_status' THEN incoming.qa_status ELSE target.qa_status END,
     qa_schema_version = CASE WHEN incoming.patch ? 'qa_schema_version' THEN incoming.qa_schema_version ELSE target.qa_schema_version END,
     lifecycle_status = CASE WHEN incoming.patch ? 'lifecycle_status' THEN incoming.lifecycle_status ELSE target.lifecycle_status END,

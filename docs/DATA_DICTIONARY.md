@@ -14,6 +14,20 @@ The contract deliberately classifies fields as identity, source factual,
 inferred, editorial, or operational. Source adapters may add evidence without
 silently changing identity or editorial fields.
 
+The contract also declares the primary field for concepts that have legacy or
+parallel columns. Use `price_range` for new reads and writes; `price` is a
+legacy compatibility alias that remains in the sync mirror until the public
+schema is migrated. Source precedence is declared in the same contract and
+must agree with the source-policy priorities.
+
+## Editorial Ratings
+
+`rating` is Anthony's personal editorial score. The normal scale is 0-10, and
+new entry forms should stay within that range. A small number of historical
+personal scores may be above 10; those values are preserved rather than
+rewritten because they are part of the original review history. They still
+qualify for Anthony's Picks when they meet the configured minimum score.
+
 ---
 
 ## Pizza Styles
@@ -45,7 +59,11 @@ primary-style vocabulary above. Breakfast, frozen, white pizza, tomato pie,
 slice, pan, square, and similar descriptors are intentionally not primary
 styles; they are future format or category attributes. Legacy values are
 handled by an explicit migration map: `Traditional` becomes `Standard Round`,
-and generic `Chicago` becomes `Chicago Deep Dish`.
+and generic `Chicago` becomes `Chicago Deep Dish`. Normalization is
+case-insensitive and collapses repeated whitespace while preserving the
+canonical display spelling. Blank input remains `null`; a nonblank value that
+does not match a canonical style or alias becomes `Unknown` in both the
+browser and server paths.
 
 ---
 

@@ -22,6 +22,28 @@ Supabase sync runs as a bounded launchd interval job and should not overlap.
 
 ## Baseline Checks
 
+### Attribute Readiness Reports
+
+The consolidated readiness report includes an `execution_context` block with
+the hostname, platform, working directory, and Node version. This matters when
+the same command is run from the MacBook and the iMac: local service failures on
+the MacBook do not describe the production runner.
+
+It also includes a `repository` block with the checked-out branch, `HEAD`,
+`origin/main`, ahead/behind sync state, and clean/dirty state. Treat a stale or
+dirty repository as a deployment problem even when the local workers themselves
+are healthy.
+
+For a stable human-readable label on the iMac, set this non-secret environment
+variable in the shell or launchd environment:
+
+```bash
+export APIZZA_RUNTIME_HOST=apizza-imac
+```
+
+The label appears as `Host: apizza-imac (darwin)` in text output and as
+`execution_context.host_label` in JSON. The report remains read-only.
+
 The iMac's non-interactive SSH environment does not include `/usr/local/bin` in
 `PATH`. Use the installed Node runtime explicitly in remote commands; this is
 also the path used by the launchd templates.
@@ -215,6 +237,18 @@ Each job can receive this retry once; fully classified, failed, and active jobs
 are left alone. This prevents a completed-but-partial result from disappearing
 from the feeder while keeping Ollama load bounded.
 
+The classifier health report labels this backlog separately from the SQLite queue:
+
+- `clear`: no configured classification work remains.
+- `queued`: jobs are pending or actively processing.
+- `partial_retry_pending`: completed jobs still qualify for the one-time bounded retry.
+- `manual_review`: partial results exhausted automatic retry and need editorial review.
+- `unfed`: a qualifying place has no classify job and needs the feeder.
+
+An empty queue is therefore not sufficient evidence that classification is fully
+caught up; inspect `classificationBacklog.state` and
+`classificationBacklog.recommendedAction` in the JSON health report.
+
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && /usr/local/bin/node scripts/ops/run-source-pipeline.mjs --dry-run --max-work-units 2 --json'
 ```
@@ -309,6 +343,11 @@ jobs. `PIPELINE_STALE_PROCESSING_MINUTES` defaults to 120; an aged scrape or
 menu job is reported as actionable with its job ID and worker assignment so an
 operator can verify the heartbeat before requeueing it.
 
+The same read-only alert report now includes Supabase publication readiness.
+When the lifecycle schema exists but the guarded bulk RPC is missing, it emits
+a warning and the exact migration action instead of presenting the local
+pipeline as fully publishable.
+
 The OSM refresh uses region-specific tile budgets because the regions do not
 have comparable Overpass response times. The current bounded profile is eight
 tiles per Michigan run, four per New York run, and two per Texas or California
@@ -366,6 +405,9 @@ ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier-rec
 Supabase sync is automated through `com.apizzamichigan.supabase-sync`, but only
 through the guarded wrapper. The wrapper runs health, QA, readiness, dry-run,
 bounded write, and post-check gates before applying at most one configured batch.
+The sync client and database-side bulk RPC both cap a transaction at 500 rows;
+scheduled runs normally use a smaller configured batch so a manual override
+cannot turn the low-I/O path into an unbounded disk burst.
 It checks bulk-RPC availability before running local confidence repair; when the
 production migration is missing, the scheduled run skips cleanly and leaves the
 capability status visible without doing unnecessary local writes.

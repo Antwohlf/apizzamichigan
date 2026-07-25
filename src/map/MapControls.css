@@ -218,6 +218,40 @@
   border-color: var(--app-accent);
 }
 
+.map-search-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-accent) 10%, transparent);
+  color: var(--app-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.map-search-notice button,
+.map-results-retry {
+  flex: 0 0 auto;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: transparent;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.map-search-notice button:hover,
+.map-search-notice button:focus-visible,
+.map-results-retry:hover,
+.map-results-retry:focus-visible {
+  border-color: var(--app-accent);
+  outline: none;
+}
+
 .map-results-summary-row {
   display: flex;
   align-items: center;
@@ -329,6 +363,12 @@
   opacity: 0.82;
 }
 
+.map-result-identity {
+  font-size: 0.74rem;
+  color: var(--app-text-muted);
+  font-weight: 700;
+}
+
 .map-result-reason {
   width: fit-content;
   max-width: 100%;
@@ -397,6 +437,10 @@
 }
 
 .map-results-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--app-text-muted);
   font-size: 0.86rem;
   padding: 14px 16px;
@@ -415,6 +459,12 @@
     left: 50px;
     right: max(8px, env(safe-area-inset-right));
     top: max(8px, env(safe-area-inset-top));
+  }
+
+  /* Keep the final result clear of Leaflet attribution and the map edge. */
+  .map-results-list {
+    padding-bottom: 28px;
+    scroll-padding-bottom: 28px;
   }
 
   .map-controls-row {
@@ -448,10 +498,21 @@
 
   .map-near-me-group {
     min-width: 0;
+    width: 100%;
     justify-content: stretch;
   }
 
-  .map-near-me-btn,
+  .map-near-me-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .map-radius-select {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+  }
+
   .map-scope-btn {
     width: 100%;
     justify-content: center;

@@ -14,20 +14,19 @@ import { createClient } from '@supabase/supabase-js';
 import { execFileSync } from 'child_process';
 import { readIdCheckpoint, readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import {
-  FILL_IF_NULL_COLS,
+  CANONICAL_MIRROR_COLS,
   LIFECYCLE_COLS,
   LIFECYCLE_SYNC_ENABLED,
   LOCAL_ONLY_SUPABASE_TABLES,
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
-  SUPABASE_SYNC_TARGET_TABLE,
   SUPABASE_SYNC_SELECT_COLS,
   assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
   localSyncSelectSql,
-  protectedFieldSkips,
 } from '../lib/supabase-sync-policy.mjs';
+import { supabaseSyncProfile } from '../lib/supabase-sync-profiles.mjs';
 
 function parseArgs(argv) {
   const out = {
@@ -41,6 +40,7 @@ function parseArgs(argv) {
     reconcile: false,
     json: false,
     lifecycleOnly: false,
+    entity: process.env.APIZZA_SYNC_ENTITY || 'pizza',
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -55,6 +55,7 @@ function parseArgs(argv) {
     else if (arg === '--reconcile') out.reconcile = true;
     else if (arg === '--json') out.json = true;
     else if (arg === '--lifecycle-only') out.lifecycleOnly = true;
+    else if (arg === '--entity') out.entity = String(argv[++i] || '').trim().toLowerCase();
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-readiness-report.mjs [options]
 
@@ -68,6 +69,7 @@ Options:
   --reconcile                 Use an ID-based checkpoint and scan all eligible rows
   --lifecycle-only            Inspect only lifecycle fields for explicit IDs
   --sample <n>                Rows per detail table (default 10)
+  --entity <name>             Sync profile to inspect (pizza or taco)
   --json                      Emit JSON instead of Markdown
 `);
       process.exit(0);
@@ -94,6 +96,7 @@ Options:
     }
     if (!LIFECYCLE_SYNC_ENABLED) throw new Error('--lifecycle-only requires ENABLE_LIFECYCLE_SYNC=1');
   }
+  supabaseSyncProfile(out.entity);
   return out;
 }
 
@@ -186,7 +189,8 @@ async function main() {
   const options = parseArgs(process.argv);
   const root = repoRoot();
   const env = loadEnvLocal();
-  const syncBoundary = assertSupabaseSyncTableBoundary();
+  const profile = supabaseSyncProfile(options.entity);
+  const syncBoundary = assertSupabaseSyncTableBoundary({ entity: options.entity, targetTable: profile.targetTable });
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
@@ -210,6 +214,7 @@ async function main() {
       : readSyncCheckpoint(options.checkpointPath);
     const selector = {
       ...options,
+      targetTable: profile.targetTable,
       checkpointMode: Boolean(options.checkpointPath) && !options.reconcile,
       checkpointAfter,
     };
@@ -217,7 +222,7 @@ async function main() {
     const ids = localRows.map(row => row.id);
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
     const lifecycleSchemaCheck = await supabase
-      .from(SUPABASE_SYNC_TARGET_TABLE)
+      .from(profile.targetTable)
       .select('id, lifecycle_status, lifecycle_replaced_by_id')
       .limit(1);
     const lifecycleRemoteSchema = lifecycleSchemaCheck.error
@@ -228,7 +233,7 @@ async function main() {
       : { state: 'ready', detail: 'Supabase exposes both lifecycle columns.' };
 
     const { data: sbRows, error } = await supabase
-      .from(SUPABASE_SYNC_TARGET_TABLE)
+      .from(profile.targetTable)
       .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
       .in('id', ids);
 
@@ -238,7 +243,6 @@ async function main() {
     const nowIso = new Date().toISOString();
     const updates = [];
     const missingSupabaseRows = [];
-    const protectedSkips = [];
 
     for (const local of localRows) {
       const current = sbMap.get(String(local.id));
@@ -247,31 +251,34 @@ async function main() {
         continue;
       }
 
-      for (const skip of options.lifecycleOnly ? [] : protectedFieldSkips(local, current)) {
-        protectedSkips.push({
-          id: local.id,
-          name: local.name,
-          state: local.state,
-          google_place_id: local.google_place_id,
-          ...skip,
-        });
-      }
-
       const payload = buildSupabasePayload(local, current, { nowIso, lifecycleOnly: options.lifecycleOnly });
       if (payload) updates.push({ local, current, payload });
     }
 
     const changedFields = updates.flatMap(item => Object.keys(item.payload).filter(key => key !== 'id'));
-    const protectedFills = changedFields.filter(col => FILL_IF_NULL_COLS.includes(col));
+    const canonicalMirrorWrites = changedFields.filter(col => CANONICAL_MIRROR_COLS.includes(col));
     const overwriteWrites = changedFields.filter(col => OVERWRITE_COLS.includes(col));
     const qaDefaults = changedFields.filter(col => QA_DEFAULT_COLS.includes(col));
-    const protectedConflicts = protectedSkips.filter(skip => skip.differs);
 
     const state = !LIFECYCLE_SYNC_ENABLED && options.lifecycleOnly
       ? 'BLOCKED'
       : missingSupabaseRows.length
         ? 'WARN'
         : (LIFECYCLE_SYNC_ENABLED && lifecycleRemoteSchema.state !== 'ready' ? 'BLOCKED' : 'OK');
+    const lifecyclePublication = LIFECYCLE_SYNC_ENABLED
+      ? lifecycleRemoteSchema.state === 'ready'
+        ? {
+          state: 'ready',
+          action: 'No lifecycle configuration change is required; the guarded sync may publish lifecycle fields.',
+        }
+        : {
+          state: 'blocked',
+          action: 'Apply the additive Supabase lifecycle migration, then rerun this report before syncing.',
+        }
+      : {
+        state: 'disabled_for_this_process',
+        action: 'Run this report with ENABLE_LIFECYCLE_SYNC=1 when validating the launchd publication environment.',
+      };
     const payloadSamples = sample(updates, options).map(item => ({
       id: item.local.id,
       name: item.local.name,
@@ -288,18 +295,21 @@ async function main() {
       syncBoundary: {
         ...syncBoundary,
         status: 'OK',
-        note: 'Only canonical pizza_places rows are eligible for Supabase sync; provenance/review tables remain local-only.',
+        note: `Only canonical ${profile.targetTable} rows are eligible for this sync profile; provenance/review tables remain local-only.`,
       },
       lifecycleSync: {
         enabled: LIFECYCLE_SYNC_ENABLED,
         columns: [...LIFECYCLE_COLS],
         remoteSchema: lifecycleRemoteSchema,
+        publication: lifecyclePublication,
         note: LIFECYCLE_SYNC_ENABLED
           ? 'Lifecycle columns are included in the sync contract; the Supabase migration must already be applied.'
           : 'Lifecycle fields remain local-only until the Supabase migration is applied and ENABLE_LIFECYCLE_SYNC=1 is set.',
       },
       options: {
         ...options,
+        entity: profile.entity,
+        profile,
         checkpointAfter,
       },
       totals: {
@@ -307,17 +317,12 @@ async function main() {
         supabaseRows: sbRows?.length || 0,
         wouldUpdate: updates.length,
         missingSupabaseRows: missingSupabaseRows.length,
-        protectedFieldFills: protectedFills.length,
-        protectedFieldSkips: protectedSkips.length,
-        protectedFieldConflicts: protectedConflicts.length,
+        canonicalMirrorWrites: canonicalMirrorWrites.length,
         overwriteWrites: overwriteWrites.length,
         qaDefaults: qaDefaults.length,
       },
       fieldCounts: countBy(changedFields, value => value),
-      protectedFillCounts: countBy(protectedFills, value => value),
-      protectedSkipCounts: countBy(protectedSkips, skip => `${skip.column}${skip.differs ? ' differs' : ' same'}`),
       payloadSamples,
-      protectedConflictSamples: sample(protectedConflicts, options),
       missingSupabaseSamples: sample(missingSupabaseRows, options).map(row => ({
         id: row.id,
         name: row.name,
@@ -348,9 +353,7 @@ async function main() {
     console.log(`- matching Supabase rows: ${result.totals.supabaseRows}`);
     console.log(`- rows that would update: ${result.totals.wouldUpdate}`);
     console.log(`- missing Supabase rows: ${result.totals.missingSupabaseRows}`);
-    console.log(`- protected field fills: ${result.totals.protectedFieldFills}`);
-    console.log(`- protected field skips: ${result.totals.protectedFieldSkips}`);
-    console.log(`- protected field conflicts: ${result.totals.protectedFieldConflicts}`);
+    console.log(`- canonical classification mirror writes: ${result.totals.canonicalMirrorWrites}`);
     console.log(`- overwrite-field writes: ${result.totals.overwriteWrites}`);
     console.log(`- QA default writes: ${result.totals.qaDefaults}`);
     console.log('');
@@ -366,6 +369,8 @@ async function main() {
     console.log(`- enabled: ${result.lifecycleSync.enabled ? 'yes' : 'no'}`);
     console.log(`- columns: ${result.lifecycleSync.columns.length ? result.lifecycleSync.columns.map(column => `\`${column}\``).join(', ') : 'none'}`);
     console.log(`- remote schema: ${result.lifecycleSync.remoteSchema.state}`);
+    console.log(`- publication: ${result.lifecycleSync.publication.state}`);
+    console.log(`- action: ${result.lifecycleSync.publication.action}`);
     console.log(`- remote schema detail: ${result.lifecycleSync.remoteSchema.detail}`);
     console.log(`- note: ${result.lifecycleSync.note}`);
     console.log('');

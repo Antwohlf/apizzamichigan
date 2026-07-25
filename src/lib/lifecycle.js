@@ -35,8 +35,18 @@ export const lifecycleCopy = status => {
   return normalized ? LIFECYCLE_COPY[normalized] || null : null
 }
 
-export const replacementCopy = (placeName, replacementId = null) => {
-  if (placeName) return `Current place: ${placeName}`
+const comparableName = value => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()
+
+export const replacementCopy = (placeName, replacementId = null, historicalName = '') => {
+  if (placeName && comparableName(placeName) !== comparableName(historicalName)) {
+    return `Current place: ${placeName}`
+  }
   if (replacementId) return 'Current place linked below.'
   return 'No current place is linked yet.'
 }

@@ -4,6 +4,8 @@ import App, {
   fetchPlacesForState,
   placeSearchRank,
   dedupeSearchRows,
+  shouldApplyMinimumRating,
+  rankSearchRows,
   remoteSearchTerms,
   remoteSearchableColumns,
   legacyRemoteSearchableColumns,
@@ -16,9 +18,13 @@ import App, {
   readPublicMapQuery,
   normalizeLifecycleStatus,
   searchResultPriority,
+  searchStateCode,
   stateCodesForSearch,
   stateScopedNameTerms,
+  isAnthonyReviewedPlace,
   isAnthonysPick,
+  isEligibleForAnthonysPicks,
+  isPicksSearchQuery,
 } from './App'
 import { __mockFrom, __setMockTable, supabase } from './supabaseClient'
 import { publicPlaceLegacySelectForTable } from './lib/publicPlaceFields'
@@ -125,11 +131,20 @@ describe('App routing themes', () => {
 })
 
 describe('state map loading migration compatibility', () => {
+  test('only applies a minimum rating when one was explicitly requested', () => {
+    expect(shouldApplyMinimumRating(null)).toBe(false)
+    expect(shouldApplyMinimumRating(undefined)).toBe(false)
+    expect(shouldApplyMinimumRating('')).toBe(false)
+    expect(shouldApplyMinimumRating(0)).toBe(true)
+    expect(shouldApplyMinimumRating('8')).toBe(true)
+    expect(shouldApplyMinimumRating('not-a-rating')).toBe(false)
+  })
+
   test('counts Anthony\'s Picks using the same rating threshold as the filter', async () => {
     __setMockTable('pizza_places', [
-      { id: 1, state: 'MI', rating: 8 },
-      { id: 2, state: 'MI', rating: 7.9 },
-      { id: 3, state: 'NY', rating: 9 },
+      { id: 1, state: 'MI', status: 'visited', rating: 8 },
+      { id: 2, state: 'MI', status: 'visited', rating: 7.9 },
+      { id: 3, state: 'NY', status: 'visited', rating: 9 },
     ])
 
     await expect(fetchStateCounts('pizza_places', {
@@ -137,7 +152,7 @@ describe('state map loading migration compatibility', () => {
       includeStatuses: ['visited', 'golden'],
       requireRating: true,
       minimumRating: 8,
-    })).resolves.toEqual({ MI: 1, NY: 1 })
+    })).resolves.toEqual({ MI: 1 })
   })
 
   test('retries with legacy fields when lifecycle columns are unavailable', async () => {
@@ -208,13 +223,36 @@ describe('remoteSearchTerms', () => {
     expect(isAnthonysPick({ rating: null })).toBe(false)
   })
 
+  test('keeps legacy out-of-scale personal scores eligible for Picks', () => {
+    expect(isAnthonysPick({ rating: 11 })).toBe(true)
+    expect(isAnthonysPick({ rating: '11' })).toBe(true)
+  })
+
+  test('recognizes a zero rating as a reviewed place but not a Pick', () => {
+    expect(isAnthonyReviewedPlace({ status: 'visited', rating: 0 })).toBe(true)
+    expect(isAnthonysPick({ status: 'visited', rating: 0 })).toBe(false)
+  })
+
+  test('requires a reviewed status when applying the Picks filter', () => {
+    expect(isEligibleForAnthonysPicks({ status: 'visited', rating: 8 })).toBe(true)
+    expect(isEligibleForAnthonysPicks({ status: 'unvisited', rating: 9 })).toBe(false)
+  })
+
   test('supports an entity-specific Anthony\'s Picks threshold', () => {
     expect(isAnthonysPick({ rating: 7.5 }, { minimumRating: 7.5 })).toBe(true)
     expect(isAnthonysPick({ rating: 7.4 }, { minimumRating: 7.5 })).toBe(false)
   })
 
+  test('recognizes explicit picks language without treating Anthony as a generic status', () => {
+    expect(isPicksSearchQuery("Anthony's picks")).toBe(true)
+    expect(isPicksSearchQuery('my top picks in Ann Arbor')).toBe(true)
+    expect(isPicksSearchQuery("Anthony's Pizza")).toBe(false)
+  })
+
   test('normalizes legacy and multi-label pizza styles to one primary style', () => {
     expect(normalizePizzaStyle('Traditional')).toBe('Standard Round')
+    expect(normalizePizzaStyle(' detroit ')).toBe('Detroit')
+    expect(normalizePizzaStyle('NEW YORK')).toBe('New York')
     expect(normalizePizzaStyle('Traditional, Detroit')).toBe('Detroit')
     expect(normalizePizzaStyle('Chicago, Sicilian, New York')).toBe('Sicilian')
     expect(normalizePizzaStyle('Breakfast')).toBe('Unknown')
@@ -234,8 +272,9 @@ describe('remoteSearchTerms', () => {
     expect(publicPlaceSelect).toBe(publicSearchSelect)
     expect(publicPlaceSelect).not.toContain('osm_tags')
     expect(publicPlaceSelect).not.toContain('menu_data')
-    expect(publicPlaceSelectForTable('taco_places')).not.toContain('price_range')
-    expect(publicPlaceSelectForTable('taco_places')).not.toContain('brand')
+    expect(publicPlaceSelectForTable('taco_places')).toContain('price_range')
+    expect(publicPlaceSelectForTable('taco_places')).toContain('brand')
+    expect(publicPlaceSelectForTable('taco_places')).toContain('website_url')
     expect(publicSearchSelectForTable('taco_places')).toBe(publicPlaceSelectForTable('taco_places'))
   })
 
@@ -439,6 +478,12 @@ describe('state-aware search helpers', () => {
     expect(stateCodesForSearch('Pizza New Jersey')).toEqual(['NJ'])
   })
 
+  test('normalizes public state names and codes at the search boundary', () => {
+    expect(searchStateCode('Michigan')).toBe('MI')
+    expect(searchStateCode('MI')).toBe('MI')
+    expect(searchStateCode('New York')).toBe('NY')
+  })
+
   test('keeps only searchable name terms for state-scoped remote lookup', () => {
     expect(stateScopedNameTerms('Pizza Hut Michigan')).toEqual(['pizza hut', 'hut'])
     expect(stateScopedNameTerms("Buddy's Pizza MI")).toEqual(['buddy pizza', 'buddy'])
@@ -499,6 +544,17 @@ describe('placeSearchRank', () => {
 
     expect(placeSearchRank(brandInLocation, query, terms))
       .toBeLessThan(placeSearchRank(genericRegionalMatch, query, terms))
+  })
+
+  test('matches a state-code query when the row stores the full state name', () => {
+    const place = {
+      name: 'Pizza Hut',
+      city: 'Detroit',
+      state: 'Michigan',
+    }
+
+    expect(placeSearchRank(place, 'Pizza Hut MI', ['pizza', 'hut', 'mi']))
+      .toBeLessThan(99)
   })
 
   test('matches names when users omit apostrophes or spaces', () => {
@@ -766,6 +822,39 @@ describe('placeSearchRank', () => {
     expect(placeSearchRank(unvisitedPlace, reviewedQuery, ['reviewed', 'ann', 'arbor'])).toBe(99)
     expect(placeSearchRank(favoritePlace, favoriteQuery, ['favorites'])).toBeLessThan(9)
   })
+
+  test('matches picks intent only for reviewed places at the configured threshold', () => {
+    const pick = {
+      name: 'Destination Pizza',
+      status: 'visited',
+      rating: 8.5,
+      city: 'Detroit',
+      state: 'MI',
+    }
+    const unreviewed = { ...pick, status: 'unvisited' }
+    const lowRated = { ...pick, rating: 7.9 }
+
+    expect(placeSearchRank(pick, "Anthony's picks", ['anthony', 'picks'])).toBeLessThan(99)
+    expect(placeSearchRank(unreviewed, "Anthony's picks", ['anthony', 'picks'])).toBe(99)
+    expect(placeSearchRank(lowRated, "Anthony's picks", ['anthony', 'picks'])).toBe(99)
+  })
+
+  test('prioritizes an exact city match over a business name that starts with the city', () => {
+    const cityMatch = {
+      name: 'Buddy\'s Pizza',
+      city: 'Detroit',
+      state: 'MI',
+    }
+    const nameMatch = {
+      name: 'Detroit Pizza Pub',
+      city: 'Ann Arbor',
+      state: 'MI',
+    }
+
+    expect(placeSearchRank(cityMatch, 'Detroit', ['detroit'])).toBeLessThan(
+      placeSearchRank(nameMatch, 'Detroit', ['detroit'])
+    )
+  })
 })
 
 describe('searchResultPriority', () => {
@@ -803,9 +892,65 @@ describe('dedupeSearchRows', () => {
 
     expect(rows.map(row => row.id)).toEqual([1, 2])
   })
+
+  test('collapses street abbreviation duplicates while keeping the reviewed row', () => {
+    const rows = dedupeSearchRows([
+      { id: 1, name: 'New York Pizza Depot', state: 'MI', address: '605 E William St, Ann Arbor, MI 48104', status: 'visited', rating: 5 },
+      { id: 2, name: 'New York Pizza Depot', state: 'MI', address: '605 East William Street, MI', status: 'unvisited' },
+    ])
+
+    expect(rows.map(row => row.id)).toEqual([1])
+  })
+
+  test('collapses provider duplicates when only one row has contact evidence', () => {
+    const rows = dedupeSearchRows([
+      { id: 1, name: 'New York Pizza Depot', state: 'MI', address: '605 E William St, Ann Arbor, MI 48104', phone: '(734) 555-0100', status: 'visited', rating: 5 },
+      { id: 2, name: 'New York Pizza Depot', state: 'MI', address: '605 East William Street, MI', status: 'unvisited' },
+    ])
+
+    expect(rows.map(row => row.id)).toEqual([1])
+  })
+
+  test('collapses alternate names when the canonical external place id matches', () => {
+    const rows = dedupeSearchRows([
+      { id: 1, name: 'Royal Host', state: 'NY', google_place_id: 'place-123', status: 'unvisited' },
+      { id: 2, name: 'ロイヤルホスト', state: 'NY', google_place_id: 'place-123', status: 'visited', rating: 8.5 },
+    ])
+
+    expect(rows.map(row => row.id)).toEqual([2])
+  })
+
+  test('uses matching phone evidence across names but preserves a historical predecessor', () => {
+    const rows = dedupeSearchRows([
+      { id: 1, name: 'Current Pizza', state: 'MI', address: '1 Main St, Detroit, MI', phone: '(313) 555-0100' },
+      { id: 2, name: 'Former Pizza', state: 'MI', address: '1 Main Street, Detroit, MI', phone: '+1 313-555-0100', lifecycle_status: 'replaced' },
+      { id: 3, name: 'Current Pizza (source)', state: 'MI', address: '1 Main St, Detroit, MI', phone: '+1 313-555-0100' },
+    ])
+
+    expect(rows.map(row => row.id)).toEqual([1, 2])
+  })
 })
 
 describe('compareSearchResults', () => {
+  test('prefers mappable exact-name results over locationless placeholders', () => {
+    const located = {
+      name: 'Little Caesars',
+      state: 'MI',
+      address: '1944 W Stadium Blvd, Ann Arbor, MI 48103',
+      lat: 42.27,
+      lng: -83.75,
+      _searchRank: 0,
+    }
+    const placeholder = {
+      name: 'Little Caesars',
+      state: 'MI',
+      address: 'MI',
+      _searchRank: 0,
+    }
+
+    expect([placeholder, located].sort(compareSearchResults)).toEqual([located, placeholder])
+  })
+
   test('uses reviewed status as a tie-break after text relevance', () => {
     const reviewed = {
       name: 'Lindustrie Pizza',
@@ -855,6 +1000,63 @@ describe('compareSearchResults', () => {
 
     expect([overseasExact, michiganMatch].sort((left, right) => compareSearchResults(left, right, {
       preferredStates: ['MI', 'NY'],
-    }))).toEqual([michiganMatch, overseasExact])
+    }))).toEqual([overseasExact, michiganMatch])
+  })
+
+  test('prefers an exact identity match over a weaker preferred-market match', () => {
+    const exactMatch = {
+      name: "Anthony's Pizza",
+      state: 'NY',
+      status: 'unvisited',
+      _searchRank: 0,
+    }
+    const localPartialMatch = {
+      name: "Anthony's Gourmet Pizza",
+      state: 'MI',
+      status: 'visited',
+      rating: 7,
+      _searchRank: 3,
+    }
+
+    expect([localPartialMatch, exactMatch].sort((left, right) => compareSearchResults(left, right, {
+      preferredStates: ['MI', 'NY'],
+    }))).toEqual([exactMatch, localPartialMatch])
+  })
+
+  test('keeps historical records searchable without letting them lead ordinary searches', () => {
+    const current = {
+      name: 'Cottage Inn Pizza',
+      state: 'MI',
+      status: 'unvisited',
+      _searchRank: 4,
+    }
+    const historical = {
+      name: 'Cottage Inn Pizza',
+      state: 'MI',
+      lifecycle_status: 'replaced',
+      status: 'visited',
+      rating: 8.5,
+      _searchRank: 0,
+    }
+
+    expect([historical, current].sort((left, right) => compareSearchResults(left, right, {
+      prioritizeCurrent: true,
+    }))).toEqual([current, historical])
+    expect([current, historical].sort((left, right) => compareSearchResults(left, right, {
+      prioritizeCurrent: false,
+    }))).toEqual([historical, current])
+  })
+})
+
+describe('rankSearchRows', () => {
+  test('returns locally loaded matches in the same order as remote search', () => {
+    const rows = rankSearchRows([
+      { id: 1, name: 'Detroit Pizza Company', state: 'MI', status: 'unvisited' },
+      { id: 2, name: 'Anthony\'s Pizza', state: 'MI', status: 'visited', rating: 9 },
+      { id: 3, name: 'Unrelated Place', state: 'MI' },
+    ], "Anthony's Pizza")
+
+    expect(rows.map(row => row.id)).toEqual([2])
+    expect(rows[0]._searchRank).toBeLessThan(99)
   })
 })

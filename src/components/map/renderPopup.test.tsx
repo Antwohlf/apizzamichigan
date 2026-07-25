@@ -175,7 +175,7 @@ describe('renderExpanded', () => {
           phone: '+1 734 555 0100',
           website_url: 'contactpizza.example.com',
           menu_url: 'https://contactpizza.example.com/menu',
-          hours: { Monday: '11:00-22:00' },
+          hours: { Monday: '11:00-22:00', Tuesday: '11:00-22:00' },
         },
         jest.fn()
       )
@@ -183,7 +183,11 @@ describe('renderExpanded', () => {
 
     expect(screen.getByRole('link', { name: '+1 734 555 0100' })).toHaveAttribute(
       'href',
-      'tel:+1 734 555 0100'
+      'tel:+17345550100'
+    )
+    expect(screen.getByRole('link', { name: /call restaurant/i })).toHaveAttribute(
+      'href',
+      'tel:+17345550100'
     )
     expect(screen.getByRole('link', { name: /official website/i })).toHaveAttribute(
       'href',
@@ -193,7 +197,9 @@ describe('renderExpanded', () => {
       'href',
       'https://contactpizza.example.com/menu'
     )
-    expect(screen.getByText('Hours: Monday: 11:00-22:00')).toBeInTheDocument()
+    expect(screen.getByText('Hours')).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Opening hours' })).toHaveTextContent('Monday11:00-22:00')
+    expect(screen.getByRole('list', { name: 'Opening hours' })).toHaveTextContent('Tuesday11:00-22:00')
   })
 
   test('does not render unsafe website values as popup links', () => {
@@ -272,6 +278,30 @@ describe('renderExpanded', () => {
     )
     fireEvent.click(screen.getByRole('link', { name: /view current place/i }))
     expect(onDetailsNavigate).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not repeat the historical name when the successor has the same name', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Mama Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          lifecycle_status: 'replaced',
+          lifecycle_replaced_by_id: 456,
+          lifecycle_replaced_by_name: 'Mama Pizza',
+        },
+        jest.fn(),
+      )
+    })
+
+    expect(screen.getByText(/Current place linked below\./)).toBeInTheDocument()
+    expect(screen.queryByText('Current place: Mama Pizza.')).not.toBeInTheDocument()
   })
 
   test('keeps the replacement link for legacy camelCase lifecycle data', () => {

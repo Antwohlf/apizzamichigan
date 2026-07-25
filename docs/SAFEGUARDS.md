@@ -84,6 +84,11 @@ node scripts/ops/verify-local-backup.mjs --json
 This checks the manifest hashes, SQLite integrity, and the custom Postgres dump
 header. It does not restore data or contact Supabase.
 
+The read-only home status report marks backups unhealthy when the newest
+completed manifest is older than 36 hours (configurable with
+`APIZZA_BACKUP_STALE_HOURS`). Missing or unreadable backup timestamps are also
+reported as unhealthy rather than being treated as fresh.
+
 Backups are machine-local and ignored by git. Copy completed run directories
 to separate storage if they are intended to protect against machine loss.
 Restore Postgres into a new database first with `pg_restore`; restoring over
@@ -105,6 +110,19 @@ The direct sync engine should still be dry-run first when invoked manually:
 ```bash
 ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/sync-local-to-supabase.mjs --dry-run --batch 25 --max-batches 1'
 ```
+
+The read-only readiness and status reports accept `--entity pizza|taco` and
+resolve the target table and bulk RPC from the entity profile. Taco remains
+planning-only until its publication profile is explicitly enabled:
+
+```bash
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --entity taco --batch 25 --json'
+ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --entity taco --json'
+```
+
+Live sync requires `SUPABASE_SERVICE_ROLE_KEY`; the public anon key is accepted
+only for read-only previews. The sync client fails before opening a write path
+when the service-role credential is missing.
 
 For a reviewed set of specific canonical rows, prefer exact-ID guarded sync:
 

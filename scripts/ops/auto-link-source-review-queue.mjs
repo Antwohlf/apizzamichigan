@@ -9,6 +9,7 @@
 import pg from 'pg';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
+import { summarizeDatabaseError } from '../lib/source-freshness-status.mjs';
 
 const ENTITY_TABLES = {
   pizza: 'pizza_places',
@@ -784,6 +785,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`auto-link-source-review-queue failed: ${error.message || error}`);
+  console.error(`auto-link-source-review-queue failed: ${summarizeDatabaseError(error)}`);
   process.exit(1);
 });

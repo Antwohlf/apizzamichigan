@@ -35,6 +35,7 @@ __pycache__/
 /scripts/.supabase-reconcile-checkpoint*.json
 /scripts/.source-pipeline-state.json
 /scripts/.source-pipeline-last-report.json
+/scripts/.pipeline-alert-status.json
 /scripts/.fsq-venv/
 /scripts/.fsq-portal-init.sql
 /data/source-samples/.hf-fsq-cache/

@@ -10,16 +10,17 @@ import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
+import { readSyncRunState, syncRunStatePath } from '../lib/supabase-sync-run-state.mjs';
+import { summarizeSyncStatusError } from '../lib/supabase-sync-status.mjs';
 import {
-  SUPABASE_SYNC_TARGET_TABLE,
   SUPABASE_SYNC_SELECT_COLS,
   assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
   localSyncSelectSql,
-  protectedFieldSkips,
-  SUPABASE_BULK_SYNC_RPC,
+  CANONICAL_MIRROR_COLS,
 } from '../lib/supabase-sync-policy.mjs';
+import { supabaseSyncProfile } from '../lib/supabase-sync-profiles.mjs';
 
 function parseArgs(argv) {
   const out = {
@@ -28,6 +29,7 @@ function parseArgs(argv) {
     sample: 10,
     checkpoint: 'scripts/.supabase-sync-checkpoint.json',
     requireBulkRpc: false,
+    entity: process.env.APIZZA_SYNC_ENTITY || 'pizza',
     json: false,
   };
 
@@ -38,6 +40,7 @@ function parseArgs(argv) {
     else if (arg === '--sample') out.sample = parseInt(argv[++i], 10);
     else if (arg === '--checkpoint') out.checkpoint = argv[++i];
     else if (arg === '--require-bulk-rpc') out.requireBulkRpc = true;
+    else if (arg === '--entity') out.entity = String(argv[++i] || '').trim().toLowerCase();
     else if (arg === '--json') out.json = true;
     else if (arg === '--help') {
       console.log(`Usage: node scripts/ops/supabase-sync-status-report.mjs [options]
@@ -46,6 +49,7 @@ Options:
   --hours <n>       Recent enrichment window (default 6)
   --batch <n>       Next batch size to inspect (default 50)
   --sample <n>      Rows per detail table (default 10)
+  --entity <name>   Sync profile to inspect (pizza or taco)
   --checkpoint <p>  Checkpoint path (default scripts/.supabase-sync-checkpoint.json)
   --require-bulk-rpc Require the low-I/O bulk RPC to be available
   --json            Emit JSON instead of Markdown
@@ -59,6 +63,7 @@ Options:
   if (!Number.isFinite(out.hours) || out.hours <= 0) throw new Error('Invalid --hours');
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
+  supabaseSyncProfile(out.entity);
   return out;
 }
 
@@ -134,10 +139,10 @@ function compact(row) {
   };
 }
 
-function statusFrom({ checkpoint, pendingAfterCheckpoint, nextBatch, missingRows, protectedConflicts, bulkRpc, requireBulkRpc }) {
+function statusFrom({ checkpoint, pendingAfterCheckpoint, nextBatch, missingRows, bulkRpc, requireBulkRpc }) {
   if ((requireBulkRpc || bulkRpc?.configured) && bulkRpc.state !== 'ready') return 'BLOCKED'
   if (!checkpoint) return 'WARN';
-  if (missingRows.length || protectedConflicts.length) return 'WARN';
+  if (missingRows.length) return 'WARN';
   if (nextBatch.length === 0 && pendingAfterCheckpoint > 0) return 'WARN';
   return 'OK';
 }
@@ -167,16 +172,16 @@ function bulkRpcConfigured(env) {
   ).trim());
 }
 
-async function inspectBulkRpc(supabase, configured, lifecycleRemoteSchema) {
+async function inspectBulkRpc(supabase, configured, lifecycleRemoteSchema, rpc) {
   const result = {
     configured,
-    rpc: SUPABASE_BULK_SYNC_RPC,
+    rpc,
     available: 'unknown',
     state: 'unavailable',
     detail: '',
   };
 
-  const { error } = await supabase.rpc(SUPABASE_BULK_SYNC_RPC, { p_rows: [] });
+  const { error } = await supabase.rpc(rpc, { p_rows: [] });
   if (!error) {
     result.available = true;
     result.state = configured ? 'ready' : 'not_configured';
@@ -190,8 +195,8 @@ async function inspectBulkRpc(supabase, configured, lifecycleRemoteSchema) {
   if (error.code === 'PGRST202' || /could not find the function/i.test(error.message || '')) {
     result.state = 'migration_missing';
     result.detail = lifecycleRemoteSchema?.state === 'ready'
-      ? `Supabase exposes the lifecycle columns but not ${SUPABASE_BULK_SYNC_RPC}(jsonb); run scripts/enrichment/supabase-bulk-sync-rpc-migration.sql before enabling low-I/O bulk sync.`
-      : `Supabase does not expose ${SUPABASE_BULK_SYNC_RPC}(jsonb); apply the production migration before enabling bulk sync.`;
+      ? `Supabase exposes the lifecycle columns but not ${rpc}(jsonb); apply the entity's bulk-sync migration (for pizza, scripts/enrichment/supabase-bulk-sync-rpc-migration.sql) before enabling low-I/O bulk sync.`
+      : `Supabase does not expose ${rpc}(jsonb); apply the entity's production migration before enabling bulk sync.`;
   } else {
     result.state = 'unavailable';
     result.detail = error.message || 'Bulk RPC capability check failed.';
@@ -203,9 +208,14 @@ async function main() {
   const options = parseArgs(process.argv);
   const root = repoRoot();
   const git = gitReport(root);
+  const profile = supabaseSyncProfile(options.entity);
   const env = loadEnvLocal();
   const checkpoint = readSyncCheckpoint(options.checkpoint);
-  const syncBoundary = assertSupabaseSyncTableBoundary();
+  const runState = readSyncRunState(syncRunStatePath(
+    env.APIZZA_SYNC_STATUS_FILE || 'scripts/.supabase-sync-status.json',
+    root,
+  ));
+  const syncBoundary = assertSupabaseSyncTableBoundary({ entity: options.entity, targetTable: profile.targetTable });
 
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
@@ -241,7 +251,7 @@ async function main() {
             )
         )::int as pending_after_checkpoint,
         MAX(last_enriched_at) as latest_local_enriched_at
-      FROM pizza_places
+      FROM ${profile.targetTable}
     `, [
       String(options.hours),
       checkpoint?.lastEnrichedAt || null,
@@ -254,13 +264,14 @@ async function main() {
       onlyClassified: true,
       checkpointMode: true,
       checkpointAfter: checkpoint,
+      targetTable: profile.targetTable,
     };
     const { rows: nextBatch } = await client.query(localSyncSelectSql(nextSelector), localSyncSelectParams(nextSelector));
     const ids = nextBatch.map(row => row.id);
 
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
     const lifecycleSchemaCheck = await supabase
-      .from(SUPABASE_SYNC_TARGET_TABLE)
+      .from(profile.targetTable)
       .select('id, lifecycle_status, lifecycle_replaced_by_id')
       .limit(1);
     const lifecycleRemoteSchema = lifecycleSchemaCheck.error
@@ -269,10 +280,10 @@ async function main() {
         detail: lifecycleSchemaCheck.error.message || 'Lifecycle schema check failed.',
       }
       : { state: 'ready', detail: 'Supabase exposes both lifecycle columns.' };
-    const bulkRpc = await inspectBulkRpc(supabase, bulkRpcConfigured(env), lifecycleRemoteSchema);
+    const bulkRpc = await inspectBulkRpc(supabase, bulkRpcConfigured(env), lifecycleRemoteSchema, profile.bulkRpc);
     const { data: sbRows, error } = ids.length
       ? await supabase
-        .from(SUPABASE_SYNC_TARGET_TABLE)
+        .from(profile.targetTable)
         .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
         .in('id', ids)
       : { data: [], error: null };
@@ -282,7 +293,6 @@ async function main() {
     const sbMap = new Map((sbRows || []).map(row => [String(row.id), row]));
     const updates = [];
     const missingRows = [];
-    const protectedSkips = [];
 
     for (const local of nextBatch) {
       const current = sbMap.get(String(local.id));
@@ -291,21 +301,10 @@ async function main() {
         continue;
       }
 
-      for (const skip of protectedFieldSkips(local, current)) {
-        protectedSkips.push({
-          id: local.id,
-          name: local.name,
-          state: local.state,
-          google_place_id: local.google_place_id,
-          ...skip,
-        });
-      }
-
       const payload = buildSupabasePayload(local, current);
       if (payload) updates.push({ local, current, payload });
     }
 
-    const protectedConflicts = protectedSkips.filter(skip => skip.differs);
     const changedFields = updates.flatMap(item => Object.keys(item.payload).filter(key => key !== 'id'));
     const fieldCounts = countBy(changedFields, value => value);
     const status = statusFrom({
@@ -313,11 +312,12 @@ async function main() {
       pendingAfterCheckpoint: summary.rows[0].pending_after_checkpoint,
       nextBatch,
       missingRows,
-      protectedConflicts,
       bulkRpc,
       requireBulkRpc: options.requireBulkRpc,
     });
-    const publication = publicationReadiness({ lifecycleRemoteSchema, bulkRpc });
+    const publication = profile.publicationEnabled
+      ? publicationReadiness({ lifecycleRemoteSchema, bulkRpc })
+      : { status: 'BLOCKED', reason: `Publication for ${options.entity} is intentionally disabled until its production contract is enabled.` };
 
     const payload = {
       generatedAt: new Date().toISOString(),
@@ -326,6 +326,9 @@ async function main() {
       repo: { root, ...git },
       syncBoundary,
       options,
+      entity: profile.entity,
+      profile,
+      lastRun: runState,
       checkpoint,
       lifecycleRemoteSchema,
       bulkRpc,
@@ -335,7 +338,7 @@ async function main() {
         supabaseRows: sbRows?.length || 0,
         wouldUpdate: updates.length,
         missingSupabaseRows: missingRows.length,
-        protectedFieldConflicts: protectedConflicts.length,
+        canonicalMirrorWrites: changedFields.filter(col => CANONICAL_MIRROR_COLS.includes(col)).length,
         fieldCounts,
         sample: nextBatch.slice(0, options.sample).map(compact),
       },
@@ -368,6 +371,9 @@ async function main() {
     console.log(`- classified in window: ${payload.summary.classified_in_window}`);
     console.log(`- pending after checkpoint: ${payload.summary.pending_after_checkpoint}`);
     console.log(`- latest local last_enriched_at: ${payload.summary.latest_local_enriched_at || ''}`);
+    console.log(`- last scheduled run: ${payload.lastRun?.state || 'not recorded'}`);
+    if (payload.lastRun?.finished_at) console.log(`- last scheduled run finished: ${payload.lastRun.finished_at}`);
+    if (payload.lastRun?.reason) console.log(`- last scheduled run reason: ${payload.lastRun.reason}`);
     console.log('');
     console.log('## Sync Boundary');
     console.log(`- target table: \`${payload.syncBoundary.targetTable}\``);
@@ -389,7 +395,7 @@ async function main() {
     console.log(`- Supabase rows: ${payload.nextBatch.supabaseRows}`);
     console.log(`- rows that would update: ${payload.nextBatch.wouldUpdate}`);
     console.log(`- missing Supabase rows: ${payload.nextBatch.missingSupabaseRows}`);
-    console.log(`- protected field conflicts: ${payload.nextBatch.protectedFieldConflicts}`);
+    console.log(`- canonical classification mirror writes: ${payload.nextBatch.canonicalMirrorWrites}`);
     console.log('');
     console.log('## Field Counts');
     console.log(table(['value', 'count'], fieldCounts));
@@ -402,6 +408,19 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error('supabase-sync-status-report failed:', error);
+  const detail = summarizeSyncStatusError(error);
+  if (process.argv.includes('--json')) {
+    console.log(JSON.stringify({
+      status: 'UNAVAILABLE',
+      publicationReadiness: {
+        status: 'BLOCKED',
+        reason: detail,
+      },
+      error: detail,
+      read_only: true,
+    }, null, 2));
+  } else {
+    console.error(`supabase-sync-status-report unavailable: ${detail}`);
+  }
   process.exit(1);
 });

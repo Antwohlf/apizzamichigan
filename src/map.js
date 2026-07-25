@@ -1,5 +1,5 @@
 // src/map.js
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, useMap } from 'react-leaflet'
 import 'leaflet-rotatedmarker'
 
@@ -8,32 +8,23 @@ import { PopupProvider } from './context/PopupProvider'
 import { filterPublicAggregates } from './map/publicScope'
 import { consumeMapReturnState } from './map/mapReturnState'
 
-const ZoomButton = ({ showAllMarkets = false, onScopeChange, primaryView }) => {
+const GLOBAL_VIEW = { center: [20, 0], zoom: 2 }
+
+function ScopeViewController({ showAllMarkets = false, primaryView }) {
   const map = useMap()
-  const fallbackPrimaryView = { center: [44.3148, -85.6024], zoom: 6 }
-  const activePrimaryView = primaryView || fallbackPrimaryView
+  const firstRender = useRef(true)
 
-  const handleToggleView = () => {
-    const nextShowAllMarkets = !showAllMarkets
-    onScopeChange?.(nextShowAllMarkets)
-    if (nextShowAllMarkets) {
-      map.setView([20, 0], 2)
-    } else {
-      map.setView(activePrimaryView.center, activePrimaryView.zoom)
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
     }
-  };
+    const nextView = showAllMarkets ? GLOBAL_VIEW : primaryView
+    map.setView(nextView.center, nextView.zoom, { animate: true, duration: 0.6 })
+  }, [map, primaryView, showAllMarkets])
 
-  return (
-    <div className="zoom-button">
-      <button
-        onClick={handleToggleView}
-        aria-label={showAllMarkets ? 'Return to Michigan and New York' : 'Explore all markets'}
-      >
-        {showAllMarkets ? 'Back to primary markets' : 'And Beyond'}
-      </button>
-    </div>
-  );
-};
+  return null
+}
 
 const Map = ({
   places,
@@ -46,7 +37,6 @@ const Map = ({
   forceIndividualMarkers = false,
   resetKey,
   showAllMarkets = false,
-  onScopeChange,
   searchFocusKey = '',
 }) => {
   const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
@@ -56,9 +46,11 @@ const Map = ({
     () => consumeMapReturnState(undefined, typeof window === 'undefined' ? null : window.location.pathname),
     []
   )
-  const initialView = returnState
-    ? { center: [returnState.center.lat, returnState.center.lng], zoom: returnState.zoom }
-    : primaryView
+  const initialView = showAllMarkets
+    ? GLOBAL_VIEW
+    : returnState
+      ? { center: [returnState.center.lat, returnState.center.lng], zoom: returnState.zoom }
+      : primaryView
   const primaryStates = theme?.search?.publicStates || theme?.search?.preferredStates || []
   const visibleStateAggregates = filterPublicAggregates(stateAggregates, {
     showAll: showAllMarkets,
@@ -84,8 +76,7 @@ const Map = ({
           forceIndividualMarkers={forceIndividualMarkers}
           searchFocusKey={searchFocusKey}
         />
-        {/* Render ZoomButton directly inside MapContainer */}
-        <ZoomButton showAllMarkets={showAllMarkets} onScopeChange={onScopeChange} primaryView={primaryView} />
+        <ScopeViewController showAllMarkets={showAllMarkets} primaryView={primaryView} />
       </PopupProviderBridge>
     </MapContainer>
   )

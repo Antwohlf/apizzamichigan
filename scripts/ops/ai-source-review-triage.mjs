@@ -8,6 +8,7 @@
  */
 
 import pg from 'pg'
+import { deterministicDecision, evidenceFor, normalizeText } from '../lib/source-review-identity.mjs'
 
 const args = parseArgs(process.argv.slice(2))
 const table = args.entity === 'taco' ? 'taco_places' : 'pizza_places'
@@ -20,36 +21,28 @@ const pool = new pg.Pool({
 })
 
 function parseArgs(argv) {
-  const out = { entity: 'pizza', source: '', ids: [], limit: 10, model: process.env.OLLAMA_MODEL || 'llama3.2:latest', cache: false, json: false }
+  const out = {
+    entity: 'pizza',
+    source: '',
+    ids: [],
+    limit: 10,
+    model: process.env.OLLAMA_MODEL || 'llama3.2:latest',
+    cache: false,
+    deterministicOnly: false,
+    json: false,
+  }
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--entity') out.entity = argv[++i]
     else if (argv[i] === '--source') out.source = argv[++i]
     else if (argv[i] === '--ids') out.ids = String(argv[++i] || '').split(',').map(Number).filter(Number.isInteger)
-    else if (argv[i] === '--limit') out.limit = Math.max(1, Math.min(25, Number(argv[++i]) || 10))
+    else if (argv[i] === '--limit') out.limit = Math.max(1, Math.min(100, Number(argv[++i]) || 10))
     else if (argv[i] === '--model') out.model = argv[++i]
     else if (argv[i] === '--cache') out.cache = true
+    else if (argv[i] === '--deterministic-only') out.deterministicOnly = true
     else if (argv[i] === '--json') out.json = true
   }
   if (!['pizza', 'taco'].includes(out.entity)) throw new Error('Entity must be pizza or taco.')
   return out
-}
-
-function normalizeText(value) {
-  return String(value || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ')
-}
-
-function digits(value) {
-  return String(value || '').replace(/\D/g, '').slice(-10)
-}
-
-function normalizeUrl(value) {
-  return String(value || '').trim().toLowerCase()
-    .replace(/^https?:\/\/(www\.)?/, '')
-    .replace(/\/+$/, '')
-}
-
-function hasLatin(value) {
-  return /[A-Za-z]/.test(String(value || ''))
 }
 
 function normalizeDecision(value) {
@@ -72,79 +65,6 @@ function normalizeDecision(value) {
     needs_review: 'uncertain',
   }
   return aliases[raw] || raw
-}
-
-function coordinates(row) {
-  const lat = Number(row.source_data?.lat ?? row.source_data?.latitude)
-  const lng = Number(row.source_data?.lng ?? row.source_data?.lon ?? row.source_data?.longitude)
-  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null
-}
-
-function evidenceFor(row) {
-  const sourceCoords = coordinates(row)
-  const distance = row.nearest_distance_m == null ? null : Number(row.nearest_distance_m)
-  const sourcePhone = digits(row.source_data?.phone || row.source_data?.['contact:phone'])
-  const canonicalPhone = digits(row.nearest_phone)
-  const sourceWebsite = normalizeUrl(row.source_data?.website || row.source_data?.['contact:website'])
-  const canonicalWebsite = normalizeUrl(row.nearest_website_url)
-  return {
-    location_distance_m: Number.isFinite(distance) ? distance : null,
-    location_is_close: Number.isFinite(distance) && distance <= 25,
-    source_id_matches_canonical: row.source === 'osm' && row.source_id === row.nearest_current_google_place_id,
-    source_brand_wikidata_id_matches_canonical: row.source === 'wikidata' && [
-      row.nearest_brand_wikidata,
-      row.nearest_osm_tags?.['brand:wikidata'],
-    ].filter(Boolean).includes(row.source_id),
-    source_operator_wikidata_id_matches_canonical: row.source === 'wikidata' && [
-      row.nearest_operator_wikidata,
-      row.nearest_osm_tags?.['operator:wikidata'],
-    ].filter(Boolean).includes(row.source_id),
-    names_match_normalized: normalizeText(row.source_name) === normalizeText(row.nearest_place_name),
-    names_are_conflicting_latin_labels: hasLatin(row.source_name)
-      && hasLatin(row.nearest_place_name)
-      && normalizeText(row.source_name) !== normalizeText(row.nearest_place_name),
-    source_phone_matches: Boolean(sourcePhone && sourcePhone === canonicalPhone),
-    source_website_matches: Boolean(sourceWebsite && sourceWebsite === canonicalWebsite),
-    source_has_address: Boolean(row.source_data?.address || row.source_data?.['addr:full']),
-    canonical_has_address: Boolean(row.nearest_address),
-    source_coordinates_present: Boolean(sourceCoords),
-    canonical_status: row.nearest_status || null,
-    canonical_has_personal_history: row.nearest_status !== 'unvisited' || row.nearest_rating != null || Boolean(String(row.nearest_notes || '').trim()),
-  }
-}
-
-function deterministicDecision(row, evidence) {
-  if (evidence.source_brand_wikidata_id_matches_canonical && evidence.location_is_close) {
-    if (evidence.names_are_conflicting_latin_labels) {
-      return {
-        decision: 'uncertain',
-        confidence: 0.85,
-        reason: 'The source brand identity and location agree, but the two Latin business names conflict; this may be stale data or a replacement.',
-        supporting_evidence: ['matching brand Wikidata identity', 'matching location', 'conflicting business names'],
-        needs_human_review: true,
-        decision_origin: 'deterministic',
-      }
-    }
-    return {
-      decision: 'same_place',
-      confidence: 0.95,
-      reason: 'The source Wikidata ID matches the canonical brand identity and the locations coincide; confirm the name and business lifecycle before linking.',
-      supporting_evidence: ['matching brand Wikidata identity', 'matching location'],
-      needs_human_review: true,
-      decision_origin: 'deterministic',
-    }
-  }
-  if (evidence.source_operator_wikidata_id_matches_canonical && evidence.location_is_close) {
-    return {
-      decision: 'uncertain',
-      confidence: 0.8,
-      reason: 'The source Wikidata ID identifies the canonical operator, not necessarily this specific business; human review is required.',
-      supporting_evidence: ['matching operator Wikidata identity', 'matching location'],
-      needs_human_review: true,
-      decision_origin: 'deterministic',
-    }
-  }
-  return null
 }
 
 function promptFor(row, evidence) {
@@ -306,12 +226,28 @@ try {
     const evidence = evidenceFor(row)
     let ai
     try {
-      ai = deterministicDecision(row, evidence) || await askOllama(promptFor(row, evidence))
-      ai.decision_origin ||= 'ollama'
+      const deterministic = deterministicDecision(row, evidence)
+      if (deterministic) {
+        ai = deterministic
+      } else if (args.deterministicOnly) {
+        ai = {
+          decision: 'uncertain',
+          confidence: 0,
+          reason: 'No deterministic identity signal matched; Ollama was skipped for this row.',
+          supporting_evidence: [],
+          needs_human_review: true,
+          decision_origin: 'deterministic_only',
+        }
+      } else {
+        ai = await askOllama(promptFor(row, evidence))
+        ai.decision_origin ||= 'ollama'
+      }
     } catch (error) {
       ai = { decision: 'uncertain', confidence: 0, reason: error.message, supporting_evidence: [], needs_human_review: true }
     }
-    if (args.cache) await cacheAssessment(row, ai)
+    if (args.cache && (!args.deterministicOnly || ai.decision_origin !== 'deterministic_only')) {
+      await cacheAssessment(row, ai)
+    }
     rows.push({ id: row.id, source: row.source, source_name: row.source_name, nearest_place_name: row.nearest_place_name, evidence, ai })
   }
 

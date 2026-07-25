@@ -187,6 +187,11 @@
 
 .suggestion-form__title {
   margin: 0;
+  max-width: 100%;
+  font-size: 0.84rem;
+  letter-spacing: 0.08em;
+  line-height: 1.25;
+  white-space: nowrap;
 }
 
 .suggestion-form__form {

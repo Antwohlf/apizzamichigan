@@ -31,17 +31,24 @@
   "proxy": "http://localhost:5050",
   "scripts": {
     "start": "react-scripts start",
-    "prestart": "node scripts/generate-pizza-style-taxonomy.mjs",
-    "build": "npm run generate-stats && react-scripts build",
-    "prebuild": "node scripts/generate-pizza-style-taxonomy.mjs",
+    "prestart": "node scripts/generate-pizza-style-taxonomy.mjs && node scripts/generate-public-field-policy.mjs",
+    "build": "react-scripts build",
+    "build:refresh-stats": "npm run generate-stats && npm run build",
+    "prebuild": "node scripts/generate-pizza-style-taxonomy.mjs && node scripts/generate-public-field-policy.mjs",
+    "generate-public-fields": "node scripts/generate-public-field-policy.mjs",
     "generate-stats": "node scripts/generate-dashboard-stats.mjs",
     "readiness": "node scripts/ops/project-readiness-report.mjs",
     "verify:canonical-contract": "node scripts/ops/verify-canonical-contract.mjs",
+    "verify:source-contract-docs": "node scripts/ops/verify-source-contract-docs.mjs",
+    "verify:runtime": "node scripts/ops/verify-runtime-configuration.mjs",
+    "verify:source-pipeline": "node scripts/ops/verify-source-pipeline.mjs",
+    "verify:release": "npm run verify:canonical-contract && npm run verify:source-contract-docs && npm run verify:runtime && npm run verify:source-pipeline && npm run verify:sync-contract && npm run verify:backup-contract",
     "lifecycle-report": "node scripts/ops/lifecycle-quality-report.mjs",
     "source-scope-audit": "node scripts/ops/source-scope-audit.mjs",
+    "source-review-automation": "node scripts/ops/source-review-automation-report.mjs",
     "verify:backup-contract": "node scripts/ops/verify-backup-contract.mjs",
     "verify:sync-contract": "node scripts/ops/verify-supabase-sync-policy.mjs && node scripts/ops/verify-bulk-sync-contract.mjs",
-    "verify:backup-contract": "node scripts/ops/verify-backup-contract.mjs",
+    "test:ops": "node --test scripts/lib/*.test.mjs scripts/ops/*.test.mjs",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "test": "react-scripts test",
     "typecheck": "tsc --noEmit",
@@ -54,6 +61,7 @@
     "moduleNameMapper": {
       "^react-router-dom$": "<rootDir>/__mocks__/react-router-dom.js",
       "^react-leaflet$": "<rootDir>/__mocks__/react-leaflet.js",
+      "^react-leaflet-cluster$": "<rootDir>/__mocks__/react-leaflet-cluster.js",
       "^leaflet$": "<rootDir>/__mocks__/leaflet.js",
       "^leaflet-rotatedmarker$": "<rootDir>/__mocks__/leaflet-rotatedmarker.js"
     }
@@ -77,6 +85,7 @@
     ]
   },
   "devDependencies": {
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "gh-pages": "^6.3.0",
     "react-scripts": "^5.0.1",
     "typescript": "^4.9.5"

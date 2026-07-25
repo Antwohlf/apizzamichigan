@@ -14,8 +14,10 @@ const LAUNCHD_DIR = join(ROOT, 'infra/local/launchd');
 const REQUIRED_SCRIPTS = [
   'scripts/ops/classifier-health-report.mjs',
   'scripts/ops/pipeline-alert-report.mjs',
+  'scripts/ops/write-pipeline-status.mjs',
   'scripts/ops/auto-guarded-supabase-sync.mjs',
   'scripts/ops/run-source-pipeline.mjs',
+  'scripts/ops/source-activation-report.mjs',
   'scripts/ops/reconcile-classifier-queue.mjs',
   'scripts/ops/verify-canonical-contract.mjs',
   'scripts/enrichment/agents/llm-classifier.mjs',
@@ -47,7 +49,7 @@ function main() {
   const templates = readdirSync(LAUNCHD_DIR)
     .filter(name => name.endsWith('.plist.template'))
     .sort();
-  assert(templates.length >= 6, `expected launchd templates, found ${templates.length}`);
+  assert(templates.length >= 7, `expected launchd templates, found ${templates.length}`);
 
   for (const name of templates) {
     const text = readFileSync(join(LAUNCHD_DIR, name), 'utf8');

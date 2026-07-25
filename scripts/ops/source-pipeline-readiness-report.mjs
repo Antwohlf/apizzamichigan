@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
+import { summarizeOsmManifest } from '../lib/osm-refresh-summary.mjs';
 
 function parseArgs(argv) {
   const args = { json: false, regions: null };
@@ -124,6 +125,7 @@ function sourceMatchingStatus(files) {
 function sourceFreshnessStatus(regions) {
   const evidence = [];
   const remaining = [];
+  const advisories = [];
   const freshnessArgs = [
     'scripts/ops/source-freshness-report.mjs',
     '--json',
@@ -144,6 +146,16 @@ function sourceFreshnessStatus(regions) {
   evidence.push(`scope=${freshness.value.scope?.states === 'all' ? 'all states' : (freshness.value.scope?.states || []).join(', ')}`);
   evidence.push(`sources_checked=${sources.length}`);
 
+  if (freshness.value.status && freshness.value.status !== 'ready') {
+    return {
+      item: 'Source evidence freshness',
+      status: 'partial',
+      evidence: [...evidence, `report_status=${freshness.value.status}`],
+      remaining: [freshness.value.error || 'source freshness could not be verified'],
+      source_freshness: freshness.value,
+    };
+  }
+
   for (const source of sources) {
     evidence.push(`${source.source}: ${source.fresh_rows}/${source.evidence_rows} fresh, ${source.stale_rows} stale, ${source.eligible_rows} eligible`);
     if (source.latest_input_files?.length) {
@@ -155,7 +167,7 @@ function sourceFreshnessStatus(regions) {
       const unobserved = Number(source.stale_rows_unobserved_in_latest_input);
       const observed = Number(source.stale_rows_observed_in_latest_input);
       if (Number.isFinite(unobserved) && unobserved === Number(source.stale_rows)) {
-        remaining.push(`${source.source} has ${source.stale_rows} stale legacy rows absent from the latest input; review or archive them rather than retrying refresh`);
+        advisories.push(`${source.source} has ${source.stale_rows} stale legacy rows absent from the latest input; review or archive them rather than retrying refresh`);
       } else if (Number.isFinite(observed) && observed > 0) {
         remaining.push(`${source.source} has ${observed} stale rows still present in the latest input; refresh those rows before relying on them`);
       } else {
@@ -168,6 +180,7 @@ function sourceFreshnessStatus(regions) {
     item: 'Source evidence freshness',
     status: remaining.length ? 'partial' : 'ready',
     evidence,
+    advisories,
     remaining,
     source_freshness: freshness.value,
   };
@@ -213,15 +226,9 @@ function osmStatus(files, regions) {
         continue;
       }
       activeManifestCount += 1;
-      const statuses = manifest.statuses || {};
-      const tileCount = manifest.total_tiles || Object.keys(manifest.tiles || {}).length;
       const refreshAfterHours = Number(pipelineConfig.sources?.osm?.refresh_after_hours || 720);
-      const refreshAfterMs = refreshAfterHours * 60 * 60 * 1000;
-      const now = Date.now();
-      const staleTiles = Object.values(manifest.tiles || {}).filter(tile => (
-        tile.status === 'success'
-        && (!tile.completed_at || !Number.isFinite(Date.parse(tile.completed_at)) || now - Date.parse(tile.completed_at) >= refreshAfterMs)
-      )).length;
+      const summary = summarizeOsmManifest(manifest, { refreshAfterHours });
+      const { statuses, tileCount, staleTiles } = summary;
       evidence.push(`tile_manifest=${manifestPath}`);
       evidence.push(`tile_count=${tileCount}`);
       evidence.push(`tile_statuses=${JSON.stringify(statuses)}`);
@@ -232,16 +239,16 @@ function osmStatus(files, regions) {
         remaining.push(`${manifestPath}: ${statuses.partial} adaptive partial tile(s) need retry or operator review`);
       }
       if (staleTiles) remaining.push(`${manifestPath}: ${staleTiles} successful tile(s) are past the ${refreshAfterHours}-hour refresh window`);
-      const processedTiles = (statuses.success || 0) + (statuses.partial || 0) + (statuses.failed || 0);
-      const unprocessedTiles = Math.max(tileCount - processedTiles, 0);
+      const { unprocessedTiles, retryableTiles } = summary;
       const osmConfig = pipelineConfig.sources?.osm || {};
       const tilesPerRun = Number(osmConfig.tiles_per_run_by_region?.[regionKey] || osmConfig.tiles_per_run || 1);
       const cadenceHours = Number(osmConfig.cadence_hours || 1);
-      const refreshQueueTiles = unprocessedTiles + staleTiles;
+      const refreshQueueTiles = summary.refreshQueueTiles;
       const estimatedRuns = tilesPerRun > 0 ? Math.ceil(refreshQueueTiles / tilesPerRun) : null;
       const estimatedHours = estimatedRuns === null ? null : estimatedRuns * cadenceHours;
       evidence.push(`unprocessed_tiles=${unprocessedTiles}`);
       evidence.push(`refresh_queue_tiles=${refreshQueueTiles}`);
+      evidence.push(`retryable_tiles=${retryableTiles}`);
       evidence.push(`estimated_runs_remaining=${estimatedRuns ?? 'unknown'}`);
       evidence.push(`estimated_hours_remaining=${estimatedHours ?? 'unknown'}`);
       const hasRetryableTiles = Boolean(statuses.failed || statuses.partial);
@@ -263,6 +270,7 @@ function osmStatus(files, regions) {
           unprocessed_tiles: unprocessedTiles,
           stale_tiles: staleTiles,
           refresh_queue_tiles: refreshQueueTiles,
+          retryable_tiles: retryableTiles,
           failed_tiles: statuses.failed || 0,
           partial_tiles: statuses.partial || 0,
           estimated_runs: estimatedRuns,
@@ -550,6 +558,11 @@ function renderMarkdown(report) {
       console.log('');
       console.log('Remaining:');
       for (const item of row.remaining) console.log(`- ${item}`);
+    }
+    if (row.advisories?.length) {
+      console.log('');
+      console.log('Advisories:');
+      for (const item of row.advisories) console.log(`- ${item}`);
     }
     if (row.next_actions?.length) {
       console.log('');
