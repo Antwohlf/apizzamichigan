@@ -1,9 +1,10 @@
 import { createRoot, type Root } from 'react-dom/client'
 import ReviewGallery from '../ReviewGallery'
 import { buildGoogleMapsUrl } from '../../lib/buildGoogleMapsUrl'
-import { lifecycleCopy } from '../../lib/lifecycle'
+import { lifecycleCopy, normalizeLifecycleStatus, replacementCopy } from '../../lib/lifecycle'
 import { normalizeRating } from '../../lib/ratings'
-import { normalizeEntityStyle } from '../../config/entityConfig'
+import { formatHours, formatHoursEntries, normalizePhone, phoneHref } from '../../lib/placeContact'
+import { entityConfig, normalizeEntityStyle } from '../../config/entityConfig'
 
 type ReviewPhoto = {
   id?: string | number
@@ -86,6 +87,15 @@ function replacementId(place: Place) {
   return place.lifecycle_replaced_by_id ?? place.lifecycleReplacedById ?? null
 }
 
+function replacementLabel(place: Place) {
+  if (normalizeLifecycleStatus(place.lifecycle_status || place.lifecycleStatus) !== 'replaced') return null
+  return replacementCopy(
+    place.lifecycle_replaced_by_name,
+    replacementId(place),
+    place.name,
+  )
+}
+
 function displayLocation(place: Place) {
   const cityState = [place.city, place.state].filter(Boolean).join(', ')
   if (!place.address) return cityState || null
@@ -96,7 +106,7 @@ function displayLocation(place: Place) {
 }
 
 function internalDetailHref(place: Place) {
-  const prefix = place.type === 'taco' ? '/tacos/places' : '/places'
+  const prefix = entityConfig(place.type).placeRoute
   return `${prefix}/${encodeURIComponent(place.id)}`
 }
 
@@ -110,18 +120,6 @@ function officialWebsite(value: string | null | undefined) {
   } catch (error) {
     return null
   }
-}
-
-function formatHours(hours: unknown) {
-  if (!hours) return null
-  if (typeof hours === 'string') return hours.trim() || null
-  if (Array.isArray(hours)) return hours.filter(Boolean).join(' · ') || null
-  if (typeof hours === 'object') {
-    const entries = Object.entries(hours).filter(([, value]) => value !== null && value !== undefined && String(value).trim())
-    if (!entries.length) return null
-    return entries.map(([day, value]) => `${day}: ${value}`).join(' · ')
-  }
-  return null
 }
 
 function getRoot(node: HTMLElement) {
@@ -177,7 +175,10 @@ export function renderExpanded(
   const location = displayLocation(place)
   const website = officialWebsite(place.website_url || place.websiteUrl)
   const menu = officialWebsite(place.menu_url || place.menuUrl)
-  const hours = formatHours(place.hours)
+  const hours = formatHours(place.hours) || null
+  const hourEntries = formatHoursEntries(place.hours)
+  const phone = normalizePhone(place.phone)
+  const phoneUrl = phoneHref(phone)
   const photos = Array.isArray(place.photos) ? place.photos.filter(Boolean) : []
   const classNames = ['popup-card']
   if (isGolden) {
@@ -221,8 +222,8 @@ export function renderExpanded(
         {lifecycle ? (
           <div className="popup-card__lifecycle">
             {lifecycle.message}
-            {place.lifecycle_replaced_by_name ? (
-              <span className="popup-card__replacement-name"> Current place: {place.lifecycle_replaced_by_name}.</span>
+            {replacementLabel(place) ? (
+              <span className="popup-card__replacement-name"> {replacementLabel(place)}.</span>
             ) : null}
             {replacementId(place) ? (
               <a
@@ -247,12 +248,25 @@ export function renderExpanded(
             {location}
           </div>
         ) : null}
-        {place.phone ? (
+        {phone ? (
           <div className="addr">
-            <a href={`tel:${place.phone}`} onClick={stopPopupEvent}>{place.phone}</a>
+            {phoneUrl ? <a href={phoneUrl} onClick={stopPopupEvent}>{phone}</a> : phone}
           </div>
         ) : null}
-        {hours ? <div className="addr">Hours: {hours}</div> : null}
+        {hours ? (
+          hourEntries.length ? (
+            <div className="addr popup-card__hours">
+              <strong>Hours</strong>
+              <ul aria-label="Opening hours">
+                {hourEntries.map(({ label, value }, index) => (
+                  <li key={`${label}-${index}`}>
+                    {label ? <strong>{label}</strong> : null}<span>{value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : <div className="addr">Hours: {hours}</div>
+        ) : null}
         {photos.length ? (
           <div className="review-gallery-wrap">
             <ReviewGallery photos={photos} placeName={place.name} />
@@ -287,6 +301,17 @@ export function renderExpanded(
             View place details
           </a>
         )}
+        {phoneUrl ? (
+          <a
+            href={phoneUrl}
+            className="popup-link--primary"
+            onClick={stopPopupEvent}
+            onMouseDown={stopPopupEvent}
+            onPointerDown={stopPopupEvent}
+          >
+            Call restaurant
+          </a>
+        ) : null}
         {website ? (
           <a
             href={website}
@@ -317,6 +342,7 @@ export function renderExpanded(
           target="_blank"
           rel="noopener noreferrer"
           href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`}
+          className="popup-link--primary"
           onClick={stopPopupEvent}
           onMouseDown={stopPopupEvent}
           onPointerDown={stopPopupEvent}

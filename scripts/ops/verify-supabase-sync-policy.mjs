@@ -45,9 +45,12 @@ function main() {
     );
   }
 
+  const tacoBoundary = assertSupabaseSyncTableBoundary({ targetTable: 'taco_places' });
+  assert(tacoBoundary.targetTable === 'taco_places', 'Taco sync profile must resolve to taco_places.');
+  assertSupabaseSyncTableBoundary({ entity: 'taco', targetTable: 'taco_places' });
   assertThrows(
-    () => assertSupabaseSyncTableBoundary({ targetTable: 'taco_places' }),
-    'Unsupported Supabase sync target table',
+    () => assertSupabaseSyncTableBoundary({ entity: 'pizza', targetTable: 'taco_places' }),
+    'does not use target table',
   );
 
   const { sql } = localSyncSelect({ batch: 5 });
@@ -55,6 +58,10 @@ function main() {
   for (const tableName of LOCAL_ONLY_SUPABASE_TABLES) {
     assert(!new RegExp(`\\b${tableName}\\b`, 'i').test(sql), `Local sync SQL must not reference ${tableName}.`);
   }
+  const tacoSql = localSyncSelect({ targetTable: 'taco_places', batch: 5 }).sql;
+  assert(/\bfrom taco_places\b/i.test(tacoSql), 'Entity sync SQL must support taco_places.');
+  const entityTacoSql = localSyncSelect({ entity: 'taco', batch: 5 }).sql;
+  assert(/\bfrom taco_places\b/i.test(entityTacoSql), 'Entity sync SQL must resolve taco through its profile.');
 
   if (LIFECYCLE_SYNC_ENABLED) {
     const lifecycleSql = localSyncSelect({ ids: [7], lifecycleOnly: true, batch: 1 }).sql;
@@ -88,8 +95,18 @@ function main() {
     assert(LIFECYCLE_COLS.includes('lifecycle_replaced_by_id'), 'Enabled lifecycle sync must select replacement IDs.');
   } else {
     assert(LIFECYCLE_COLS.length === 0, 'Lifecycle columns must stay disabled until the remote migration is applied.');
-    assert(!/\\blifecycle_status\\b/i.test(sql), 'Default sync must not reference lifecycle_status.');
+  assert(!/\\blifecycle_status\\b/i.test(sql), 'Default sync must not reference lifecycle_status.');
   }
+
+  const classificationPayload = buildSupabasePayload(
+    { id: 8, style: 'Standard Round', price: null, price_range: '$$', style_confidence: 'confirmed' },
+    { id: 8, style: 'Traditional', price: '$$', price_range: null, style_confidence: 'inferred', qa_status: 'unreviewed', qa_schema_version: 1 },
+    { nowIso: '2026-07-25T00:00:00.000Z' },
+  );
+  assert(classificationPayload.style === 'Standard Round', 'Canonical local style must replace a stale public style.');
+  assert(classificationPayload.price_range === '$$', 'Canonical local price_range must fill the public mirror.');
+  assert(classificationPayload.style_confidence === 'confirmed', 'Canonical local confidence must replace a stale public confidence.');
+  assert(!('price' in classificationPayload), 'Null local price must not clear the public price.');
 
   console.log('# Supabase Sync Policy Verification');
   console.log('');

@@ -1,12 +1,12 @@
-import { FOCUSED_PLACE_ZOOM, SEARCH_RESULT_FOCUS_ZOOM, captureLightboxViewport, lightboxRestoreViewport, focusedPlaceZoom, isPlaceViewportFocused, clusterFitOptions, clusterNavigation, clusterRadiusForZoom, searchFitOptions, searchNavigation, shouldForceIndividualMarkers } from './viewport'
+import { FOCUSED_PLACE_ZOOM, SEARCH_RESULT_FOCUS_ZOOM, STABLE_CLUSTER_RADIUS, captureLightboxViewport, lightboxRestoreViewport, focusedPlaceZoom, isPlaceViewportFocused, clusterFitOptions, clusterNavigation, clusterRadiusForZoom, searchFitOptions, searchNavigation, shouldForceIndividualMarkers } from './viewport'
 
 describe('cluster navigation', () => {
-  test('tightens cluster radius as the map reaches neighborhood scale', () => {
-    expect(clusterRadiusForZoom(7)).toBe(92)
-    expect(clusterRadiusForZoom(10)).toBe(52)
-    expect(clusterRadiusForZoom(13)).toBe(36)
-    expect(clusterRadiusForZoom(14)).toBe(24)
-    expect(clusterRadiusForZoom('not-a-zoom')).toBe(80)
+  test('keeps cluster radius stable across zoom levels', () => {
+    expect(clusterRadiusForZoom(7)).toBe(STABLE_CLUSTER_RADIUS)
+    expect(clusterRadiusForZoom(10)).toBe(STABLE_CLUSTER_RADIUS)
+    expect(clusterRadiusForZoom(13)).toBe(STABLE_CLUSTER_RADIUS)
+    expect(clusterRadiusForZoom(14)).toBe(STABLE_CLUSTER_RADIUS)
+    expect(clusterRadiusForZoom('not-a-zoom')).toBe(STABLE_CLUSTER_RADIUS)
   })
 
   test('keeps cluster expansion bounded to neighborhood context', () => {
@@ -67,17 +67,13 @@ describe('search navigation', () => {
     expect(searchNavigation(places)).toEqual({ mode: 'fit', places })
   })
 
-  test('focuses the best result when a compact search has too many matches', () => {
+  test('fits dense results that still belong to one compact area', () => {
     const places = Array.from({ length: 51 }, (_, index) => ({
       id: String(index),
       lat: 42.28 + (index * 0.001),
       lng: -83.74 + (index * 0.001),
     }))
-    expect(searchNavigation(places)).toEqual({
-      mode: 'place',
-      place: places[0],
-      zoom: SEARCH_RESULT_FOCUS_ZOOM,
-    })
+    expect(searchNavigation(places)).toEqual({ mode: 'fit', places })
   })
 
   test('fits a metro-area search so all nearby results stay visible', () => {
@@ -137,6 +133,14 @@ describe('isPlaceViewportFocused', () => {
     expect(isPlaceViewportFocused({
       center: { lat: 40.8, lng: -74.05 },
       zoom: 6,
+      place,
+    })).toBe(false)
+  })
+
+  test('rejects a metro-distance place at neighborhood zoom', () => {
+    expect(isPlaceViewportFocused({
+      center: { lat: 40.95, lng: -74.05 },
+      zoom: 11,
       place,
     })).toBe(false)
   })

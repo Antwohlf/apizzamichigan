@@ -66,6 +66,17 @@ ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync
 ssh example-host 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
 ```
 
+The wrapper also writes the latest scheduler outcome to the ignored local file
+`scripts/.supabase-sync-status.json`. The status report includes this as the
+`last scheduled run` field, so operators can distinguish a successful run from
+a deliberate skip (for example, the bulk RPC is unavailable) without parsing
+the full log:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
+ssh example-host 'cd /srv/apizzamichigan && node -e "console.log(require(\"fs\").readFileSync(\"scripts/.supabase-sync-status.json\", \"utf8\"))"'
+```
+
 It applies at most one 100-row ordinary batch every 30 minutes and exits without
 writing if health, QA, readiness, or dry-run gates fail. Broad reviewed-new
 reconciliation is maintenance-only; enable it explicitly with

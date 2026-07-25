@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
+import { shouldDeferTileRetry } from '../lib/osm-refresh-policy.mjs'
 
 const args = parseArgs(process.argv.slice(2))
 const [south, west, north, east] = String(args.bbox || '').split(',').map(Number)
@@ -61,7 +62,7 @@ if (planOnly) {
       && Number.isFinite(completedAt)
       && now - completedAt < refreshAfterMs
     if (successIsFresh && args.resume !== 'false') continue
-    if (prior?.status === 'failed' && !retryFailed && prior.next_retry_at && Date.parse(prior.next_retry_at) > now && args.resume !== 'false') {
+    if (shouldDeferTileRetry(prior, { retryFailed, resume: args.resume !== 'false', now })) {
       deferredTiles += 1
       continue
     }
@@ -119,7 +120,7 @@ for (const tile of orderedTiles) {
     && Number.isFinite(completedAt)
     && Date.now() - completedAt < refreshAfterMs
   if (successIsFresh && args.resume !== 'false') continue
-  if (prior?.status === 'failed' && !retryFailed && prior.next_retry_at && Date.parse(prior.next_retry_at) > Date.now() && args.resume !== 'false') {
+  if (shouldDeferTileRetry(prior, { retryFailed, resume: args.resume !== 'false' })) {
     deferred += 1
     continue
   }

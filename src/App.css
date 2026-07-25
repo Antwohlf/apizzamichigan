@@ -85,8 +85,16 @@ body {
   filter: drop-shadow(0 0 12px rgba(250, 204, 21, 0.65)) drop-shadow(0 0 20px rgba(250, 204, 21, 0.45));
 }
 
+/* Historical places remain discoverable, but should not read as current
+   recommendations when the map-history filter is enabled. */
+.leaflet-marker-icon.place-marker--historical {
+  filter: grayscale(0.9) saturate(0.55);
+  opacity: 0.68;
+}
+
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   background-color: var(--app-bg);
   color: var(--app-text);
   transition: background-color 0.3s ease, color 0.3s ease;
@@ -96,6 +104,7 @@ body {
 .app-layout {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: visible;
   width: 100%;
 }

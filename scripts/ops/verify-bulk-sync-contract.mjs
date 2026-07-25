@@ -4,7 +4,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
-  FILL_IF_NULL_COLS,
+  CANONICAL_MIRROR_COLS,
   LIFECYCLE_COLS,
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
@@ -26,12 +26,14 @@ const statusReport = readFileSync(resolve(process.cwd(), 'scripts/ops/supabase-s
 const readinessReport = readFileSync(resolve(process.cwd(), 'scripts/ops/project-readiness-report.mjs'), 'utf8');
 const guardedSync = readFileSync(resolve(process.cwd(), 'scripts/ops/guarded-supabase-sync.mjs'), 'utf8');
 const autoSync = readFileSync(resolve(process.cwd(), 'scripts/ops/auto-guarded-supabase-sync.mjs'), 'utf8');
+const credentials = readFileSync(resolve(process.cwd(), 'scripts/lib/supabase-sync-credentials.mjs'), 'utf8');
 
 assert(SUPABASE_BULK_SYNC_RPC === 'apply_pizza_places_sync_batch', 'RPC name changed unexpectedly.');
 assert(migration.includes(`CREATE OR REPLACE FUNCTION public.${SUPABASE_BULK_SYNC_RPC}(p_rows jsonb)`), 'Migration must define the bulk RPC.');
 assert(repairMigration.includes(`CREATE OR REPLACE FUNCTION public.${SUPABASE_BULK_SYNC_RPC}(p_rows jsonb)`), 'RPC repair migration must define the bulk RPC.');
 assert(/SECURITY DEFINER/i.test(repairMigration), 'RPC repair migration must run with controlled database privileges.');
 assert(/SET search_path = public/i.test(repairMigration), 'RPC repair migration must pin its search path.');
+assert(/jsonb_array_length\(p_rows\) > 500/i.test(repairMigration), 'RPC repair migration must cap batch size at 500 rows.');
 assert(/REVOKE ALL ON FUNCTION public\.apply_pizza_places_sync_batch\(jsonb\) FROM PUBLIC/i.test(repairMigration), 'RPC repair migration must not be public.');
 assert(/GRANT EXECUTE ON FUNCTION public\.apply_pizza_places_sync_batch\(jsonb\) TO service_role/i.test(repairMigration), 'RPC repair migration must be restricted to service_role.');
 assert(verificationSql.includes("has_function_privilege('service_role'"), 'RPC verification must check service_role permission.');
@@ -39,18 +41,21 @@ assert(verificationSql.includes("has_function_privilege('anon'"), 'RPC verificat
 assert(verificationSql.includes("apply_pizza_places_sync_batch('[]'::jsonb)"), 'RPC verification must probe with an empty array.');
 assert(/SECURITY DEFINER/i.test(migration), 'Bulk RPC must run with controlled database privileges.');
 assert(/SET search_path = public/i.test(migration), 'Bulk RPC must pin its search path.');
+assert(/jsonb_array_length\(p_rows\) > 500/i.test(migration), 'Bulk RPC must cap batch size at 500 rows.');
 assert(/REVOKE ALL ON FUNCTION public\.apply_pizza_places_sync_batch\(jsonb\) FROM PUBLIC/i.test(migration), 'Bulk RPC must not be public.');
 assert(/GRANT EXECUTE ON FUNCTION public\.apply_pizza_places_sync_batch\(jsonb\) TO service_role/i.test(migration), 'Bulk RPC must be restricted to service_role.');
-for (const column of ['style', 'price', 'price_range', 'style_confidence']) {
-  assert(new RegExp(`target\\.${column} IS NULL AND incoming\\.patch \\? '${column}'`).test(migration), `Bulk RPC must preserve non-null ${column}.`);
+for (const column of CANONICAL_MIRROR_COLS) {
+  assert(new RegExp(`incoming\\.patch \\? '${column}'`).test(migration), `Bulk RPC must accept canonical mirror field ${column}.`);
+  assert(!new RegExp(`target\\.${column} IS NULL AND incoming\\.patch \\? '${column}'`).test(migration), `Bulk RPC must not retain fill-only protection for ${column}.`);
 }
 assert(/lifecycle_status = CASE WHEN incoming\.patch \? 'lifecycle_status'/i.test(migration), 'Bulk RPC must support explicit lifecycle changes.');
 assert(/target\.id = incoming\.id/i.test(migration), 'Bulk RPC must update by canonical id only.');
+assert(/MAX_SYNC_BATCH_SIZE = 500/i.test(readFileSync(resolve(process.cwd(), 'scripts/sync-local-to-supabase.mjs'), 'utf8')), 'Sync client must cap bulk batches at 500 rows.');
 const recordShape = migration.match(/jsonb_to_record\(source\.item\) AS parsed\(([\s\S]*?)\n    \)\n  \)\n  UPDATE/)?.[1] || '';
 assert(recordShape, 'Bulk RPC record shape must be discoverable for contract checks.');
 const contractColumns = [...new Set([
   ...OVERWRITE_COLS,
-  ...FILL_IF_NULL_COLS,
+  ...CANONICAL_MIRROR_COLS,
   ...QA_DEFAULT_COLS,
   ...LIFECYCLE_COLS,
 ])];
@@ -67,7 +72,7 @@ assert(statusReport.includes('p_rows: []'), 'Sync status report must perform a z
 for (const state of ['ready', 'not_configured', 'migration_missing', 'unavailable']) {
   assert(statusReport.includes(`'${state}'`), `Sync status report must expose bulk RPC state ${state}.`);
 }
-assert(statusReport.includes('SUPABASE_BULK_SYNC_RPC'), 'Sync status report must use the canonical bulk RPC name.');
+assert(statusReport.includes('profile.bulkRpc'), 'Sync status report must resolve the bulk RPC from the selected entity profile.');
 assert(statusReport.includes('supabase-bulk-sync-rpc-migration.sql'), 'Sync status report must point to the focused RPC repair migration.');
 assert(statusReport.includes('publicationReadiness'), 'Sync status report must expose publication readiness separately from local inspection status.');
 assert(statusReport.includes("status: 'READY'"), 'Sync status report must expose a ready publication state.');
@@ -84,11 +89,16 @@ assert(noWorkExit >= 0 && bulkGate > noWorkExit, 'Guarded sync must stop idle ru
 assert((autoSync.match(/'--bulk-rpc'/g) || []).length >= 2, 'Scheduled sync and reconciliation must explicitly require the bulk RPC path.');
 assert(autoSync.includes("'scripts/ops/supabase-sync-status-report.mjs'"), 'Scheduled sync must check bulk capability before local repair.');
 assert(autoSync.includes("'--require-bulk-rpc'"), 'Scheduled sync must require the bulk RPC during preflight.');
-assert(autoSync.includes('if (!bulkSyncPreflight()) process.exit(0);'), 'Scheduled sync must skip cleanly while migration is missing.');
+assert(autoSync.includes("throw new SyncSkipped('bulk sync unavailable')"), 'Scheduled sync must skip cleanly while migration is missing.');
+assert(autoSync.includes('read-only capability check unavailable'), 'Scheduled sync must skip structured read-only preflight failures without a stack trace.');
+assert(autoSync.includes("'skipped'"), 'Scheduled sync must record a skipped run when bulk sync is unavailable.');
+assert(autoSync.includes('if (lockAcquired) releaseLock();'), 'Scheduled sync must release the lock only when it acquired it.');
+assert(credentials.includes('Live Supabase sync requires SUPABASE_SERVICE_ROLE_KEY'), 'Live sync must require the service-role key.');
+assert(credentials.includes('dryRun'), 'Sync credential resolution must distinguish previews from live writes.');
 
 console.log('# Bulk Sync Contract Verification');
 console.log('');
 console.log(`rpc=${SUPABASE_BULK_SYNC_RPC}`);
 console.log('writes=database-side-batch');
-console.log('protected_fields=preserve-non-null');
+console.log(`canonical_mirror_fields=${CANONICAL_MIRROR_COLS.join(',')}`);
 console.log('status=ok');

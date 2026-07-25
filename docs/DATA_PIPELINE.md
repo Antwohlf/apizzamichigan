@@ -62,11 +62,36 @@ style, and price values without pretending that every gap is safe to fill
 automatically: contact blanks can use accepted evidence, while identity and
 editorial fields remain review- or classifier-owned.
 
+The public map does not fetch review-photo rows while loading an entire region.
+Photo metadata and storage URLs are requested only after a person opens a place
+popup; search results may still preload a small bounded thumbnail set. This
+keeps normal map browsing from turning a regional place load into a large
+database and storage read.
+
 ## Supabase Sync Scope
 
-Supabase sync writes only canonical `pizza_places` rows. Provenance and review
-tables such as `place_sources` and `source_review_queue` are local operator
-state and are not public sync targets.
+The sync runner accepts an entity profile:
+
+```bash
+node scripts/sync-local-to-supabase.mjs --entity pizza --dry-run
+node scripts/sync-local-to-supabase.mjs --entity taco --dry-run
+```
+
+The profile registry in `scripts/lib/supabase-sync-profiles.mjs` is the single
+source of truth for the publication boundary:
+
+| Entity | Public table | Bulk RPC | Publication |
+| --- | --- | --- | --- |
+| pizza | `pizza_places` | `apply_pizza_places_sync_batch` | enabled |
+| taco | `taco_places` | `apply_taco_places_sync_batch` | dry-run only |
+
+The low-level sync policy resolves an entity-specific table from that registry
+and rejects an entity/table mismatch before selecting or writing rows. Pizza is
+the only enabled publication profile today. Taco remains read-only planning
+until its public schema and guarded bulk RPC are explicitly enabled.
+Provenance and review tables such as `place_sources` and
+`source_review_queue` remain local operator state and are never public sync
+targets.
 
 ### Public Search Performance
 

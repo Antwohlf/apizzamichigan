@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './supabaseClient'
-import { pizzaStyles } from './data/pizzaStyles'
-import { TACO_TYPES } from './data/tacoTypes'
+import { entityConfig } from './config/entityConfig'
 import { uploadReviewPhoto, REVIEW_PHOTO_BUCKET } from './utils/uploadPhoto'
 import InlineSpinner from './components/ui/InlineSpinner'
 import { useGlobalLoading } from './hooks/useGlobalLoading'
@@ -300,32 +299,60 @@ function PlacesSuggestionInput({
 }
 
 export default function AdminForm() {
+  const [authChecked, setAuthChecked] = useState(false)
   const [authed, setAuthed] = useState(false)
   const [passwordInput, setPasswordInput] = useState('')
-  const ADMIN_PASS = 'mypizza123'
 
   const [activeTab, setActiveTab] = useState('pizza')
   const [pizzaForm, setPizzaForm] = useState(initialPizzaState)
   const [tacoForm, setTacoForm] = useState(initialTacoState)
   const [frozenForm, setFrozenForm] = useState(initialFrozenState)
+  const pizzaConfig = entityConfig('pizza')
+  const tacoConfig = entityConfig('taco')
 
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const { open: openGlobalLoading, close: closeGlobalLoading, setVariant: setGlobalLoadingVariant } = useGlobalLoading()
 
   const pizzaStylesSorted = useMemo(
-    () => ['Unknown', ...pizzaStyles.filter(style => style !== 'Unknown').sort()],
-    []
+    () => ['Unknown', ...pizzaConfig.styleOptions.filter(style => style !== 'Unknown').sort()],
+    [pizzaConfig.styleOptions]
   )
-  const tacoTypesSorted = useMemo(() => [...TACO_TYPES].sort(), [])
+  const tacoTypesSorted = useMemo(() => [...tacoConfig.styleOptions].sort(), [tacoConfig.styleOptions])
 
-  const handlePasswordSubmit = event => {
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/admin/check', { credentials: 'include' })
+      .then(response => response.ok ? response.json() : null)
+      .then(payload => {
+        if (!cancelled) setAuthed(Boolean(payload?.authorized))
+      })
+      .catch(() => {
+        if (!cancelled) setAuthed(false)
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecked(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handlePasswordSubmit = async event => {
     event.preventDefault()
     setMessage('')
-    if (passwordInput.trim() === ADMIN_PASS) {
+    try {
+      const response = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password: passwordInput }),
+      })
+      if (!response.ok) throw new Error('Incorrect password. Try again.')
+      setPasswordInput('')
       setAuthed(true)
-    } else {
-      setMessage('Incorrect password. Try again.')
+    } catch (error) {
+      setMessage(error.message || 'Unable to sign in. Try again.')
     }
   }
 
@@ -395,6 +422,30 @@ export default function AdminForm() {
 
   const normalizePrice = value => (PRICE_OPTIONS.includes(value) ? value : '$')
 
+  const submitPlaceToServer = async ({ entity, payload, style }) => {
+    const response = await fetch('/api/admin/submitPlace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        entity,
+        name: payload.name,
+        address: payload.address,
+        lat: payload.lat,
+        lng: payload.lng,
+        price: payload.price,
+        status: payload.status,
+        review: payload.review,
+        rating: payload.rating,
+        notes: payload.notes,
+        style,
+      }),
+    })
+    const responsePayload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(responsePayload?.error || 'Failed to save place.')
+    return responsePayload.data
+  }
+
   const uploadPlacePhoto = async (file, { entity, recordId }) => {
     const { path } = await uploadReviewPhoto(file, {
       reviewId: recordId,
@@ -456,13 +507,7 @@ export default function AdminForm() {
     setGlobalLoadingVariant('pizza')
     openGlobalLoading('Saving pizza place…')
     try {
-      const { data: inserted, error } = await supabase
-        .from('pizza_places')
-        .insert([payload])
-        .select('id, photos')
-        .single()
-
-      if (error) throw error
+      const inserted = await submitPlaceToServer({ entity: 'pizza', payload, style: payload.style })
 
       if (pizzaForm.photo?.file && inserted?.id) {
         try {
@@ -473,7 +518,7 @@ export default function AdminForm() {
           const storedUrl = publicUrl || path
           if (storedUrl) {
             await appendPhotoToRow({
-              table: 'pizza_places',
+              table: pizzaConfig.table,
               id: inserted.id,
               storedUrl,
               existingPhotos: inserted.photos,
@@ -523,13 +568,7 @@ export default function AdminForm() {
     setGlobalLoadingVariant('taco')
     openGlobalLoading('Saving taco spot…')
     try {
-      const { data: inserted, error } = await supabase
-        .from('taco_places')
-        .insert([payload])
-        .select('id, photos')
-        .single()
-
-      if (error) throw error
+      const inserted = await submitPlaceToServer({ entity: 'taco', payload, style: payload.type })
 
       if (tacoForm.photo?.file && inserted?.id) {
         try {
@@ -540,7 +579,7 @@ export default function AdminForm() {
           const storedUrl = publicUrl || path
           if (storedUrl) {
             await appendPhotoToRow({
-              table: 'taco_places',
+              table: tacoConfig.table,
               id: inserted.id,
               storedUrl,
               existingPhotos: inserted.photos,
@@ -651,6 +690,14 @@ export default function AdminForm() {
     } else {
       submitFrozen()
     }
+  }
+
+  if (!authChecked) {
+    return (
+      <div className="admin-shell">
+        <p>Checking admin access…</p>
+      </div>
+    )
   }
 
   if (!authed) {

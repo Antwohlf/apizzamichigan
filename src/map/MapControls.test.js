@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { MapControls, searchResultBadge, searchResultReason, searchResultSummary } from './MapControls'
+import { MapControls, placeIdentity, searchResultBadge, searchResultReason, searchResultSummary } from './MapControls'
 
 describe('searchResultReason', () => {
   test('shows source brand matches when the display name is generic', () => {
@@ -106,6 +106,56 @@ describe('MapControls search results', () => {
     state: 'MI',
   }))
 
+  test('shows distinct brand or operator identity without repeating the place name', () => {
+    expect(placeIdentity({
+      name: 'Downtown Pizza',
+      brand: 'Little Caesars',
+      operator: 'Little Caesars',
+    })).toBe('Little Caesars')
+    expect(placeIdentity({
+      name: 'Little Caesars',
+      brand: 'Little Caesars',
+      operator: 'Ilitch Companies',
+    })).toBe('Ilitch Companies')
+    expect(placeIdentity({ name: 'Independent Pizza', brand: 'Independent Pizza' })).toBe('')
+  })
+
+  test('explains local fallback results and exposes a retry action', () => {
+    const onSearchRetry = jest.fn()
+    render(
+      <MapControls
+        searchQuery="Search Pizza"
+        filteredPlaces={[places[0]]}
+        searchNotice="Search is temporarily unavailable. Showing places already loaded on the map."
+        onSearchRetry={onSearchRetry}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent('Showing places already loaded')
+    const retry = screen.getByRole('button', { name: 'Try again' })
+    fireEvent.click(retry)
+    expect(onSearchRetry).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders distinct identity in a search result', () => {
+    render(
+      <MapControls
+        searchQuery="Downtown Pizza"
+        filteredPlaces={[{
+          id: 'identity-place',
+          name: 'Downtown Pizza',
+          brand: 'Little Caesars',
+          state: 'MI',
+        }]}
+        onSearchChange={jest.fn()}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    expect(screen.getByRole('option')).toHaveTextContent('Little Caesars')
+  })
+
   test('does not show an Unknown style label in a search result', () => {
     render(
       <MapControls
@@ -142,6 +192,24 @@ describe('MapControls search results', () => {
     expect(onToggle).toHaveBeenCalledWith(true)
   })
 
+  test('keeps the active near-me radius control alongside the map button', () => {
+    const onRadiusChange = jest.fn()
+    render(
+      <MapControls
+        nearMeActive
+        nearMeRadius={25}
+        onNearMeToggle={jest.fn()}
+        onRadiusChange={onRadiusChange}
+        filteredPlaces={[]}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: /near me/i })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /search radius/i })).toHaveValue('25')
+    fireEvent.change(screen.getByRole('combobox', { name: /search radius/i }), { target: { value: '10' } })
+    expect(onRadiusChange).toHaveBeenCalledWith(10)
+  })
+
   test('lets users expand beyond the initial search result page', () => {
     render(
       <MapControls
@@ -163,6 +231,20 @@ describe('MapControls search results', () => {
     expect(screen.queryByRole('button', { name: /show more/i })).not.toBeInTheDocument()
   })
 
+  test('does not present the capped broad-search result set as an exact total', () => {
+    render(
+      <MapControls
+        searchQuery="pizza"
+        searchResultLimitReached
+        filteredPlaces={places}
+        onSearchChange={jest.fn()}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    expect(screen.getByText('14+ places found · showing 12')).toBeInTheDocument()
+  })
+
   test('summarizes reviewed places, suggestions, and near-me distance', () => {
     expect(searchResultSummary([
       { id: 'reviewed-1', status: 'visited', rating: 9.2, _distance: 1.2 },
@@ -171,9 +253,44 @@ describe('MapControls search results', () => {
     ])).toEqual({
       total: 3,
       reviewed: 2,
+      historical: 0,
       suggestions: 1,
       averageDistance: 3,
     })
+  })
+
+  test('separates historical records from current suggestions', () => {
+    expect(searchResultSummary([
+      { id: 'historical-1', lifecycleStatus: 'closed', status: 'visited', rating: 8.5 },
+      { id: 'suggestion-1', status: 'unvisited' },
+    ])).toEqual({
+      total: 2,
+      reviewed: 0,
+      historical: 1,
+      suggestions: 1,
+      averageDistance: null,
+    })
+  })
+
+  test('does not let historical reviewed places lead the reviewed-first sort', () => {
+    render(
+      <MapControls
+        searchQuery="pizza"
+        filteredPlaces={[
+          { id: 'historical', name: 'Closed Pizza', lifecycleStatus: 'closed', status: 'visited', rating: 9.5 },
+          { id: 'current', name: 'Current Pizza', status: 'visited', rating: 8.5 },
+          { id: 'suggestion', name: 'Suggested Pizza', status: 'unvisited' },
+        ]}
+        onSearchChange={jest.fn()}
+        onPlaceClick={jest.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByLabelText('Reviewed first'))
+
+    const results = screen.getAllByRole('option')
+    expect(results[0]).toHaveTextContent('Current Pizza')
+    expect(results[1]).toHaveTextContent('Closed Pizza')
   })
 
   test('shows a compact result composition summary', () => {
@@ -191,7 +308,7 @@ describe('MapControls search results', () => {
 
     const summary = screen.getByLabelText(/search result summary/i)
     expect(summary).toHaveTextContent('1 Anthony reviewed')
-    expect(summary).toHaveTextContent('1 suggestions')
+    expect(summary).toHaveTextContent('1 suggestion')
     expect(summary).toHaveTextContent('2.0 mi avg')
   })
 
@@ -221,6 +338,7 @@ describe('MapControls search results', () => {
     ])).toEqual({
       total: 2,
       reviewed: 1,
+      historical: 0,
       suggestions: 1,
       averageDistance: null,
     })

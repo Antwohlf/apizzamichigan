@@ -15,6 +15,17 @@ const placeLocation = place => {
   const parts = [place?.address, place?.city, place?.state].filter(Boolean)
   return [...new Set(parts)].join(' · ')
 }
+
+export const placeIdentity = place => {
+  const name = normalizeSearchText(place?.name)
+  const values = [place?.brand, place?.operator]
+    .map(value => String(value || '').trim())
+    .filter(value => value && normalizeSearchText(value) !== name)
+  return [...new Set(values.map(value => normalizeSearchText(value)))]
+    .map(normalized => values.find(value => normalizeSearchText(value) === normalized))
+    .filter(Boolean)
+    .join(' · ')
+}
 const isReviewedPlace = place => {
   const status = String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
   const rating = placeRating(place)
@@ -24,6 +35,7 @@ const isReviewedPlace = place => {
   )
 }
 const isHistoricalPlace = place => isHistoricalLifecycle(place?.lifecycleStatus || place?.lifecycle_status)
+const isCurrentReviewedPlace = place => !isHistoricalPlace(place) && isReviewedPlace(place)
 const placeMeta = place => {
   const statusLabel = isHistoricalPlace(place)
     ? lifecycleBadgeLabel(place.lifecycleStatus || place.lifecycle_status)
@@ -50,8 +62,9 @@ const resultDomId = place => `map-search-result-${String(place?.id ?? '').replac
 
 export const searchResultSummary = places => {
   const list = Array.isArray(places) ? places : []
-  const reviewed = list.filter(isReviewedPlace).length
-  const suggestions = Math.max(0, list.length - reviewed)
+  const historical = list.filter(isHistoricalPlace).length
+  const reviewed = list.filter(isCurrentReviewedPlace).length
+  const suggestions = Math.max(0, list.length - reviewed - historical)
   const distances = list
     .map(place => place?._distance)
     .filter(distance => typeof distance === 'number' && Number.isFinite(distance))
@@ -62,13 +75,14 @@ export const searchResultSummary = places => {
   return {
     total: list.length,
     reviewed,
+    historical,
     suggestions,
     averageDistance,
   }
 }
 
 const reviewedSortScore = place => {
-  if (!isReviewedPlace(place)) return -1
+  if (!isCurrentReviewedPlace(place)) return -1
   const rating = placeRating(place) ?? 0
   return 100 + rating
 }
@@ -81,6 +95,10 @@ const normalizeSearchText = value =>
     .replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
+
+const countLabel = (count, singular, plural = `${singular}s`) => (
+  `${count} ${Number(count) === 1 ? singular : plural}`
+)
 
 const termMatches = (text, terms) => {
   const normalized = normalizeSearchText(text)
@@ -197,6 +215,9 @@ export function MapControls({
   locationError = null,
   searchLoading = false,
   searchError = null,
+  searchNotice = null,
+  searchResultLimitReached = false,
+  onSearchRetry,
   onNearMeToggle,
   onRadiusChange,
   filteredPlaces = [],
@@ -356,7 +377,7 @@ export function MapControls({
             <span>
               {searchLoading
                 ? 'Searching places'
-                : `${filteredPlaces.length} ${filteredPlaces.length === 1 ? 'place' : 'places'} found${filteredPlaces.length > visibleResults.length ? ` · showing ${visibleResults.length}` : ''}`}
+                : `${searchResultLimitReached ? `${filteredPlaces.length}+` : filteredPlaces.length} ${filteredPlaces.length === 1 ? 'place' : 'places'} found${filteredPlaces.length > visibleResults.length ? ` · showing ${visibleResults.length}` : ''}`}
             </span>
             <button
               type="button"
@@ -367,11 +388,22 @@ export function MapControls({
               Hide
             </button>
           </div>
+          {searchNotice ? (
+            <div className="map-search-notice" role="status" aria-live="polite">
+              <span>{searchNotice}</span>
+              {onSearchRetry ? (
+                <button type="button" onClick={onSearchRetry}>Try again</button>
+              ) : null}
+            </div>
+          ) : null}
           {!searchError && !searchLoading && filteredPlaces.length > 0 ? (
             <div className="map-results-summary-row">
               <div className="map-results-summary" aria-label="Search result summary">
                 <span>{resultSummary.reviewed} Anthony reviewed</span>
-                <span>{resultSummary.suggestions} suggestions</span>
+                <span>{countLabel(resultSummary.suggestions, 'suggestion')}</span>
+                {resultSummary.historical > 0 ? (
+                  <span>{countLabel(resultSummary.historical, 'historical place', 'historical places')}</span>
+                ) : null}
                 {resultSummary.averageDistance !== null ? (
                   <span>{resultSummary.averageDistance.toFixed(1)} mi avg</span>
                 ) : null}
@@ -393,7 +425,12 @@ export function MapControls({
           ) : null}
           <div className="map-results-list" id={resultListId} role="listbox" aria-label="Search results">
             {searchError ? (
-              <div className="map-results-empty">Search is unavailable right now</div>
+              <div className="map-results-empty">
+                <span>Search is unavailable right now</span>
+                {onSearchRetry ? (
+                  <button type="button" className="map-results-retry" onClick={onSearchRetry}>Try again</button>
+                ) : null}
+              </div>
             ) : null}
             {!searchError && searchLoading ? (
               <div className="map-results-empty">Searching...</div>
@@ -403,6 +440,7 @@ export function MapControls({
             ) : null}
             {visibleResults.map((place, index) => {
               const resultReason = searchResultReason(place, searchQuery)
+              const identity = placeIdentity(place)
               return (
                 <button
                   id={resultDomId(place)}
@@ -420,6 +458,9 @@ export function MapControls({
                     <span className="map-result-name">{place.name}</span>
                     {placeLocation(place) ? (
                       <span className="map-result-location">{placeLocation(place)}</span>
+                    ) : null}
+                    {identity ? (
+                      <span className="map-result-identity">{identity}</span>
                     ) : null}
                     {placeMeta(place) ? (
                       <span className="map-result-meta">{placeMeta(place)}</span>

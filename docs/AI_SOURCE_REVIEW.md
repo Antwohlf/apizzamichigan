@@ -22,6 +22,8 @@ Structured identity evidence is evaluated before Ollama:
 - A matching Wikidata **brand** ID plus coincident location becomes a high-confidence same-place suggestion, but remains human-gated.
 - A matching Wikidata **operator** ID is only an uncertain suggestion because an operator can run multiple businesses.
 - A matching brand ID with conflicting Latin names is treated as uncertain because it may indicate stale data or a replacement.
+- An exact location-specific official website plus matching phone and location becomes a stronger same-place suggestion; it remains human-gated because a replacement can retain an address.
+- A matching phone, normalized name, and location can produce a same-place suggestion when the official URL is absent. A generic brand homepage is not treated as location-specific identity evidence.
 - Translated or alternate-script names without structured identity evidence remain human review.
 
 ## Dry-run command
@@ -46,6 +48,26 @@ does not change the queue decision or canonical place:
 ```bash
 node scripts/ops/ai-source-review-triage.mjs \
   --entity pizza --limit 10 --cache --json
+```
+
+## Admin Display Behavior
+
+The admin data-review page prefers a fresh cached assessment when one exists.
+If the optional assessment table is unavailable, or no fresh assessment has
+been cached for the selected row, the server evaluates the deterministic
+identity rules on demand. This fast fallback can show evidence such as a
+matching official URL, phone, or structured source identity without waiting
+for Ollama. It is still advisory: the page always requires a human decision,
+and the fallback performs no database write.
+
+For a fast pass over structured identity evidence, use deterministic-only
+mode. It never calls Ollama and caches only rows with a high-confidence
+structured identity signal plus the required location evidence; unresolved rows
+stay uncached for a later model-assisted pass:
+
+```bash
+node scripts/ops/ai-source-review-triage.mjs \
+  --entity pizza --limit 100 --deterministic-only --cache --json
 ```
 
 To inspect one known row without scanning the queue:
@@ -77,3 +99,19 @@ The iMac dry-run was verified against real pending rows:
 
 The current local models are therefore suitable for review assistance and
 prioritization, not unattended bulk decisions.
+
+## Measure the deterministic workload first
+
+The safe source-specific linker can be measured as one read-only report before
+any apply action. Run this on the iMac with the same local Postgres environment
+used by the source pipeline:
+
+```bash
+node scripts/ops/source-review-automation-report.mjs --entity pizza --json
+```
+
+The report separates OSM identity, Wikidata brand identity, and official-chain
+identifier candidates. It is intentionally limited to the same policies used
+by the production source runner. A nonzero candidate count is a dry-run
+workload estimate, not permission to apply it; apply remains a separate,
+bounded command after the candidate reasons have been sampled.

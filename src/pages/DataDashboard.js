@@ -481,7 +481,7 @@ function PizzaTab({ stats }) {
           <div className="comparison-card">
             <h3>Rating Distribution</h3>
             <BarChart
-              data={['1-2', '3-4', '5-6', '7-8', '9-10'].map((label, i) => [label, stats.ratingDistribution[i]])}
+              data={['0-2', '3-4', '5-6', '7-8', '9-10+'].map((label, i) => [label, stats.ratingDistribution[i]])}
               accentColor="#facc15"
             />
           </div>
@@ -575,7 +575,7 @@ function TacoTab({ stats }) {
           <div className="comparison-card">
             <h3>Rating Distribution</h3>
             <BarChart
-              data={['1-2', '3-4', '5-6', '7-8', '9-10'].map((label, i) => [label, stats.ratingDistribution[i]])}
+              data={['0-2', '3-4', '5-6', '7-8', '9-10+'].map((label, i) => [label, stats.ratingDistribution[i]])}
               accentColor="#facc15"
             />
           </div>

@@ -1,17 +1,23 @@
 import React from 'react'
 import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
+import MarkerClusterGroup from 'react-leaflet-cluster'
 import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
 import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
 import tacoIconGrey from '../icons/taco/marker-taco-grey.svg'
 import tacoIconColored from '../icons/taco/marker-taco-colored.svg'
 
 const STATE_ZOOM = 7
+const STATE_FIT_MAX_ZOOM = 10
 
 const ICONS = {
   pizza: { base: pizzaIconGrey, highlight: pizzaIconColored },
   taco: { base: tacoIconGrey, highlight: tacoIconColored },
 }
+
+export const statePlaceCoordinates = places => (Array.isArray(places) ? places : [])
+  .filter(place => Number.isFinite(place?.lat) && Number.isFinite(place?.lng))
+  .map(place => [place.lat, place.lng])
 
 const BADGE_COLORS = {
   pizza: '#d9382b',
@@ -84,6 +90,16 @@ function createStateIcon(site, count, showCounts = true, isLoading = false, isDi
   })
 }
 
+function createAggregateClusterIcon(site, showCounts) {
+  return cluster => {
+    const total = cluster.getAllChildMarkers().reduce(
+      (sum, marker) => sum + (Number(marker.options?.aggregateCount) || 0),
+      0,
+    )
+    return createStateIcon(site, total, showCounts, false, false, true)
+  }
+}
+
 /**
  * State aggregate marker - shows a single marker for an entire state
  * Clicking it loads that state's individual places
@@ -97,7 +113,9 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
     // Don't trigger click if already loading
     if (isLoading) return
 
-    // Fly to the state with animation
+    // Fly to the state while its places load. The resolved place set then
+    // refits the map to the actual distribution instead of leaving the user
+    // at a state centroid that may be far from the places they want to see.
     if (map) {
       map.flyTo([lat, lng], STATE_ZOOM, {
         duration: 0.8,
@@ -106,7 +124,19 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
     }
     // Load the state's places
     if (onStateClick) {
-      onStateClick(stateCode)
+      Promise.resolve().then(() => onStateClick(stateCode)).then(places => {
+        if (!map || !Array.isArray(places) || !places.length || typeof map.fitBounds !== 'function') return
+        const coordinates = statePlaceCoordinates(places)
+        if (!coordinates.length) return
+        const bounds = L.latLngBounds(coordinates)
+        if (!bounds.isValid()) return
+        map.fitBounds(bounds, {
+          padding: [48, 48],
+          maxZoom: STATE_FIT_MAX_ZOOM,
+          animate: true,
+          duration: 0.7,
+        })
+      }).catch(() => {})
     }
   }
 
@@ -114,6 +144,7 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
     <Marker
       position={[lat, lng]}
       title={`${stateCode}: ${count} ${site} places`}
+      aggregateCount={count}
       icon={createStateIcon(site, count, showCounts, isLoading, isDimmed, isHighlighted)}
       eventHandlers={{
         click: handleClick,
@@ -131,7 +162,14 @@ export function StateAggregateLayer({ aggregates, site, onStateClick, showCounts
   }
 
   return (
-    <>
+      <MarkerClusterGroup
+        maxClusterRadius={40}
+        animate={false}
+        disableClusteringAtZoom={5}
+      spiderfyOnMaxZoom={false}
+      showCoverageOnHover={false}
+      iconCreateFunction={createAggregateClusterIcon(site, showCounts)}
+    >
       {aggregates.map(aggregate => (
         <StateMarker
           key={aggregate.id}
@@ -141,6 +179,6 @@ export function StateAggregateLayer({ aggregates, site, onStateClick, showCounts
           showCounts={showCounts}
         />
       ))}
-    </>
+    </MarkerClusterGroup>
   )
 }

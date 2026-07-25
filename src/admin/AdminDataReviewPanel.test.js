@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import AdminDataReviewPanel from './AdminDataReviewPanel'
+import AdminDataReviewPanel, { reviewSuggestionSource } from './AdminDataReviewPanel'
+import { deterministicMatchEvidence } from './sourceReviewQueues'
 
 const queueRows = [
   {
@@ -50,6 +51,44 @@ const response = payload => ({
 })
 
 describe('AdminDataReviewPanel', () => {
+  test('summarizes exact official-chain evidence without making the decision', () => {
+    expect(deterministicMatchEvidence({
+      source: 'all_the_places',
+      source_name: 'Little Caesars',
+      source_data: {
+        website: 'https://littlecaesars.com/en-us/store/8742',
+        phone: '(209) 466-5555',
+        address: '2491 E. Fremont St., Stockton, CA',
+      },
+      nearest_place_name: 'Little Caesars',
+      nearest_website_url: 'https://www.littlecaesars.com/en-us/store/8742/',
+      nearest_phone: '+1 209-466-5555',
+      nearest_address: '2491 E. Fremont St., Stockton, CA',
+    })).toEqual(expect.objectContaining({
+      kind: 'official_identifiers',
+      title: 'Exact store details agree',
+    }))
+  })
+
+  test('warns when exact OSM identity has a different business name', () => {
+    expect(deterministicMatchEvidence({
+      source: 'osm',
+      source_id: 'osm:way/11',
+      nearest_current_google_place_id: 'osm:way/11',
+      source_name: 'Homeslice Pizzeria',
+      nearest_place_name: 'Tunnel Pizza & Subs',
+    })).toEqual(expect.objectContaining({
+      kind: 'osm_identity',
+      title: 'Same OpenStreetMap record',
+    }))
+  })
+
+  test('labels deterministic and model suggestions distinctly', () => {
+    expect(reviewSuggestionSource('deterministic')).toBe('Evidence-based suggestion')
+    expect(reviewSuggestionSource('ollama')).toBe('AI review suggestion')
+    expect(reviewSuggestionSource(null)).toBe('AI review suggestion')
+  })
+
   beforeEach(() => {
     window.history.replaceState({}, '', '/admin/reviews/data?entity=pizza&queue=matches')
     global.fetch = jest.fn(async (url, options = {}) => {
@@ -81,6 +120,26 @@ describe('AdminDataReviewPanel', () => {
 
     const writeCalls = global.fetch.mock.calls.filter(([, options]) => options?.method && options.method !== 'GET')
     expect(writeCalls).toHaveLength(0)
+  })
+
+  test('debounces manual search while keeping the query URL-backed', async () => {
+    render(<AdminDataReviewPanel entity="pizza" />)
+    expect(await screen.findByRole('heading', { name: 'Source Pizza' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+    const input = screen.getByRole('searchbox', { name: 'Search review queue' })
+    const initialQueueCalls = global.fetch.mock.calls.filter(([url]) => String(url).startsWith('/api/admin/source-review-queue?')).length
+
+    await userEvent.type(input, 'Cottage Inn')
+    const immediateQueueCalls = global.fetch.mock.calls.filter(([url]) => String(url).startsWith('/api/admin/source-review-queue?')).length
+    expect(immediateQueueCalls).toBe(initialQueueCalls)
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(window.location.search).toContain('q=Cottage+Inn')
+    const finalQueueCalls = global.fetch.mock.calls.filter(([url]) => String(url).startsWith('/api/admin/source-review-queue?')).length
+    expect(finalQueueCalls).toBe(initialQueueCalls + 1)
   })
 
   test('confirms a same-place decision before linking', async () => {

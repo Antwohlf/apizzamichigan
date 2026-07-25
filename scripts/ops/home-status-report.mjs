@@ -12,6 +12,7 @@ import 'dotenv/config'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { execFileSync, spawnSync } from 'child_process'
+import { classifyBackupFreshness } from '../lib/backup-freshness.mjs'
 
 const args = new Set(process.argv.slice(2))
 const MAX_ROWS = parseInt(process.env.HOME_STATUS_MAX_ROWS || '10', 10)
@@ -377,6 +378,7 @@ function syncLockReport() {
 
 function backupReport(root) {
   const outputDir = process.env.APIZZA_BACKUP_DIR || join(root, 'backups')
+  const staleHours = Number(process.env.APIZZA_BACKUP_STALE_HOURS || 36)
   if (!existsSync(outputDir)) return { ok: false, outputDir, error: 'backup directory not found' }
 
   try {
@@ -391,14 +393,19 @@ function backupReport(root) {
     const manifest = JSON.parse(readFileSync(join(latestRun, 'manifest.json'), 'utf8'))
     const generatedAt = manifest.generated_at || null
     const ageMinutes = generatedAt ? (Date.now() - Date.parse(generatedAt)) / 60000 : null
+    const freshness = classifyBackupFreshness({ ageMinutes, staleHours })
     return {
-      ok: true,
+      ok: freshness.fresh,
+      state: freshness.state,
       outputDir,
       latestRun,
       generatedAt,
       ageMinutes: Number.isFinite(ageMinutes) ? ageMinutes : null,
+      staleHours: freshness.thresholdHours,
+      freshnessDetail: freshness.detail,
       files: Array.isArray(manifest.files) ? manifest.files.map(file => file.label) : [],
       retainedRuns: runs.length,
+      ...(freshness.fresh ? {} : { error: freshness.detail }),
     }
   } catch (error) {
     return { ok: false, outputDir, error: errorMessage(error) }

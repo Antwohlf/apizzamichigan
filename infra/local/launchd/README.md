@@ -152,3 +152,41 @@ restore Postgres, prefer restoring into a separate database first with
 `pg_restore --no-owner --no-acl --dbname <new_database> <dump>`. Replacing the
 queue snapshot is destructive: stop every worker, remove any queue WAL/SHM
 files, replace the database file, and only then restart services.
+
+## Pipeline Health Snapshot
+
+The read-only pipeline alert gate is scheduled every 15 minutes. It writes
+`scripts/.pipeline-alert-status.json`, a machine-local snapshot consumed by the
+admin portal. It does not start workers, change queue rows, or publish to
+Supabase.
+
+Install:
+
+```bash
+mkdir -p /tmp/apizzamichigan
+cp infra/local/launchd/com.apizzamichigan.pipeline-health.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.pipeline-health.plist
+plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.pipeline-health.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.pipeline-health.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.pipeline-health"
+```
+
+Verify:
+
+```bash
+launchctl print "gui/$(id -u)/com.apizzamichigan.pipeline-health"
+cat scripts/.pipeline-alert-status.json
+```
+
+The snapshot also includes a read-only source activation matrix. It distinguishes
+an enabled source with a checked-in adapter from a source that is disabled or
+missing a runner branch, and records the last local attempt/success when the
+source pipeline has run:
+
+```bash
+node scripts/ops/source-activation-report.mjs
+node scripts/ops/source-activation-report.mjs --json
+```
+
+This is an inventory and diagnostic report only. It does not fetch source data,
+change the review queue, or publish to Supabase.

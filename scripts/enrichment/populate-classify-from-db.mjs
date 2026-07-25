@@ -122,8 +122,13 @@ async function main() {
     clauses.push(`id <= $${params.length}`)
   }
 
+  // Partial retries must inspect the complete candidate set before applying
+  // the bounded slice below. A fixed scan cap can hide eligible rows behind
+  // the first page of Postgres IDs, making the queue look empty while the
+  // classifier backlog still contains retryable results.
+  const scanAllForPartialRetry = retryPartial && skipExisting
   let limitSql = ''
-  if (limit && Number.isFinite(limit)) {
+  if (limit && Number.isFinite(limit) && !scanAllForPartialRetry) {
     params.push(limit)
     // Scan beyond the bounded write batch so existing jobs do not pin the
     // feeder to the same first page forever.

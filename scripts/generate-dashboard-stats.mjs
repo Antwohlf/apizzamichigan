@@ -18,6 +18,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import 'dotenv/config'
+import { normalizePizzaStyle } from './lib/pizza-style-taxonomy.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUTPUT_DIR = join(__dirname, '../public/data')
@@ -250,7 +251,7 @@ async function fetchAll(table, selectFields) {
 /**
  * Compute stats from place data (same logic as DataDashboard.js)
  */
-function computeStats(places, groupByField) {
+function computeStats(places, groupByField, normalizeStyle = value => value) {
   const distribution = {}
   const byState = {}
   const byCity = {}
@@ -264,7 +265,7 @@ function computeStats(places, groupByField) {
 
   places.forEach(p => {
     // Group by field (style)
-    const key = p[groupByField] || 'Unknown'
+    const key = normalizeStyle(p[groupByField]) || 'Unknown'
     const styles = key.includes(',') ? key.split(',').map(t => t.trim()) : [key]
     styles.forEach(style => {
       distribution[style] = (distribution[style] || 0) + 1
@@ -306,7 +307,7 @@ function computeStats(places, groupByField) {
     }
 
     // Price counts
-    const price = p.price || 'Unknown'
+    const price = p.price_range || p.price || 'Unknown'
     byPrice[price] = (byPrice[price] || 0) + 1
 
     // Status counts
@@ -325,14 +326,14 @@ function computeStats(places, groupByField) {
 
   // Additional data quality
   const withRating = ratedPlaces.length
-  const withPrice = places.filter(p => p.price && p.price.trim()).length
-  const withStyle = places.filter(p => p.style && p.style.trim() && p.style !== 'Unknown').length
+  const withPrice = places.filter(p => (p.price_range || p.price) && String(p.price_range || p.price).trim()).length
+  const withStyle = places.filter(p => normalizeStyle(p.style) && normalizeStyle(p.style) !== 'Unknown').length
   const visitedOrGolden = visited + golden
   const withAllFields = places.filter(p =>
     p.address?.trim() &&
     typeof p.rating === 'number' &&
-    p.price?.trim() &&
-    p.style?.trim() && p.style !== 'Unknown'
+    String(p.price_range || p.price || '').trim() &&
+    normalizeStyle(p.style) && normalizeStyle(p.style) !== 'Unknown'
   ).length
 
   // Rating analytics
@@ -342,7 +343,7 @@ function computeStats(places, groupByField) {
   const topRatedCount = ratedPlaces.filter(r => r >= 9.0).length
 
   const ratingDistribution = [
-    ratedPlaces.filter(r => r >= 1 && r < 3).length,
+    ratedPlaces.filter(r => r >= 0 && r < 3).length,
     ratedPlaces.filter(r => r >= 3 && r < 5).length,
     ratedPlaces.filter(r => r >= 5 && r < 7).length,
     ratedPlaces.filter(r => r >= 7 && r < 9).length,
@@ -415,7 +416,7 @@ async function main() {
 
     // Fetch all data
     console.log('Fetching pizza places...')
-    const pizzaData = await fetchAll('pizza_places', 'style, price, status, state, rating, address')
+    const pizzaData = await fetchAll('pizza_places', 'style, price, price_range, status, state, rating, address')
     console.log(`  Total: ${pizzaData.length} pizza places\n`)
 
     console.log('Fetching taco places...')
@@ -424,7 +425,7 @@ async function main() {
 
     // Compute stats
     console.log('Computing stats...')
-    const pizzaStats = computeStats(pizzaData, 'style')
+    const pizzaStats = computeStats(pizzaData, 'style', normalizePizzaStyle)
     const tacoStats = computeStats(tacoData, 'style')
 
     // Build output

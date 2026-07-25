@@ -51,6 +51,37 @@ const sourceFreshnessCase = Object.entries(sourcePolicy?.sources || {})
   .join(' ')
   || 'WHEN \'__missing_policy__\' THEN 365'
 
+function normalizeOsmSourceId(value) {
+  return String(value || '').trim().replace(/^osm:/i, '')
+}
+
+function latestOsmInputs() {
+  const regionKeys = states.length
+    ? states
+    : (pipeline?.operational_regions || pipeline?.regions || [])
+      .map(region => typeof region === 'string' ? region : region.key)
+      .filter(Boolean)
+      .map(region => String(region).toUpperCase())
+  const files = regionKeys
+    .map(region => resolve(process.cwd(), 'reports', 'osm', `${region.toLowerCase()}-${entityArg}.json`))
+    .filter(existsSync)
+  const ids = new Set()
+  for (const file of files) {
+    try {
+      const payload = JSON.parse(readFileSync(file, 'utf8'))
+      const rows = Array.isArray(payload) ? payload : payload?.rows
+      if (!Array.isArray(rows)) continue
+      for (const row of rows) {
+        const id = normalizeOsmSourceId(row?.id || row?.source_id)
+        if (id) ids.add(id)
+      }
+    } catch {
+      // A malformed input cannot prove that a source was observed.
+    }
+  }
+  return { files, ids }
+}
+
 function readEnvFile(path) {
   if (!existsSync(path)) return {}
   return Object.fromEntries(readFileSync(path, 'utf8').split('\n')
@@ -98,6 +129,9 @@ try {
       replacements: 0,
       stale_evidence: 0,
       stale_places: 0,
+      stale_observed_in_latest_input: 0,
+      stale_unobserved_in_latest_input: 0,
+      stale_observation_unknown: 0,
       closed_signals: 0,
       same_location_conflicts: 0,
       chain_coverage_groups: 0,
@@ -146,16 +180,17 @@ try {
   }
 
   if (available.place_sources) {
+    const latestInputs = latestOsmInputs()
     const stale = await client.query(`
       WITH latest_source AS (
         SELECT DISTINCT ON (ps.place_id, ps.source)
-               ps.place_id, ps.source, ps.retrieved_at, ps.data
+               ps.place_id, ps.source, ps.source_id, ps.retrieved_at, ps.data
         FROM place_sources ps
         WHERE ps.entity_type = $1
         ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
       )
       SELECT p.id AS place_id, p.name, p.state, p.status,
-             latest_source.source, latest_source.retrieved_at,
+             latest_source.source, latest_source.source_id, latest_source.retrieved_at,
              CASE latest_source.source ${sourceFreshnessCase} ELSE 180 END AS freshness_days
       FROM latest_source
       JOIN ${table} p ON p.id = latest_source.place_id
@@ -166,7 +201,14 @@ try {
       ORDER BY latest_source.retrieved_at
         LIMIT $2
       `, states.length ? [entityArg, limitArg, states] : [entityArg, limitArg])
-    report.closed_or_stale = stale.rows
+    report.closed_or_stale = stale.rows.map(row => ({
+      ...row,
+      observation_status: row.source === 'osm' && latestInputs.files.length
+        ? latestInputs.ids.has(normalizeOsmSourceId(row.source_id))
+          ? 'observed_in_latest_input'
+          : 'unobserved_in_latest_input'
+        : 'unknown',
+    }))
 
     const staleTotal = await client.query(`
       WITH latest_source AS (
@@ -203,6 +245,39 @@ try {
         ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($2::text[])" : ''}
     `, states.length ? [entityArg, states] : [entityArg])
     report.totals.stale_places = Number(stalePlaceTotal.rows[0]?.total || 0)
+
+    const staleObservation = await client.query(`
+      WITH latest_source AS (
+        SELECT DISTINCT ON (ps.place_id, ps.source)
+               ps.place_id, ps.source, ps.source_id, ps.retrieved_at
+        FROM place_sources ps
+        WHERE ps.entity_type = $1
+        ORDER BY ps.place_id, ps.source, ps.retrieved_at DESC NULLS LAST
+      )
+      SELECT
+        COUNT(*) FILTER (
+          WHERE latest_source.source = 'osm'
+            AND $2::boolean
+            AND regexp_replace(COALESCE(latest_source.source_id, ''), '^osm:', '', 'i') = ANY($3::text[])
+        )::int AS observed,
+        COUNT(*) FILTER (
+          WHERE latest_source.source = 'osm'
+            AND $2::boolean
+            AND regexp_replace(COALESCE(latest_source.source_id, ''), '^osm:', '', 'i') <> ALL($3::text[])
+        )::int AS unobserved,
+        COUNT(*) FILTER (WHERE latest_source.source <> 'osm' OR NOT $2::boolean)::int AS unknown
+      FROM latest_source
+      JOIN ${table} p ON p.id = latest_source.place_id
+      WHERE latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source ${sourceFreshnessCase} ELSE 180 END)
+        AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
+        AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
+        ${states.length ? "AND UPPER(COALESCE(p.state, '')) = ANY($4::text[])" : ''}
+    `, states.length
+      ? [entityArg, latestInputs.files.length > 0, [...latestInputs.ids], states]
+      : [entityArg, latestInputs.files.length > 0, [...latestInputs.ids]])
+    report.totals.stale_observed_in_latest_input = Number(staleObservation.rows[0]?.observed || 0)
+    report.totals.stale_unobserved_in_latest_input = Number(staleObservation.rows[0]?.unobserved || 0)
+    report.totals.stale_observation_unknown = Number(staleObservation.rows[0]?.unknown || 0)
 
     const closedSignals = await client.query(`
       WITH latest_source AS (
@@ -338,6 +413,9 @@ try {
     console.log(`Replacements: ${report.replacements.length}`)
     console.log(`Likely replacements: ${report.totals.replacements} (showing ${report.replacements.length})`)
     console.log(`Stale evidence rows: ${report.totals.stale_evidence} (showing ${report.closed_or_stale.length})`)
+    console.log(`  OSM still present in latest input: ${report.totals.stale_observed_in_latest_input}`)
+    console.log(`  OSM absent from latest input: ${report.totals.stale_unobserved_in_latest_input}`)
+    console.log(`  Observation status unknown: ${report.totals.stale_observation_unknown}`)
     console.log(`Closed source signals: ${report.totals.closed_signals} (showing ${report.closed_signals.length})`)
     console.log(`Same-location conflicts: ${report.totals.same_location_conflicts} (showing ${report.same_location_conflicts.length})`)
     console.log(`Chain coverage groups: ${report.totals.chain_coverage_groups} (showing ${report.chain_coverage.length})`)

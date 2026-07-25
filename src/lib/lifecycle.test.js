@@ -17,5 +17,7 @@ describe('lifecycle contract', () => {
     expect(isHistoricalLifecycle('demolished')).toBe(true)
     expect(isHistoricalLifecycle(null)).toBe(false)
     expect(replacementCopy('Homeslice')).toBe('Current place: Homeslice')
+    expect(replacementCopy('Mama Pizza', 42, 'Mama Pizza')).toBe('Current place linked below.')
+    expect(replacementCopy(null, null, 'Old Pizza')).toBe('No current place is linked yet.')
   })
 })

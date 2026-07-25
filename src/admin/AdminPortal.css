@@ -259,6 +259,24 @@
   font-weight: 800;
 }
 
+.admin-empty-state {
+  border: 1px solid var(--admin-border);
+  border-radius: 6px;
+  background: var(--admin-surface);
+  padding: 20px;
+}
+
+.admin-empty-state strong {
+  display: block;
+  font-size: 16px;
+}
+
+.admin-empty-state p {
+  margin: 6px 0 0;
+  color: var(--admin-muted);
+  font-size: 14px;
+}
+
 .admin-button {
   display: inline-flex;
   min-height: 38px;
@@ -463,6 +481,16 @@
   margin: 5px 0 0;
   color: var(--admin-muted);
   font-size: 13px;
+}
+
+.admin-review-hint {
+  max-width: 720px;
+}
+
+.admin-review-hint--strong {
+  color: var(--admin-text) !important;
+  border-left: 3px solid var(--admin-accent);
+  padding-left: 10px;
 }
 
 .admin-inline-actions {
@@ -766,8 +794,35 @@
 }
 
 .admin-system-status__state--blocked,
-.admin-system-status__state--unavailable {
+.admin-system-status__state--unavailable,
+.admin-system-status__state--stale {
   color: #fbbf24;
+}
+
+.admin-system-status__state--ok {
+  color: #86efac;
+}
+
+.admin-system-status__state--fail {
+  color: #fca5a5;
+}
+
+.admin-system-status__technical {
+  max-width: 68ch;
+  margin-top: 12px;
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.admin-system-status__technical summary {
+  cursor: pointer;
+  color: var(--admin-text);
+  font-weight: 700;
+}
+
+.admin-system-status__technical p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .admin-home-publishing {
@@ -998,6 +1053,24 @@
 .admin-drawer__body {
   display: grid;
   gap: 14px;
+}
+
+.admin-filter-hint {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.admin-scope-note {
+  margin: 14px 0 0;
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.admin-scope-note strong {
+  color: var(--admin-text);
+  font-weight: 700;
 }
 
 .admin-scrim,

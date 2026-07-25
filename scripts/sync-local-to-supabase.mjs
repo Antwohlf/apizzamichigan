@@ -4,7 +4,7 @@
  *
  * Mode: Option 2
  * - Overwrite raw enrichment blobs/fields in Supabase when local has a non-null value.
- * - Only fill NULLs for protected/user-facing fields (style/price/price_range/style_confidence).
+ * - Mirror non-null canonical classification fields; null local values never clear public values.
  * - Never touches core identity fields (name/lat/lng/address/state/google_place_id/status/notes/rating).
  *
  * Requires .env.local:
@@ -26,8 +26,6 @@ import {
   writeSyncCheckpoint,
 } from './lib/supabase-sync-checkpoint.mjs';
 import {
-  SUPABASE_SYNC_TARGET_TABLE,
-  SUPABASE_BULK_SYNC_RPC,
   buildSupabasePayload,
   assertSupabaseSyncTableBoundary,
   localSyncSelectParams,
@@ -35,10 +33,15 @@ import {
   SUPABASE_SYNC_SELECT_COLS,
   buildSupabaseInsertPayload,
 } from './lib/supabase-sync-policy.mjs';
+import { supabaseSyncProfile } from './lib/supabase-sync-profiles.mjs';
+import { resolveSupabaseSyncCredentials } from './lib/supabase-sync-credentials.mjs';
+
+const MAX_SYNC_BATCH_SIZE = 500;
 
 function parseArgs(argv) {
   const out = {
     ids: [],
+    entity: process.env.APIZZA_SYNC_ENTITY || 'pizza',
     batch: 500,
     startAfter: 0,
     maxBatches: 0, // 0 = unlimited
@@ -59,6 +62,7 @@ function parseArgs(argv) {
     else if (a === '--verbose') out.verbose = true;
     else if (a === '--only-classified') out.onlyClassified = true;
     else if (a === '--insert-missing-reviewed-new') out.insertMissingReviewedNew = true;
+    else if (a === '--entity') out.entity = String(argv[++i] || '').trim().toLowerCase();
     else if (a === '--ids') out.ids = parseIds(argv[++i]);
     else if (a === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (a === '--start-after') out.startAfter = parseInt(argv[++i], 10);
@@ -73,6 +77,7 @@ function parseArgs(argv) {
       console.log(`Usage: node scripts/sync-local-to-supabase.mjs [options]
 
 Options:
+  --entity <pizza|taco>       Sync entity (default pizza; taco is dry-run only)
   --batch <n>                 Batch size (default 500)
   --ids <a,b,c>               Sync only these local pizza_places ids
   --start-after <id>          Start after this numeric id (default 0)
@@ -93,7 +98,10 @@ Options:
       process.exit(0);
     }
   }
-  if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
+  if (!Number.isFinite(out.batch) || out.batch <= 0 || out.batch > MAX_SYNC_BATCH_SIZE) {
+    throw new Error(`Invalid --batch; use 1-${MAX_SYNC_BATCH_SIZE}`);
+  }
+  supabaseSyncProfile(out.entity);
   if (out.ids.length && out.checkpointPath) throw new Error('--ids cannot be combined with --checkpoint');
   if (out.reconcile && out.ids.length) throw new Error('--reconcile cannot be combined with --ids');
   if (out.reconcile && (out.changedSinceHours !== null || out.onlyClassified)) {
@@ -183,11 +191,11 @@ async function runConcurrent(items, concurrency, worker) {
   return results;
 }
 
-async function insertSupabaseRow(sb, payload) {
+async function insertSupabaseRow(sb, targetTable, payload) {
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
       const { data } = await supabaseRequest(
-        () => sb.from(SUPABASE_SYNC_TARGET_TABLE).insert(payload).select('id'),
+        () => sb.from(targetTable).insert(payload).select('id'),
         `insert id=${payload.id}`,
         1,
       );
@@ -197,7 +205,7 @@ async function insertSupabaseRow(sb, payload) {
       // A network failure can happen after Supabase commits the insert. Check
       // by primary key before retrying so recovery cannot create a duplicate.
       const existing = await supabaseRequest(
-        () => sb.from(SUPABASE_SYNC_TARGET_TABLE).select('id').eq('id', payload.id),
+        () => sb.from(targetTable).select('id').eq('id', payload.id),
         `confirm insert id=${payload.id}`,
       );
       if (existing.data?.length) return existing.data;
@@ -209,9 +217,9 @@ async function insertSupabaseRow(sb, payload) {
   throw new Error(`Supabase insert failed for id=${payload.id}`);
 }
 
-async function applyBulkSupabaseUpdates(sb, updates) {
+async function applyBulkSupabaseUpdates(sb, bulkRpc, updates) {
   const result = await supabaseRequest(
-    () => sb.rpc(SUPABASE_BULK_SYNC_RPC, { p_rows: updates }),
+    () => sb.rpc(bulkRpc, { p_rows: updates }),
     `bulk update rows=${updates.length}`,
   );
   const updatedCount = Number(result?.data?.updated_count);
@@ -223,15 +231,17 @@ async function applyBulkSupabaseUpdates(sb, updates) {
 
 async function main() {
   const args = parseArgs(process.argv);
+  const profile = supabaseSyncProfile(args.entity);
+  if (!args.dryRun && !profile.publicationEnabled) {
+    throw new Error(`${args.entity} publication is disabled; use --dry-run until its public schema and guarded RPC are enabled.`);
+  }
   const env = loadEnvLocal();
   const bulkRpc = args.bulkRpc || /^(1|true|yes)$/i.test(String(env.APIZZA_SYNC_BULK_RPC || process.env.APIZZA_SYNC_BULK_RPC || '').trim());
-  assertSupabaseSyncTableBoundary();
+  assertSupabaseSyncTableBoundary({ entity: args.entity, targetTable: profile.targetTable });
 
-  const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
-  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error('Missing VITE_SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY in .env.local');
-  }
+  const credentials = resolveSupabaseSyncCredentials({ ...process.env, ...env }, { dryRun: args.dryRun });
+  const supabaseUrl = credentials.url;
+  const supabaseKey = credentials.key;
 
   const dbConfig = {
     host: env.LOCAL_DB_HOST || 'localhost',
@@ -245,7 +255,7 @@ async function main() {
   const client = new pg.Client(dbConfig);
   await client.connect();
 
-  if (bulkRpc) console.log(`[sync] bulk RPC enabled: ${SUPABASE_BULK_SYNC_RPC}`);
+  if (bulkRpc) console.log(`[sync] bulk RPC enabled: ${profile.bulkRpc}`);
 
   let cursor = args.startAfter;
   let checkpointAfter = args.reconcile
@@ -264,6 +274,7 @@ async function main() {
       // (We still include rows where only style/price are present so we can NULL-fill.)
       const selector = {
         ...args,
+        targetTable: profile.targetTable,
         startAfter: cursor,
         checkpointMode: Boolean(args.checkpointPath) && !args.reconcile,
         reconcile: args.reconcile,
@@ -281,7 +292,7 @@ async function main() {
       // Fetch current supabase state for protected fields + QA.
       const { data: sbRows } = await supabaseRequest(
         () => sb
-          .from(SUPABASE_SYNC_TARGET_TABLE)
+          .from(profile.targetTable)
           .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
           .in('id', ids),
         `read ids=${ids.length}`,
@@ -294,17 +305,17 @@ async function main() {
         const { rows: reviewedRows } = await client.query(`
           SELECT DISTINCT place_id::int AS place_id
           FROM place_sources
-          WHERE entity_type = 'pizza'
+          WHERE entity_type = $2
             AND match_method = 'reviewed_new_import'
             AND place_id = ANY($1::int[])
           UNION
           SELECT DISTINCT canonical_place_id::int AS place_id
           FROM source_review_queue
-          WHERE entity_type = 'pizza'
+          WHERE entity_type = $2
             AND status IN ('accepted', 'linked')
             AND decision = 'imported_new'
             AND canonical_place_id = ANY($1::int[])
-        `, [ids]);
+        `, [ids, args.entity]);
         reviewedNewImportedIds = new Set(reviewedRows.map(row => Number(row.place_id)));
       }
 
@@ -386,7 +397,7 @@ async function main() {
       }
 
       const insertResults = await runConcurrent(inserts, args.concurrency, async payload => {
-        const data = await insertSupabaseRow(sb, payload);
+        const data = await insertSupabaseRow(sb, profile.targetTable, payload);
         if (!data?.length) {
           throw new Error(`Supabase insert returned no row for id=${payload.id}`);
         }
@@ -394,12 +405,12 @@ async function main() {
       });
 
       const updateResults = bulkRpc && updates.length
-        ? [await applyBulkSupabaseUpdates(sb, updates)]
+        ? [await applyBulkSupabaseUpdates(sb, profile.bulkRpc, updates)]
         : await runConcurrent(updates, args.concurrency, async payload => {
           const { id, ...fields } = payload;
           const { data } = await supabaseRequest(
             () => sb
-              .from(SUPABASE_SYNC_TARGET_TABLE)
+              .from(profile.targetTable)
               .update(fields)
               .eq('id', id)
               .select('id'),

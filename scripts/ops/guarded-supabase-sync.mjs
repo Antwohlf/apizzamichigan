@@ -8,11 +8,13 @@
  */
 
 import { execFileSync } from 'child_process';
+import { supabaseSyncProfile } from '../lib/supabase-sync-profiles.mjs';
 
 const NODE = process.execPath;
 
 function parseArgs(argv) {
   const out = {
+    entity: process.env.APIZZA_SYNC_ENTITY || 'pizza',
     ids: [],
     hours: 6,
     batch: 50,
@@ -30,6 +32,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--hours') out.hours = parseFloat(argv[++i]);
+    else if (arg === '--entity') out.entity = String(argv[++i] || '').trim().toLowerCase();
     else if (arg === '--ids') out.ids = parseIds(argv[++i]);
     else if (arg === '--batch') out.batch = parseInt(argv[++i], 10);
     else if (arg === '--max-batches') out.maxBatches = parseInt(argv[++i], 10);
@@ -45,6 +48,7 @@ function parseArgs(argv) {
       console.log(`Usage: node scripts/ops/guarded-supabase-sync.mjs [options]
 
 Options:
+  --entity <pizza|taco> Select the configured sync profile (default pizza)
   --hours <n>        Recent enrichment window (default 6)
   --ids <a,b,c>      Sync only these local pizza_places ids
   --batch <n>        Batch size (default 50)
@@ -67,6 +71,7 @@ Options:
   }
 
   if (!Number.isFinite(out.hours) || out.hours <= 0) throw new Error('Invalid --hours');
+  supabaseSyncProfile(out.entity);
   if (out.ids.length && out.checkpoint !== 'scripts/.supabase-sync-checkpoint.json') {
     throw new Error('--ids cannot be combined with --checkpoint');
   }
@@ -125,6 +130,7 @@ function blockingClassifierHealthIssues(health) {
 function syncArgs(options, { dryRun = false } = {}) {
   const args = [
     'scripts/sync-local-to-supabase.mjs',
+    '--entity', options.entity,
     '--batch', String(options.batch),
     '--max-batches', String(options.maxBatches),
     '--concurrency', String(options.concurrency),
@@ -264,20 +270,16 @@ async function main() {
         ? ['--reconcile', '--checkpoint', options.checkpoint]
       : ['--changed-since-hours', String(options.hours), '--only-classified', '--checkpoint', options.checkpoint]),
   ], { json: true });
-  console.log(`state=${readiness.state}, would_update=${readiness.totals.wouldUpdate}, missing=${readiness.totals.missingSupabaseRows}, protected_conflicts=${readiness.totals.protectedFieldConflicts}`);
+  console.log(`state=${readiness.state}, would_update=${readiness.totals.wouldUpdate}, missing=${readiness.totals.missingSupabaseRows}, canonical_mirror_writes=${readiness.totals.canonicalMirrorWrites}`);
   const allowsReviewedNewInserts = options.insertMissingReviewedNew;
   const missingRowsOnlyWarning = readiness.state === 'WARN'
-    && readiness.totals.missingSupabaseRows > 0
-    && readiness.totals.protectedFieldConflicts === 0;
+    && readiness.totals.missingSupabaseRows > 0;
   assertState('readiness', readiness.state, allowsReviewedNewInserts || missingRowsOnlyWarning ? ['OK', 'WARN'] : ['OK']);
   if (missingRowsOnlyWarning && !allowsReviewedNewInserts) {
     console.log('Readiness warning is limited to local rows not yet present in Supabase; existing rows will sync and missing rows will be skipped for a later reviewed insert or retry.');
   }
   if (readiness.totals.missingSupabaseRows > 0 && !allowsReviewedNewInserts && !missingRowsOnlyWarning) {
     throw new Error('readiness gate failed: missing Supabase rows');
-  }
-  if (readiness.totals.protectedFieldConflicts > 0) {
-    console.log(`Protected field conflicts will be skipped without overwrite: ${readiness.totals.protectedFieldConflicts}`);
   }
   // Reconciliation must scan past protected/already-current rows so its ID
   // checkpoint can advance to later rows that may still need updates.

@@ -1,9 +1,26 @@
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import AdminSystemPanel from './AdminSystemPanel'
+import AdminSystemPanel, { syncHumanSummary } from './AdminSystemPanel'
 
 const jsonResponse = data => ({ ok: true, json: async () => ({ data }) })
+
+describe('syncHumanSummary', () => {
+  test('turns a missing bulk migration into a plain-language action', () => {
+    expect(syncHumanSummary({ state: 'blocked', bulkRpc: { state: 'migration_missing' } })).toEqual(expect.objectContaining({
+      title: 'Publishing is paused',
+      tone: 'blocked',
+      detail: expect.stringContaining('supabase-bulk-sync-rpc-migration.sql'),
+    }))
+  })
+
+  test('describes a ready publication path without exposing infrastructure terms', () => {
+    expect(syncHumanSummary({ state: 'ready', bulkRpc: { state: 'ready' } })).toEqual(expect.objectContaining({
+      title: 'Public map is ready to update',
+      tone: 'ready',
+    }))
+  })
+})
 
 describe('AdminSystemPanel lifecycle actions', () => {
   let fetchMock
@@ -195,5 +212,143 @@ describe('AdminSystemPanel lifecycle actions', () => {
 
     expect(await screen.findByText(/40 local updates waiting/i)).toBeInTheDocument()
     expect(screen.getByText(/6 protected-field conflicts need review/i)).toBeInTheDocument()
+  })
+
+  test('shows the last scheduled sync outcome in plain language', async () => {
+    window.location.hash = ''
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (url.includes('/source-provenance')) return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      if (url.includes('/source-review-summary')) return Promise.resolve(jsonResponse({ lifecycle: {} }))
+      if (url.includes('/supabase-sync-readiness')) {
+        return Promise.resolve(jsonResponse({
+          state: 'nothing_waiting',
+          label: 'Nothing waiting',
+          detail: 'Local and public data are caught up.',
+          lastRun: {
+            state: 'failed',
+            finished_at: '2026-07-25T12:00:00.000Z',
+            reason: 'Supabase credentials are unavailable in .env.local',
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText(/Last sync failed/i)).toBeInTheDocument()
+    expect(screen.getByText(/Supabase credentials are unavailable/i)).toBeInTheDocument()
+  })
+
+  test('shows semantic classification backlog separately from queue health', async () => {
+    window.location.hash = '#pipeline-status'
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (url.includes('/source-provenance')) return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      if (url.includes('/source-review-summary')) return Promise.resolve(jsonResponse({ lifecycle: {} }))
+      if (url.includes('/pipeline-status')) {
+        return Promise.resolve(jsonResponse({
+          available: true,
+          state: 'ok',
+          label: 'Pipeline healthy',
+              classifier: {
+                backlog: {
+                  candidates: 2202,
+                  retryablePartial: 2014,
+                  exhaustedPartial: 188,
+                  state: 'partial_retry_pending',
+                  estimatedDays: 5.734375,
+                  estimatedHours: 137.625,
+                },
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText('Records still need enrichment')).toBeInTheDocument()
+    expect(screen.getByText('2,202')).toBeInTheDocument()
+    expect(screen.getByText('5.7 days at current rate')).toBeInTheDocument()
+    expect(screen.getByText('2,014 partial results are ready for a bounded retry pass.')).toBeInTheDocument()
+    expect(screen.getByText(/even when the job queue is empty/i)).toBeInTheDocument()
+  })
+
+  test('shows source freshness from the pipeline snapshot', async () => {
+    window.location.hash = '#pipeline-status'
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (url.includes('/source-provenance')) return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      if (url.includes('/source-review-summary')) return Promise.resolve(jsonResponse({ lifecycle: {} }))
+      if (url.includes('/pipeline-status')) {
+        return Promise.resolve(jsonResponse({
+          available: true,
+          state: 'ok',
+          label: 'Pipeline healthy',
+          freshness: [{ source: 'osm', fresh_ratio_percent: 96.5, stale_rows: 12, eligible_rows: 840 }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByRole('table', { name: /source freshness from the imac pipeline/i })).toBeInTheDocument()
+    expect(screen.getByText('OpenStreetMap')).toBeInTheDocument()
+    expect(screen.getByText('96.5%')).toBeInTheDocument()
+    expect(screen.getByText('840')).toBeInTheDocument()
+  })
+
+  test('distinguishes a stopped source feeder from a healthy classifier', async () => {
+    window.location.hash = '#pipeline-status'
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (url.includes('/source-provenance')) return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      if (url.includes('/source-review-summary')) return Promise.resolve(jsonResponse({ lifecycle: {} }))
+      if (url.includes('/pipeline-status')) {
+        return Promise.resolve(jsonResponse({
+          available: true,
+          state: 'fail',
+          label: 'Pipeline needs repair',
+          sourcePipeline: {
+            scheduler: {
+              state: 'not_found',
+              detail: 'The source pipeline launchd job is not loaded for the current user.',
+            },
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Source feeder:\s*Not loaded/i))
+    expect(screen.getByRole('status')).toHaveTextContent(/launchd job is not loaded/i)
+  })
+
+  test('describes a loaded short-lived source feeder as idle between runs', async () => {
+    window.location.hash = '#pipeline-status'
+    fetchMock.mockImplementation((url, options = {}) => {
+      if (url.includes('/source-provenance')) return Promise.resolve(jsonResponse({ database: { available: true, sourceCounts: [], matchMethods: [] } }))
+      if (url.includes('/source-review-summary')) return Promise.resolve(jsonResponse({ lifecycle: {} }))
+      if (url.includes('/pipeline-status')) {
+        return Promise.resolve(jsonResponse({
+          available: true,
+          state: 'ok',
+          label: 'Pipeline healthy',
+          sourcePipeline: {
+            scheduler: {
+              state: 'idle',
+              detail: 'The source pipeline launchd job is loaded and waiting for its next scheduled run.',
+            },
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Source feeder:\s*Loaded and idle/i))
+    expect(screen.getByRole('status')).toHaveTextContent(/loaded and waiting/i)
   })
 })

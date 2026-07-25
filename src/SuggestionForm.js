@@ -372,7 +372,7 @@ export default function SuggestionForm({ theme, isPizza, onLocatePlace }) {
 
   return (
     <div className="sidebar-container suggestion-form" ref={containerRef}>
-      <h2 className="filter-section__title suggestion-form__title">Recommendations</h2>
+      <h2 className="filter-section__title suggestion-form__title">Suggest</h2>
 
       {status === 'success' ? (
         <p className="suggestion-form__success">

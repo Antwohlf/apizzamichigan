@@ -56,10 +56,12 @@ Descriptors such as breakfast, frozen, white pizza, slice, pan, square, or
 tomato pie are useful secondary attributes, but should not become additional
 primary-style values without a product decision.
 
-Anthony's Picks is an editorial filter, not a source or classifier result. Its
-minimum rating is configured per entity profile (currently 8/10 for Pizza and
-Taco), and the public map count and place filter must use that same configured
-value.
+Anthony's Picks is an editorial filter, not a source or classifier result. The
+normal editorial rating scale is 0-10, with a minimum Picks threshold configured
+per entity profile (currently 8 for Pizza and Taco). Historical personal scores
+above 10 are preserved as legacy values and remain eligible for Picks; new
+ratings should remain within the normal scale. The public map count and place
+filter must use the same configured threshold.
 
 ## Source precedence
 

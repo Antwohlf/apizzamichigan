@@ -6,6 +6,7 @@ const config = JSON.parse(readFileSync('config/source-pipeline.json', 'utf8'));
 const policy = JSON.parse(readFileSync('config/source-policy.json', 'utf8'));
 const plist = readFileSync('infra/local/launchd/com.apizzamichigan.source-pipeline.plist.template', 'utf8');
 const runner = readFileSync('scripts/ops/run-source-pipeline.mjs', 'utf8');
+const osmSummary = readFileSync('scripts/lib/osm-refresh-summary.mjs', 'utf8');
 const osmSource = readFileSync('scripts/ops/export-osm-source.mjs', 'utf8');
 const osmTiles = readFileSync('scripts/ops/export-osm-tiles.mjs', 'utf8');
 const readiness = readFileSync('scripts/ops/source-pipeline-readiness-report.mjs', 'utf8');
@@ -14,6 +15,7 @@ const lifecycleQuality = readFileSync('scripts/ops/lifecycle-quality-report.mjs'
 const osmExtractor = readFileSync('scripts/enrichment/agents/osm-extractor.mjs', 'utf8');
 const wikidataSource = readFileSync('scripts/ops/export-wikidata-source.mjs', 'utf8');
 const scopeHelper = readFileSync('scripts/lib/source-pipeline-scope.mjs', 'utf8');
+const autoLinkPolicy = readFileSync('scripts/lib/source-auto-link-policy.mjs', 'utf8');
 const required = ['osm', 'fsq_os_places', 'all_the_places', 'overture_places', 'wikidata', 'official_website'];
 const CAPABILITIES = ['discover', 'match_existing', 'enrich_evidence', 'promote_contact'];
 const missing = required.filter(key => !config.sources?.[key]?.enabled);
@@ -74,9 +76,13 @@ if (Number(config.sources.osm.refresh_after_hours) !== 720
   || Number(config.sources.osm.provenance_refresh_limit_per_run) !== 1000
   || !runner.includes('OSM_REFRESH_AFTER_HOURS')
   || !osmTiles.includes('OSM_REFRESH_AFTER_HOURS')
-  || !runner.includes('refreshAfterMs')
-  || !runner.includes('Date.parse(tile.completed_at)')) {
+  || !osmSummary.includes('refreshAfterMs')
+  || !osmSummary.includes('Date.parse(tile.completed_at)')
+  || !osmSummary.includes('refreshQueueTiles')) {
   throw new Error('OSM source pipeline must refresh completed tiles within 30 days');
+}
+if (!runner.includes('summarizeOsmManifest') || !readiness.includes('summarizeOsmManifest')) {
+  throw new Error('OSM source pipeline and readiness report must share manifest accounting');
 }
 if (!runner.includes('refresh-osm-place-sources.mjs')
   || !runner.includes('provenance_refresh_limit_per_run')
@@ -118,6 +124,12 @@ if (!runner.includes('sourceState.region_index')
 if (!runner.includes('selectOsmRegion') || !runner.includes('osmBacklog') || !runner.includes('state.sources[source].region_index')) {
   throw new Error('OSM source runner must prioritize refresh backlog and advance its region cursor');
 }
+if (!runner.includes('sourceAutoLinkArguments')
+  || !autoLinkPolicy.includes("source === 'wikidata'")
+  || !autoLinkPolicy.includes("source === 'all_the_places'")
+  || !autoLinkPolicy.includes("return []")) {
+  throw new Error('source runner must use source-specific auto-link identity contracts');
+}
 if (!runner.includes('Number.isInteger(Number(sourceState.region_index))') || !runner.includes(': 0;')) {
   throw new Error('source runner must default missing geographic cursors to region zero');
 }
@@ -131,15 +143,14 @@ if (!runner.includes('populate-classify-from-db.mjs') || !runner.includes("'--sk
   throw new Error('source runner must feed bounded classifier jobs from configured operational regions without duplicating existing queue work');
 }
 if (!runner.includes('auto-link-source-review-queue.mjs')
-  || !runner.includes("'--exact-identifiers'")
-  || !runner.includes("'--min-exact-identifiers', '3'")
-  || !runner.includes("'--source-identity'")
-  || !runner.includes("'--exact-source-id'")
-  || !runner.includes("'--max-distance-m', '100'")) {
-  throw new Error('source runner must auto-link exact identifiers for every applied feeder');
+  || !runner.includes('sourceAutoLinkArguments')
+  || !runner.includes("'--max-distance-m', '100'")
+  || !runner.includes("...(config.apply ? ['--apply'] : [])")
+  || !runner.includes("...(options.apply ? ['--apply'] : [])")) {
+  throw new Error('source runner must auto-link only through source-specific identity contracts');
 }
 const autoLink = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
-if (!autoLink.includes('if (!args.exactIdentifiers && !args.exactSourceId && !args.sourceIdentity)')
+if (!autoLink.includes('includeScoreDistance && !args.exactIdentifiers && !args.exactSourceId && !args.sourceIdentity')
   || !autoLink.includes('Exact-match automation must not inherit')
   || !autoLink.includes('args.minExactIdentifiers !== 3')
   || !autoLink.includes('sourceAddress')
@@ -170,6 +181,8 @@ if (!readiness.includes('next_actions') || !readiness.includes('plan_command') |
 if (!readiness.includes('source-freshness-report.mjs')
   || !readiness.includes('Source evidence freshness')
   || !readiness.includes('stale evidence rows')
+  || !readiness.includes('advisories')
+  || !readiness.includes('Advisories:')
   || !readiness.includes('no local evidence rows')) {
   throw new Error('source readiness must expose actionable source freshness status');
 }

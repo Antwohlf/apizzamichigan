@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import {
-  FILL_IF_NULL_COLS,
+  CANONICAL_MIRROR_COLS,
   LIFECYCLE_COLS,
   LOCAL_CONTEXT_COLS,
   LOCAL_SYNC_COLS,
@@ -78,6 +78,15 @@ function verifySourceConfiguration() {
   for (const source of Object.keys(policySources)) {
     assert(sourcePipeline.sources?.[source], `source policy contains an unconfigured source: ${source}`);
   }
+
+  const precedence = contract.source_precedence;
+  assert(Array.isArray(precedence) && precedence.length === configuredSources.length, 'canonical source precedence must cover every configured source exactly once');
+  assert(sameSet(precedence, configuredSources.map(([source]) => source)), 'canonical source precedence must match configured sources');
+  const precedencePriorities = precedence.map(source => Number(policySources[source]?.priority));
+  assert(
+    precedencePriorities.every((priority, index) => index === 0 || priority <= precedencePriorities[index - 1]),
+    'canonical source precedence must follow descending source-policy priority',
+  );
 }
 
 function verifyEntityProfiles() {
@@ -85,6 +94,13 @@ function verifyEntityProfiles() {
   assert(entityProfiles.version === 1, 'entity profile version must be 1');
   assert(sameSet(Object.keys(profiles), contract.entities), 'entity profiles must cover exactly the canonical entities');
   const picksRule = contract.editorial_rules?.picks;
+  const ratingRule = contract.editorial_rules?.rating;
+  assert(ratingRule && typeof ratingRule === 'object', 'editorial rating rule is missing from the canonical contract');
+  const ratingMinimum = Number(ratingRule.normal_scale?.minimum);
+  const ratingMaximum = Number(ratingRule.normal_scale?.maximum);
+  assert(Number.isFinite(ratingMinimum) && Number.isFinite(ratingMaximum) && ratingMinimum >= 0 && ratingMinimum < ratingMaximum, 'editorial rating scale is invalid');
+  assert(ratingMaximum === 10, 'editorial rating scale must remain 0-10 unless the product contract changes explicitly');
+  assert(typeof ratingRule.legacy_out_of_scale_policy === 'string' && ratingRule.legacy_out_of_scale_policy.trim(), 'legacy editorial rating policy is missing');
   assert(picksRule && typeof picksRule === 'object', 'editorial Picks rule is missing from the canonical contract');
   assert(typeof picksRule.public_label === 'string' && picksRule.public_label.trim(), 'editorial Picks public label is missing');
   assert(picksRule.minimum_rating_by_entity && typeof picksRule.minimum_rating_by_entity === 'object', 'editorial Picks thresholds are missing');
@@ -139,19 +155,50 @@ function verifyFrontendPizzaTaxonomy() {
   assert(sameSet(taxonomy.specificity_order, taxonomy.styles), 'pizza specificity order must cover every canonical style exactly once');
 }
 
+function verifyPublicFieldPolicy() {
+  const policy = contract.public_fields;
+  assert(policy && Array.isArray(policy.base), 'public field policy is missing its base fields');
+  const canonicalFields = new Set(flattenedFields());
+  const generatedSource = readFileSync('src/config/public-fields.generated.js', 'utf8');
+  assert(generatedSource.includes('Generated from config/canonical-contract.json'), 'generated public field policy must identify its canonical source');
+
+  for (const field of policy.base) {
+    assert(canonicalFields.has(field), `public base field is missing from canonical contract: ${field}`);
+  }
+
+  for (const entity of contract.entities) {
+    const entityPolicy = policy[entity];
+    assert(entityPolicy && typeof entityPolicy === 'object', `public field policy missing entity: ${entity}`);
+    for (const [surface, fields] of Object.entries(entityPolicy)) {
+      assert(Array.isArray(fields) && fields.length > 0, `public field policy surface is empty: ${entity}.${surface}`);
+      assert(new Set(fields).size === fields.length, `public field policy contains duplicates: ${entity}.${surface}`);
+      for (const field of fields) {
+        assert(canonicalFields.has(field), `public field is missing from canonical contract: ${entity}.${surface}.${field}`);
+        assert(generatedSource.includes(JSON.stringify(field)), `generated public field policy is missing field: ${entity}.${surface}.${field}`);
+      }
+    }
+  }
+}
+
 function main() {
   assert(contract.version === 1, 'canonical contract version must be 1');
   assert(contract.sync_target === SUPABASE_SYNC_TARGET_TABLE, 'contract sync target disagrees with sync policy');
   assert(sameSet(contract.local_only_tables, LOCAL_ONLY_SUPABASE_TABLES), 'contract local-only tables disagree with sync policy');
   assert(contract.canonical_tables.pizza === 'pizza_places', 'pizza canonical table must be pizza_places');
   assert(contract.canonical_tables.taco === 'taco_places', 'taco canonical table must be taco_places');
+  assert(contract.primary_fields?.pizza_style === 'style', 'primary pizza style field must be style');
+  assert(contract.primary_fields?.price === 'price_range', 'primary price field must be price_range');
+  assert(contract.primary_fields?.business_lifecycle === 'lifecycle_status', 'business lifecycle field must be lifecycle_status');
+  assert(contract.primary_fields?.personal_status === 'status', 'personal status field must be status');
+  assert(contract.legacy_field_aliases?.price === 'price_range', 'legacy price alias must point to price_range');
   verifyEntityProfiles();
   verifySourceConfiguration();
   verifyFrontendPizzaTaxonomy();
+  verifyPublicFieldPolicy();
 
   const localSyncColumns = [...new Set(LOCAL_SYNC_COLS)];
   const syncColumns = [...new Set([...localSyncColumns, ...QA_DEFAULT_COLS])];
-  const expectedRemoteSelect = [...new Set(['id', ...OVERWRITE_COLS, ...FILL_IF_NULL_COLS, ...QA_DEFAULT_COLS, ...LIFECYCLE_COLS])];
+  const expectedRemoteSelect = [...new Set(['id', ...OVERWRITE_COLS, ...CANONICAL_MIRROR_COLS, ...QA_DEFAULT_COLS, ...LIFECYCLE_COLS])];
   assert(sameSet(SUPABASE_SYNC_SELECT_COLS, expectedRemoteSelect), 'remote select columns drift from sync policy');
   assert(localSyncColumns.includes('id'), 'local sync contract must include id');
   const contractedSyncColumns = new Set(flattenedFields());

@@ -9,6 +9,8 @@ import { renderExpanded, renderPreview } from '../components/map/renderPopup'
 import { REVIEW_LIGHTBOX_CLOSE_EVENT, REVIEW_LIGHTBOX_OPEN_EVENT } from '../components/ReviewGallery'
 import '../styles/marker-popup.css'
 import { useSelectedPlace } from '../store/selectedPlace'
+import { supabase } from '../supabaseClient'
+import { readSupabase } from '../lib/supabaseRead'
 import { StateAggregateLayer } from './StateMarker'
 import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
 import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
@@ -32,6 +34,7 @@ import {
   searchNavigation,
 } from './viewport'
 import { saveMapReturnState } from './mapReturnState'
+import { entityConfig } from '../config/entityConfig'
 
 const CLUSTER_ICONS = {
   pizza: { visited: pizzaIconColored, unvisited: pizzaIconGrey, golden: pizzaIconGold },
@@ -124,6 +127,42 @@ function MapClickCloser({ close }) {
 const FOCUSED_ZOOM = FOCUSED_PLACE_ZOOM
 
 const NEAR_ME_ZOOM = 10 // City-level view for Near Me
+const replacementPlaceCache = new Map()
+const reviewPhotoCache = new Map()
+let reviewPhotoTableAvailable = true
+
+async function loadReviewPhotos(placeId) {
+  const key = String(placeId || '')
+  if (!key || !reviewPhotoTableAvailable) return []
+  if (reviewPhotoCache.has(key)) return reviewPhotoCache.get(key)
+
+  try {
+    const { data, error } = await readSupabase(() => supabase
+      .from('review-photos')
+      .select('id, storage_path, sort_order')
+      .eq('place_id', placeId)
+      .order('sort_order', { ascending: true }))
+    if (error) {
+      if (error.code === 'PGRST205') reviewPhotoTableAvailable = false
+      return []
+    }
+
+    const storage = supabase.storage?.from?.('review-photos')
+    const photos = (data || []).map(photo => {
+      const { data: publicData } = storage?.getPublicUrl?.(photo.storage_path) || {}
+      return {
+        id: photo.id,
+        path: photo.storage_path,
+        sortOrder: photo.sort_order,
+        publicUrl: publicData?.publicUrl || null,
+      }
+    }).filter(photo => photo.publicUrl)
+    reviewPhotoCache.set(key, photos)
+    return photos
+  } catch (error) {
+    return []
+  }
+}
 
 const captureMapViewport = map => {
   if (!map || typeof map.getCenter !== 'function' || typeof map.getZoom !== 'function') return null
@@ -151,6 +190,7 @@ export function PlacesLayer({
   forceIndividualMarkers = false,
   searchFocusKey = '',
 }) {
+  const entity = entityConfig(site)
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
   const lastFocusedPlaceRef = useRef(null)
@@ -160,6 +200,8 @@ export function PlacesLayer({
   const map = useMap()
   const [isMapStable, setIsMapStable] = useState(false)
   const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM)
+  const [replacementPlaces, setReplacementPlaces] = useState({})
+  const [popupPhotos, setPopupPhotos] = useState({})
   const isMountedRef = useRef(true)
   const lightboxViewportRef = useRef(null)
   const activePlaceRef = useRef(null)
@@ -553,6 +595,58 @@ export function PlacesLayer({
     }
   }, [openEntry])
 
+  // A replaced place and its successor may live in different loaded regions.
+  // Fetch only the small successor identity payload when the map cannot already
+  // resolve it locally, and reuse it for later openings in this session.
+  useEffect(() => {
+    if (!openEntry?.id || openEntry.type !== site) return undefined
+    const activePlace = places.find(place => String(place.id) === String(openEntry.id))
+    const replacementId = activePlace?.lifecycle_replaced_by_id ?? activePlace?.lifecycleReplacedById ?? null
+    if (!replacementId || places.some(place => String(place.id) === String(replacementId))) return undefined
+
+    const cacheKey = `${site}:${replacementId}`
+    const cached = replacementPlaceCache.get(cacheKey)
+    if (cached) {
+      setReplacementPlaces(previous => previous[cacheKey] === cached ? previous : { ...previous, [cacheKey]: cached })
+      return undefined
+    }
+
+    let cancelled = false
+    const table = entity.table
+    readSupabase(() => supabase
+      .from(table)
+      .select('id, name, address, state')
+      .eq('id', replacementId)
+      .maybeSingle())
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        replacementPlaceCache.set(cacheKey, data)
+        setReplacementPlaces(previous => ({ ...previous, [cacheKey]: data }))
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [entity.table, openEntry, places, site])
+
+  useEffect(() => {
+    if (!openEntry?.id || openEntry.type !== site) return undefined
+    const activePlace = places.find(place => String(place.id) === String(openEntry.id))
+    if (!activePlace) return undefined
+    const placeId = String(activePlace.id)
+    if (Array.isArray(activePlace.photos) && activePlace.photos.length) return undefined
+    if (popupPhotos[placeId] || reviewPhotoCache.has(placeId)) return undefined
+
+    let cancelled = false
+    loadReviewPhotos(placeId).then(photos => {
+      if (!cancelled) setPopupPhotos(previous => ({ ...previous, [placeId]: photos }))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [openEntry, places, popupPhotos, site])
+
   useEffect(() => {
     if (!popup) return
     if (!openEntry?.id || openEntry.type !== site) {
@@ -575,7 +669,9 @@ export function PlacesLayer({
     const replacementPlace = replacementId
       ? places.find(place => String(place.id) === String(replacementId))
       : null
-    const href = site === 'taco' ? `/tacos/places/${encodeURIComponent(placeId)}` : `/places/${encodeURIComponent(placeId)}`
+    const replacementCacheKey = replacementId ? `${site}:${replacementId}` : null
+    const replacementIdentity = replacementPlace || (replacementCacheKey ? replacementPlaces[replacementCacheKey] : null)
+    const href = `${entity.placeRoute}/${encodeURIComponent(placeId)}`
     setSelectedPlace({
       id: activePlace.id ?? activePlace.place_id ?? null,
       name: activePlace.name ?? null,
@@ -602,7 +698,8 @@ export function PlacesLayer({
           id: placeId,
           type: site,
           href,
-          lifecycle_replaced_by_name: replacementPlace?.name || null,
+          photos: popupPhotos[placeId] ?? activePlace.photos,
+          lifecycle_replaced_by_name: replacementIdentity?.name || null,
         },
         () => {
           popup.hide()
@@ -620,7 +717,7 @@ export function PlacesLayer({
         },
       )
     )
-  }, [close, map, openEntry, places, popup, site, setSelectedPlace])
+  }, [close, entity.placeRoute, map, openEntry, places, popup, popupPhotos, replacementPlaces, site, setSelectedPlace])
 
   useEffect(
     () => () => {
@@ -638,9 +735,9 @@ export function PlacesLayer({
   const buildHref = useCallback(
     placeId => {
       const encodedId = encodeURIComponent(placeId)
-      return site === 'taco' ? `/tacos/places/${encodedId}` : `/places/${encodedId}`
+      return `${entity.placeRoute}/${encodedId}`
     },
-    [site]
+    [entity.placeRoute]
   )
 
   const markers = useMemo(
@@ -659,7 +756,7 @@ export function PlacesLayer({
             key={markerKey}
             position={[lat, lng]}
             title={place.name || `${site} place`}
-            icon={getMarkerIcon(site, status)}
+            icon={getMarkerIcon(site, status, place.lifecycleStatus || place.lifecycle_status)}
             eventHandlers={{
               click: event => {
                 if (!placeId) return
@@ -757,6 +854,9 @@ export function PlacesLayer({
             key={`cluster-${site}-${showClusterCounts}`}
             chunkedLoading
             maxClusterRadius={clusterRadiusForZoom}
+            // Keep clusters spatially stable while zooming. The default
+            // animation makes dense pizza areas appear to jump apart.
+            animate={false}
             // Keep dense locations in normal map space. Spiderfying makes a
             // place cluster jump away from its real geography at max zoom.
             spiderfyOnMaxZoom={false}

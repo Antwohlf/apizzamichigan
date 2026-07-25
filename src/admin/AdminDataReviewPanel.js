@@ -24,6 +24,7 @@ import {
   sourcePhone,
   sourceReviewQueue,
   sourceWebsite,
+  deterministicMatchEvidence,
   valuesDiffer,
 } from './sourceReviewQueues'
 
@@ -70,6 +71,12 @@ const aiDecisionLabel = decision => ({
   business_replacement: 'Possible business replacement',
   uncertain: 'Needs human judgment',
 }[decision] || 'AI suggestion')
+
+export const reviewSuggestionSource = decisionOrigin => (
+  decisionOrigin === 'deterministic'
+    ? 'Evidence-based suggestion'
+    : 'AI review suggestion'
+)
 
 function ComparisonRow({ label, value, different }) {
   return (
@@ -192,6 +199,7 @@ export default function AdminDataReviewPanel({ entity }) {
   const [queueOpen, setQueueOpen] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(Boolean(searchText))
+  const [searchDraft, setSearchDraft] = useState(searchText)
   const [filterDraft, setFilterDraft] = useState({ source: sourceFilter, state: stateFilter })
   const [notes, setNotes] = useState('')
   const [linkConfirmation, setLinkConfirmation] = useState(null)
@@ -211,8 +219,26 @@ export default function AdminDataReviewPanel({ entity }) {
   }
 
   useEffect(() => {
+    setSearchDraft(searchText)
+  }, [searchText])
+
+  useEffect(() => {
+    if (searchDraft === searchText) return undefined
+    const timer = window.setTimeout(() => {
+      const next = new URLSearchParams(searchParams)
+      if (searchDraft) next.set('q', searchDraft)
+      else next.delete('q')
+      next.delete('id')
+      setSearchParams(next, { replace: true })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [searchDraft, searchText, searchParams, setSearchParams])
+
+  useEffect(() => {
     let cancelled = false
-    fetch(`/api/admin/source-review-summary?entity=${entity}`, { credentials: 'include' })
+    const summaryParams = new URLSearchParams({ entity })
+    if (stateFilter) summaryParams.set('state', stateFilter)
+    fetch(`/api/admin/source-review-summary?${summaryParams.toString()}`, { credentials: 'include' })
       .then(async response => {
         if (!response.ok) throw new Error('Queue summary is unavailable.')
         return response.json()
@@ -226,7 +252,7 @@ export default function AdminDataReviewPanel({ entity }) {
     return () => {
       cancelled = true
     }
-  }, [entity, refreshKey])
+  }, [entity, refreshKey, stateFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -513,6 +539,10 @@ export default function AdminDataReviewPanel({ entity }) {
   const activeCount = summary?.queues?.[activeQueue.countKey] ?? total
   const progressNumber = page * PAGE_SIZE + Math.max(0, selectedIndex) + 1
   const canUpdateExisting = canUpdateExactOsmPlace(selected)
+  const deterministicEvidence = deterministicMatchEvidence(selected)
+  const reviewScopeText = stateFilter === 'all'
+    ? 'All regions'
+    : stateFilter || (Array.isArray(summary?.reviewScope?.regions) ? summary.reviewScope.regions.join(', ') : 'active product regions')
 
   return (
     <div className="admin-content">
@@ -532,6 +562,8 @@ export default function AdminDataReviewPanel({ entity }) {
         ))}
       </div>
 
+      <p className="admin-scope-note">Review scope: <strong>{reviewScopeText}</strong></p>
+
       <div className="admin-toolbar">
         {searchOpen ? (
           <div className="admin-search-wrap">
@@ -539,8 +571,8 @@ export default function AdminDataReviewPanel({ entity }) {
             <input
               className="admin-search-input"
               type="search"
-              value={searchText}
-              onChange={event => setParamValues({ q: event.target.value, id: null })}
+              value={searchDraft}
+              onChange={event => setSearchDraft(event.target.value)}
               placeholder="Search name, address, or website"
               autoFocus
               aria-label="Search review queue"
@@ -627,6 +659,11 @@ export default function AdminDataReviewPanel({ entity }) {
                   {reviewEvidenceLabel(selected.review_evidence_count)}; confirm the place below.
                 </p>
               ) : null}
+              {deterministicEvidence ? (
+                <p className="admin-review-hint admin-review-hint--strong" aria-live="polite">
+                  <strong>{deterministicEvidence.title}.</strong> {deterministicEvidence.detail}
+                </p>
+              ) : null}
             </div>
             <div className="admin-inline-actions">
               <button
@@ -692,10 +729,10 @@ export default function AdminDataReviewPanel({ entity }) {
 
           {aiAssessment.loading ? <div className="admin-ai-assessment" role="status">Loading review suggestion…</div> : null}
           {!aiAssessment.loading && aiAssessment.data ? (
-            <aside className={`admin-ai-assessment admin-ai-assessment--${aiAssessment.data.decision || 'uncertain'}`} aria-label="AI review suggestion">
+            <aside className={`admin-ai-assessment admin-ai-assessment--${aiAssessment.data.decision || 'uncertain'}`} aria-label={reviewSuggestionSource(aiAssessment.data.decision_origin)}>
               <div>
-                <strong>{aiDecisionLabel(aiAssessment.data.decision)}</strong>
-                <span>{Math.round(Number(aiAssessment.data.confidence || 0) * 100)}% confidence · human decision required</span>
+                <strong>{reviewSuggestionSource(aiAssessment.data.decision_origin)}</strong>
+                <span>{aiDecisionLabel(aiAssessment.data.decision)} · {Math.round(Number(aiAssessment.data.confidence || 0) * 100)}% confidence · human decision required</span>
               </div>
               <p>{aiAssessment.data.reason || 'No explanation was provided.'}</p>
               {Array.isArray(aiAssessment.data.supporting_evidence) && aiAssessment.data.supporting_evidence.length ? (
@@ -841,6 +878,9 @@ export default function AdminDataReviewPanel({ entity }) {
               </button>
             </div>
             <div className="admin-drawer__body">
+              <p className="admin-filter-hint">
+                By default, this worklist shows the active product regions. Use “All regions” only when you intentionally want the national backlog.
+              </p>
               <label className="admin-field">
                 <span>Source</span>
                 <select value={filterDraft.source} onChange={event => setFilterDraft(current => ({ ...current, source: event.target.value }))}>
@@ -849,10 +889,21 @@ export default function AdminDataReviewPanel({ entity }) {
               </label>
               <label className="admin-field">
                 <span>State or region</span>
-                <input value={filterDraft.state} onChange={event => setFilterDraft(current => ({ ...current, state: event.target.value }))} placeholder="MI, NY, Ontario…" />
+                <input value={filterDraft.state} onChange={event => setFilterDraft(current => ({ ...current, state: event.target.value }))} placeholder="MI, NY, Ontario… or all" />
               </label>
               <div className="admin-inline-actions">
                 <button className="admin-button admin-button--primary" type="button" onClick={applyFilters}>Apply filters</button>
+                <button
+                  className="admin-button admin-button--quiet"
+                  type="button"
+                  onClick={() => {
+                    setFilterDraft(current => ({ ...current, state: 'all' }))
+                    setParamValues({ state: 'all', id: null })
+                    setFiltersOpen(false)
+                  }}
+                >
+                  All regions
+                </button>
                 <button
                   className="admin-button admin-button--quiet"
                   type="button"

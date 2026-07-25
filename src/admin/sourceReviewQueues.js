@@ -99,6 +99,53 @@ export const sourceWebsite = row =>
   || row?.source_data?.['contact:website']
   || ''
 
+const normalizedPhone = value => String(value || '').replace(/\D/g, '').slice(-10)
+const normalizedWebsite = value => {
+  try {
+    const url = new URL(String(value || ''))
+    return `${url.hostname.toLowerCase().replace(/^www\./, '')}${url.pathname.replace(/\/+$/, '')}${url.search}`
+  } catch {
+    return ''
+  }
+}
+
+const normalizedAddress = value => normalizeReviewText(value)
+
+export const deterministicMatchEvidence = row => {
+  if (isExactOsmIdentityMatch(row)) {
+    return {
+      kind: 'osm_identity',
+      title: 'Same OpenStreetMap record',
+      detail: 'The source and map record share the exact OpenStreetMap ID. Check the business name for a replacement before linking.',
+    }
+  }
+
+  if (row?.source !== 'all_the_places') return null
+
+  const sourceUrl = normalizedWebsite(sourceWebsite(row))
+  const canonicalUrl = normalizedWebsite(row?.nearest_website_url)
+  const sourcePhoneValue = normalizedPhone(sourcePhone(row))
+  const canonicalPhoneValue = normalizedPhone(row?.nearest_phone)
+  const sourceAddressValue = normalizedAddress(sourceAddress(row))
+  const canonicalAddressValue = normalizedAddress(row?.nearest_address)
+  const websiteMatches = Boolean(sourceUrl && canonicalUrl && sourceUrl === canonicalUrl)
+  const phoneMatches = Boolean(sourcePhoneValue && sourcePhoneValue.length === 10 && sourcePhoneValue === canonicalPhoneValue)
+  const addressMatches = Boolean(sourceAddressValue && canonicalAddressValue && sourceAddressValue === canonicalAddressValue)
+  const matchingDetails = [
+    websiteMatches ? 'store page' : null,
+    phoneMatches ? 'phone' : null,
+    addressMatches ? 'address' : null,
+  ].filter(Boolean)
+
+  if (matchingDetails.length < 2) return null
+  const namesDiffer = valuesDiffer(row?.source_name || row?.source_data?.name, row?.nearest_place_name)
+  return {
+    kind: 'official_identifiers',
+    title: namesDiffer ? 'Exact store details agree; check for a replacement' : 'Exact store details agree',
+    detail: `The official source matches the existing record on ${matchingDetails.join(', ')}. Confirm the name before linking.`,
+  }
+}
+
 export const sourceCoordinates = row => {
   const lat = Number(row?.source_data?.lat ?? row?.source_data?.latitude)
   const lng = Number(row?.source_data?.lng ?? row?.source_data?.lon ?? row?.source_data?.longitude)

@@ -11,10 +11,6 @@ export const WIDE_CLUSTER_SPAN_DEGREES = 2
 // cutoff treated ordinary Detroit/Ann Arbor or NYC-area searches as broad and
 // focused only the first-ranked place, making the rest hard to discover.
 export const COMPACT_SEARCH_SPAN_DEGREES = 0.75
-// Clustering can represent a metro-sized result set without making the map
-// unreadable. Fit bounded local searches so the viewport describes the whole
-// query instead of jumping to an arbitrary first-ranked place.
-export const SEARCH_FIT_MAX_RESULTS = 50
 export const MAX_UNCLUSTERED_FOCUS_PLACES = 40
 
 export function shouldForceIndividualMarkers({
@@ -50,30 +46,27 @@ export function searchNavigation(places = []) {
   const latitudeSpan = Math.max(...latitudes) - Math.min(...latitudes)
   const longitudeSpan = Math.max(...longitudes) - Math.min(...longitudes)
 
-  // Broad or crowded searches are usually a name or brand search across a
-  // metro area. Fitting every result would zoom the map out too far, so keep
-  // the map useful by focusing the best-ranked row and leaving the result
-  // list available for choosing another location.
-  if (
-    Math.max(latitudeSpan, longitudeSpan) > COMPACT_SEARCH_SPAN_DEGREES
-    || validPlaces.length > SEARCH_FIT_MAX_RESULTS
-  ) {
+  // Fit every result that belongs to one compact metro area. The marker layer
+  // clusters dense results, so result count alone should not make the map
+  // jump to an arbitrary first-ranked place. Only broad, multi-market
+  // searches focus the best-ranked result.
+  if (Math.max(latitudeSpan, longitudeSpan) > COMPACT_SEARCH_SPAN_DEGREES) {
     return { mode: 'place', place: validPlaces[0], zoom: SEARCH_RESULT_FOCUS_ZOOM }
   }
 
   return { mode: 'fit', places: validPlaces }
 }
 
-// Keep regional clusters readable while allowing neighborhood markers to
-// separate progressively instead of splitting abruptly at one fixed radius.
+// Keep cluster membership predictable while the map moves. A fixed radius is
+// less visually surprising than rebuilding clusters around several radius
+// thresholds during a zoom gesture.
+export const STABLE_CLUSTER_RADIUS = 56
+
 export function clusterRadiusForZoom(zoom) {
-  const level = Number(zoom)
-  if (!Number.isFinite(level)) return 80
-  if (level <= 7) return 92
-  if (level <= 9) return 72
-  if (level <= 11) return 52
-  if (level <= 13) return 36
-  return 24
+  // Keep the helper as the single policy surface for callers and tests. The
+  // argument is intentionally ignored so zooming cannot change membership.
+  void zoom
+  return STABLE_CLUSTER_RADIUS
 }
 
 export const clusterFitOptions = () => ({
@@ -108,7 +101,12 @@ export function isPlaceViewportFocused({
   const hasCenter = center && typeof center.lat === 'number' && typeof center.lng === 'number'
   const hasPlace = place && typeof place.lat === 'number' && typeof place.lng === 'number'
   if (!hasCenter || !hasPlace || typeof zoom !== 'number' || zoom < minimumZoom) return false
-  return Math.hypot(center.lat - place.lat, center.lng - place.lng) <= maxDistanceDegrees
+  // A degree-scale tolerance is useful at regional zoom, but far too broad
+  // once the map is showing a city. Shrink the tolerance as the user zooms so
+  // a selected place is only treated as focused when it is plausibly visible.
+  const zoomSteps = Math.max(0, zoom - minimumZoom)
+  const effectiveMaxDistance = maxDistanceDegrees / (2 ** zoomSteps)
+  return Math.hypot(center.lat - place.lat, center.lng - place.lng) <= effectiveMaxDistance
 }
 
 export function focusedPlaceZoom({

@@ -24,6 +24,17 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const PG_DUMP_CANDIDATES = [
+  '/opt/homebrew/opt/postgresql@16/bin/pg_dump',
+  '/opt/homebrew/opt/postgresql/bin/pg_dump',
+  '/usr/local/opt/postgresql@16/bin/pg_dump',
+  '/usr/local/opt/postgresql/bin/pg_dump',
+  '/Applications/Postgres.app/Contents/Versions/latest/bin/pg_dump',
+];
+
+function defaultPgDumpBin() {
+  return PG_DUMP_CANDIDATES.find(candidate => existsSync(candidate)) || 'pg_dump';
+}
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return {};
@@ -126,7 +137,10 @@ function postgresConfig() {
     user: value('PGUSER', value('USER', 'postgres')),
     database: value('PGDATABASE', 'pizza_enrichment'),
     password: value('PGPASSWORD'),
-    dumpBin: value('PG_DUMP_BIN', 'pg_dump'),
+    // launchd does not inherit the interactive shell PATH. Prefer the known
+    // local client locations before falling back to an explicitly configured
+    // PG_DUMP_BIN or a PATH-provided pg_dump.
+    dumpBin: value('PG_DUMP_BIN', defaultPgDumpBin()),
   };
 }
 

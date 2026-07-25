@@ -12,6 +12,52 @@ const formatDate = value => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
 }
 
+const syncRunSummary = run => {
+  if (!run) return 'No scheduled sync run has been recorded.'
+  const state = String(run.state || 'unknown').toLowerCase()
+  const when = formatDate(run.finished_at || run.started_at)
+  if (state === 'running') return `A sync is running (started ${when}).`
+  const label = state === 'succeeded' ? 'Last sync succeeded'
+    : state === 'skipped' ? 'Last sync was skipped'
+      : state === 'failed' ? 'Last sync failed'
+        : 'Last sync state is unknown'
+  const reason = String(run.reason || '').trim()
+  return `${label} ${when === 'Never' ? '' : `at ${when}.`}${reason ? ` ${reason}` : ''}`.trim()
+}
+
+export const syncHumanSummary = readiness => {
+  if (!readiness) {
+    return {
+      title: 'Checking publication status',
+      detail: 'Checking whether local changes are ready to publish.',
+      tone: 'unknown',
+    }
+  }
+
+  const rpcState = String(readiness.bulkRpc?.state || '').toLowerCase()
+  if (rpcState === 'migration_missing' || readiness.state === 'blocked') {
+    return {
+      title: 'Publishing is paused',
+      detail: 'Local work is continuing. Apply scripts/enrichment/supabase-bulk-sync-rpc-migration.sql in Supabase, then refresh this page before publishing.',
+      tone: 'blocked',
+    }
+  }
+
+  if (readiness.state === 'nothing_waiting' || readiness.state === 'ready') {
+    return {
+      title: 'Public map is ready to update',
+      detail: 'The guarded publisher can send approved local changes to the public map.',
+      tone: 'ready',
+    }
+  }
+
+  return {
+    title: 'Publication needs attention',
+    detail: 'The local pipeline is available, but the public publishing status needs review.',
+    tone: 'unknown',
+  }
+}
+
 const REGION_LABELS = {
   CA: 'California',
   MI: 'Michigan',
@@ -20,6 +66,36 @@ const REGION_LABELS = {
 }
 
 const regionLabel = code => REGION_LABELS[String(code || '').toUpperCase()] || String(code || '').toUpperCase()
+
+const classifierBacklog = pipelineStatus => pipelineStatus?.classifier?.backlog || null
+const sourceFeederLabel = pipelineStatus => {
+  const scheduler = pipelineStatus?.sourcePipeline?.scheduler
+  if (!scheduler) return null
+  if (scheduler.state === 'running') return 'Running'
+  if (scheduler.state === 'idle') return 'Loaded and idle'
+  if (scheduler.state === 'not_found') return 'Not loaded'
+  if (scheduler.state === 'unsupported') return 'Status unavailable'
+  return scheduler.state ? scheduler.state.replace(/_/g, ' ') : 'Unknown'
+}
+const backlogEtaLabel = backlog => {
+  if (!backlog || backlog.estimatedDays == null) return 'No ETA yet'
+  if (Number(backlog.estimatedDays) < 1) return `${Math.max(1, Math.round(Number(backlog.estimatedHours || 0)))} hours at current rate`
+  return `${Number(backlog.estimatedDays).toFixed(1)} days at current rate`
+}
+
+const backlogActionLabel = backlog => {
+  if (!backlog) return ''
+  if (backlog.state === 'queued') return 'The classifier has queued work to process.'
+  if (backlog.state === 'partial_retry_pending') {
+    return `${formatCount(backlog.retryablePartial)} partial results are ready for a bounded retry pass.`
+  }
+  if (backlog.state === 'manual_review') {
+    return `${formatCount(backlog.exhaustedPartial)} partial results need editorial review.`
+  }
+  if (backlog.state === 'unfed') return 'Some places still need classify jobs before processing can continue.'
+  if (backlog.state === 'clear') return 'No classification backlog remains for the configured regions.'
+  return backlog.recommendedAction || ''
+}
 
 const promotionPolicyRows = [
   ['Website and phone', 'Fill blanks only from accepted, high-confidence evidence.'],
@@ -32,6 +108,7 @@ const promotionPolicyRows = [
 export default function AdminSystemPanel({ entity }) {
   const [payload, setPayload] = useState(null)
   const [syncReadiness, setSyncReadiness] = useState(null)
+  const [pipelineStatus, setPipelineStatus] = useState(null)
   const [lifecycle, setLifecycle] = useState(null)
   const [basicFieldCoverage, setBasicFieldCoverage] = useState(null)
   const [lifecycleKind, setLifecycleKind] = useState('replacements')
@@ -40,6 +117,7 @@ export default function AdminSystemPanel({ entity }) {
   const [lifecycleOpen, setLifecycleOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#lifecycle-quality')
   const [importOpen, setImportOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#approved-import')
   const [basicCoverageOpen, setBasicCoverageOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#basic-coverage')
+  const [pipelineOpen, setPipelineOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#pipeline-status')
   const [preflight, setPreflight] = useState(null)
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [conflictRows, setConflictRows] = useState(null)
@@ -61,16 +139,18 @@ export default function AdminSystemPanel({ entity }) {
       setLoading(true)
       setError('')
       try {
-        const [provenanceResponse, summaryResponse, syncResponse] = await Promise.all([
+        const [provenanceResponse, summaryResponse, syncResponse, pipelineResponse] = await Promise.all([
           fetch(`/api/admin/source-provenance?entity=${entity}`, { credentials: 'include' }),
           fetch(`/api/admin/source-review-summary?entity=${entity}`, { credentials: 'include' }),
           fetch(`/api/admin/supabase-sync-readiness?entity=${entity}`, { credentials: 'include' }),
+          fetch(`/api/admin/pipeline-status?entity=${entity}`, { credentials: 'include' }),
         ])
         if (!provenanceResponse.ok) throw new Error(await provenanceResponse.text() || 'Source status is unavailable.')
-        const [provenancePayload, summaryPayload, syncPayload] = await Promise.all([
+        const [provenancePayload, summaryPayload, syncPayload, pipelinePayload] = await Promise.all([
           provenanceResponse.json(),
           summaryResponse.json(),
           syncResponse.ok ? syncResponse.json() : Promise.resolve({}),
+          pipelineResponse.ok ? pipelineResponse.json() : Promise.resolve({}),
         ])
         if (!cancelled) {
           setPayload(provenancePayload?.data || null)
@@ -78,6 +158,7 @@ export default function AdminSystemPanel({ entity }) {
           setLifecycle(summaryPayload?.data?.lifecycle || null)
           setBasicFieldCoverage(summaryPayload?.data?.basicFieldCoverage || null)
           setSyncReadiness(syncPayload?.data || null)
+          setPipelineStatus(pipelinePayload?.data || null)
         }
       } catch (err) {
         if (!cancelled) setError(err?.message || 'System details could not be loaded.')
@@ -163,6 +244,7 @@ export default function AdminSystemPanel({ entity }) {
   const visibleCandidates = preflightCandidates.slice(previewPage * PREVIEW_PAGE_SIZE, (previewPage + 1) * PREVIEW_PAGE_SIZE)
   const blockedCount = Math.max(0, Number(preflight?.rowsInspected || 0) - Number(preflight?.candidateReady || 0))
   const coordinateConflictCount = Number(preflight?.readinessCounts?.find?.(row => row.readiness === 'duplicate_accepted_source_coordinate')?.rows || 0)
+  const syncSummary = syncHumanSummary(syncReadiness)
   const coverageRegions = basicFieldCoverage?.scope?.length
     ? basicFieldCoverage.scope
     : Object.keys(basicFieldCoverage?.byState || {})
@@ -244,8 +326,8 @@ export default function AdminSystemPanel({ entity }) {
           <section className="admin-system-status" aria-labelledby="sync-status-heading">
             <div>
               <p className="admin-eyebrow">Publishing</p>
-              <h2 id="sync-status-heading">Supabase sync</h2>
-              <p>{syncReadiness?.detail || 'Checking whether local changes are ready to publish.'}</p>
+              <h2 id="sync-status-heading">{syncSummary.title}</h2>
+              <p>{syncSummary.detail}</p>
               {syncReadiness ? (
                 <p className="admin-system-status__meta">
                   {Number(syncReadiness.pendingAfterCheckpoint || syncReadiness.wouldUpdate || 0)
@@ -256,11 +338,119 @@ export default function AdminSystemPanel({ entity }) {
                     : ''}
                 </p>
               ) : null}
+              {syncReadiness ? <p className="admin-system-status__meta">{syncRunSummary(syncReadiness.lastRun)}</p> : null}
+              {syncReadiness?.detail ? (
+                <details className="admin-system-status__technical">
+                  <summary>Technical details</summary>
+                  <p>{syncReadiness.detail}</p>
+                </details>
+              ) : null}
             </div>
-            <strong className={`admin-system-status__state admin-system-status__state--${syncReadiness?.state || 'unknown'}`}>
+            <strong className={`admin-system-status__state admin-system-status__state--${syncSummary.tone}`}>
               {syncReadiness?.label || 'Checking…'}
             </strong>
           </section>
+          <details
+            className="admin-system-section"
+            id="pipeline-status"
+            open={pipelineOpen}
+            onToggle={event => setPipelineOpen(event.currentTarget.open)}
+          >
+            <summary>
+              <strong>Pipeline health</strong>
+              <span>{pipelineStatus?.label || 'No recent check'}</span>
+            </summary>
+            <div className="admin-system-section__body">
+              <p className="admin-system-copy">This is a read-only snapshot from the iMac. It does not start workers or publish changes.</p>
+              <p className="admin-system-copy">{pipelineStatus?.detail || 'No pipeline health report is available yet.'}</p>
+              {pipelineStatus?.checkedAt ? <p className="admin-system-status__meta">Checked {formatDate(pipelineStatus.checkedAt)}.</p> : null}
+              {sourceFeederLabel(pipelineStatus) ? (
+                <p className="admin-system-status__meta" role="status">
+                  <strong>Source feeder:</strong> {sourceFeederLabel(pipelineStatus)}.
+                  {pipelineStatus.sourcePipeline?.scheduler?.detail ? ` ${pipelineStatus.sourcePipeline.scheduler.detail}` : ''}
+                </p>
+              ) : null}
+              {classifierBacklog(pipelineStatus) ? (
+                <div className="admin-system-status" style={{ marginTop: 16 }}>
+                  <div>
+                    <p className="admin-eyebrow">Classification work</p>
+                    <h3>Records still need enrichment</h3>
+                    <p>
+                      This includes incomplete results, even when the job queue is empty. The estimate is read-only and based on recent completed work.
+                    </p>
+                    {backlogActionLabel(classifierBacklog(pipelineStatus)) ? (
+                      <p className="admin-system-status__meta" role="status">
+                        {backlogActionLabel(classifierBacklog(pipelineStatus))}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="admin-stat-grid admin-stat-grid--compact">
+                    <div><strong>{formatCount(classifierBacklog(pipelineStatus).candidates)}</strong><span>Remaining</span></div>
+                    <div><strong>{formatCount(classifierBacklog(pipelineStatus).retryablePartial)}</strong><span>Retryable</span></div>
+                    <div><strong>{formatCount(classifierBacklog(pipelineStatus).exhaustedPartial)}</strong><span>Needs review</span></div>
+                    <div><strong>{backlogEtaLabel(classifierBacklog(pipelineStatus))}</strong><span>Estimated time</span></div>
+                  </div>
+                </div>
+              ) : null}
+              {pipelineStatus?.freshness?.length ? (
+                <div className="admin-table-wrap" style={{ marginTop: 16 }}>
+                  <table className="admin-table">
+                    <caption className="admin-sr-only">Source freshness from the iMac pipeline</caption>
+                    <thead>
+                      <tr><th>Input</th><th>Fresh</th><th>Stale</th><th>Eligible</th></tr>
+                    </thead>
+                    <tbody>
+                      {pipelineStatus.freshness.map(source => (
+                        <tr key={source.source}>
+                          <td>{sourceLabel(source.source)}</td>
+                          <td className={Number(source.stale_rows) > 0 ? 'admin-table__warning' : 'admin-table__success'}>
+                            {Number(source.fresh_ratio_percent || 0).toFixed(1)}%
+                          </td>
+                          <td>{formatCount(source.stale_rows)}</td>
+                          <td>{formatCount(source.eligible_rows)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              {pipelineStatus?.alerts?.length ? (
+                <div className="admin-alert admin-alert--error" role="status">
+                  <strong>Needs repair</strong>
+                  <ul>{pipelineStatus.alerts.map(alert => <li key={alert}>{alert}</li>)}</ul>
+                </div>
+              ) : null}
+              {pipelineStatus?.warnings?.length ? (
+                <div className="admin-alert admin-alert--warning" role="status">
+                  <strong>Needs attention</strong>
+                  <ul>{pipelineStatus.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+                </div>
+              ) : null}
+              {!pipelineStatus?.alerts?.length && !pipelineStatus?.warnings?.length && pipelineStatus?.available ? (
+                <p className="admin-system-copy">No issues were reported by the latest check.</p>
+              ) : null}
+              {pipelineStatus?.sourceActivation?.sources?.length ? (
+                <div className="admin-table-wrap" style={{ marginTop: 16 }}>
+                  <table className="admin-table">
+                    <caption className="admin-sr-only">Configured source activation status</caption>
+                    <thead>
+                      <tr><th>Source</th><th>Status</th><th>Schedule</th><th>Last success</th></tr>
+                    </thead>
+                    <tbody>
+                      {pipelineStatus.sourceActivation.sources.map(source => (
+                        <tr key={source.source}>
+                          <td>{source.source}</td>
+                          <td>{source.status === 'ready' ? 'Ready' : source.status === 'disabled' ? 'Disabled' : 'Incomplete'}</td>
+                          <td>{source.execution}</td>
+                          <td>{formatDate(source.last_success)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </details>
           <details
             className="admin-system-section"
             id="basic-coverage"

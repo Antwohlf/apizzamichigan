@@ -17,6 +17,7 @@ const ADMIN = [
 ].join('\n');
 const AUTO_LINK = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
 const AI_REVIEW = readFileSync('scripts/ops/ai-source-review-triage.mjs', 'utf8');
+const AI_IDENTITY = readFileSync('scripts/lib/source-review-identity.mjs', 'utf8');
 const RECLASSIFY_AMBIGUOUS = readFileSync('scripts/ops/reclassify-ambiguous-source-candidates.mjs', 'utf8');
 const ACCEPT_LIKELY_NEW = readFileSync('scripts/ops/accept-likely-new-source-candidates.mjs', 'utf8');
 const REVIEWED_NEW_BACKLOG = readFileSync('scripts/ops/reviewed-new-source-backlog-report.mjs', 'utf8');
@@ -119,16 +120,36 @@ function main() {
     'CREATE TABLE IF NOT EXISTS source_review_ai_assessments',
     'UNIQUE (review_queue_id, model)',
     'if (args.cache) await ensureAssessmentTable()',
-    'if (args.cache) await cacheAssessment(row, ai)',
+    "if (args.cache && (!args.deterministicOnly || ai.decision_origin !== 'deterministic_only'))",
+    "else if (args.deterministicOnly)",
+    "decision_origin: 'deterministic_only'",
+    "'--deterministic-only'",
     "const decisions = new Set(['same_place', 'different_place', 'business_replacement', 'uncertain'])",
     "result.needs_human_review = result.decision !== 'same_place' || result.needs_human_review !== false",
     'The decision value must be exactly one of',
   ], 'AI source review guard');
+  includesAll(AI_REVIEW, [
+    "from '../lib/source-review-identity.mjs'",
+    'deterministicDecision',
+    'evidenceFor',
+  ], 'AI identity evidence integration');
+  includesAll(AI_IDENTITY, [
+    'source_website_matches',
+    'source_phone_matches',
+    'location_is_close',
+    'matching official website',
+    'matching phone number',
+    'needs_human_review: true',
+  ], 'AI deterministic identity rules');
   includesAll(SERVER, [
     'JOIN source_review_queue queue ON queue.id = assessment.review_queue_id',
     '(assessment.created_at < queue.updated_at) AS stale',
-    'data: assessment?.stale ? null : assessment',
-  ], 'AI assessment freshness guard');
+    "if (assessment && !assessment.stale)",
+    "const identity = await import('../scripts/lib/source-review-identity.mjs')",
+    'const deterministic = identity.deterministicDecision(reviewRow, evidence)',
+    "model: 'deterministic-identity'",
+    'the UI still keeps the human decision gate.',
+  ], 'AI assessment freshness and deterministic fallback guard');
   assert(!AI_REVIEW.includes('UPDATE source_review_queue'), 'AI review must not mutate queue decisions');
   assert(!AI_REVIEW.includes('INSERT INTO place_sources'), 'AI review must not write provenance');
   assert(!AI_REVIEW.includes('supabase'), 'AI review must not write Supabase');

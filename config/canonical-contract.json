@@ -7,6 +7,38 @@
   },
   "local_only_tables": ["place_sources", "source_review_queue"],
   "sync_target": "pizza_places",
+  "primary_fields": {
+    "pizza_style": "style",
+    "price": "price_range",
+    "business_lifecycle": "lifecycle_status",
+    "personal_status": "status"
+  },
+  "public_fields": {
+    "base": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating"],
+    "pizza": {
+      "map": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "menu_url", "phone", "hours", "price_range", "brand", "operator", "lifecycle_status", "lifecycle_replaced_by_id"],
+      "detail": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "menu_url", "phone", "hours", "price_range", "brand", "operator", "lifecycle_status", "lifecycle_replaced_by_id"],
+      "legacy_map": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "phone", "price_range", "brand", "operator"],
+      "legacy_detail": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "phone", "price_range", "brand", "operator"]
+    },
+    "taco": {
+      "map": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "menu_url", "phone", "hours", "price_range", "brand", "operator", "lifecycle_status", "lifecycle_replaced_by_id"],
+      "detail": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "menu_url", "phone", "hours", "price_range", "brand", "operator", "lifecycle_status", "lifecycle_replaced_by_id"],
+      "legacy_map": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "phone", "price_range", "brand", "operator"],
+      "legacy_detail": ["id", "name", "lat", "lng", "address", "google_place_id", "state", "status", "style", "price", "rating", "website_url", "phone", "price_range", "brand", "operator"]
+    }
+  },
+  "legacy_field_aliases": {
+    "price": "price_range"
+  },
+  "source_precedence": [
+    "official_website",
+    "osm",
+    "fsq_os_places",
+    "all_the_places",
+    "overture_places",
+    "wikidata"
+  ],
   "fields": {
     "identity": ["id", "name", "lat", "lng", "address", "state", "google_place_id"],
     "editorial": ["status", "rating", "notes", "photos", "lifecycle_status", "lifecycle_replaced_by_id"],
@@ -35,6 +67,13 @@
     "blocked_from_source_promotion": ["style", "price", "price_range", "rating", "notes", "status", "photos", "lifecycle_status", "lifecycle_replaced_by_id"]
   },
   "editorial_rules": {
+    "rating": {
+      "normal_scale": {
+        "minimum": 0,
+        "maximum": 10
+      },
+      "legacy_out_of_scale_policy": "preserve_for_personal_history_and_include_in_editorial_filters"
+    },
     "picks": {
       "owner": "Anthony/editorial workflow",
       "minimum_rating_by_entity": {

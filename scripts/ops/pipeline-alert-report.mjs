@@ -10,6 +10,7 @@ import Database from 'better-sqlite3'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildSourceActivationReport } from './source-activation-report.mjs'
 
 const root = process.cwd()
 const dbPath = process.env.QUEUE_DB_PATH || join(root, 'scripts/.job-queue.db')
@@ -25,6 +26,7 @@ const scrapeDeadLinkWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_DEAD_
 const scrapeUnknownWarningLimit = positiveInt(process.env.PIPELINE_SCRAPE_UNKNOWN_WARNING_LIMIT, 100)
 const canonicalDuplicateRateLimit = Math.max(0, Number.parseFloat(process.env.PIPELINE_CANONICAL_DUPLICATE_RATE_LIMIT || '1'))
 const sourcePipelineStaleMinutes = positiveInt(process.env.PIPELINE_SOURCE_STALE_MINUTES, 180)
+const sourcePipelineLaunchdLabel = process.env.SOURCE_PIPELINE_LAUNCHD_LABEL || 'com.apizzamichigan.source-pipeline'
 const reviewBacklogWarningLimit = positiveInt(process.env.PIPELINE_REVIEW_BACKLOG_WARNING_LIMIT, 5000)
 const staleProcessingMinutes = positiveInt(process.env.PIPELINE_STALE_PROCESSING_MINUTES, 120)
 
@@ -43,7 +45,8 @@ function child(script) {
 
 function sourcePipelineReport() {
   const statePath = join(root, 'scripts/.source-pipeline-state.json')
-  if (!existsSync(statePath)) return { ok: false, error: `source pipeline state missing: ${statePath}` }
+  const scheduler = sourcePipelineSchedulerReport()
+  if (!existsSync(statePath)) return { ok: false, scheduler, error: `source pipeline state missing: ${statePath}` }
   try {
     const state = JSON.parse(readFileSync(statePath, 'utf8'))
     const reportPath = join(root, 'scripts/.source-pipeline-last-report.json')
@@ -72,6 +75,7 @@ function sourcePipelineReport() {
       ) === index)
     return {
       ok: true,
+      scheduler,
       lastRun: state.last_run || lastReport?.finished_at || null,
       ageMinutes,
       sourceErrors,
@@ -86,8 +90,64 @@ function sourcePipelineReport() {
         : null,
     }
   } catch (error) {
-    return { ok: false, error: `source pipeline state unreadable: ${error.message}` }
+    return { ok: false, scheduler, error: `source pipeline state unreadable: ${error.message}` }
   }
+}
+
+function sourcePipelineSchedulerReport() {
+  if (process.platform !== 'darwin') {
+    return { available: false, label: sourcePipelineLaunchdLabel, state: 'unsupported', detail: 'launchd status is only available on macOS.' }
+  }
+
+  try {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    if (uid == null) {
+      return { available: false, label: sourcePipelineLaunchdLabel, state: 'unavailable', detail: 'The current runtime has no user id for launchd lookup.' }
+    }
+    const output = execFileSync('launchctl', ['print', `gui/${uid}/${sourcePipelineLaunchdLabel}`], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    const rawState = output.match(/^\s*state\s*=\s*(.+?)\s*$/m)?.[1] || 'unknown'
+    // A short-lived StartInterval job normally reports `not running` between
+    // successful runs. That is an idle, loaded scheduler, not a failure.
+    const state = rawState === 'not running' ? 'idle' : rawState
+    const activeCount = output.match(/^\s*active count\s*=\s*(\d+)/m)?.[1]
+    const lastExitCode = output.match(/^\s*last exit code\s*=\s*(-?\d+)/m)?.[1]
+    return {
+      available: true,
+      label: sourcePipelineLaunchdLabel,
+      state,
+      activeCount: activeCount == null ? null : Number(activeCount),
+      lastExitCode: lastExitCode == null ? null : Number(lastExitCode),
+      detail: state === 'running'
+        ? 'The source pipeline launchd job is running.'
+        : state === 'idle'
+          ? 'The source pipeline launchd job is loaded and waiting for its next scheduled run.'
+          : `The source pipeline launchd job is ${state}.`,
+    }
+  } catch (error) {
+    return {
+      available: true,
+      label: sourcePipelineLaunchdLabel,
+      state: 'not_found',
+      detail: 'The source pipeline launchd job is not loaded for the current user.',
+    }
+  }
+}
+
+function supabasePublicationReport() {
+  const envFile = join(root, '.env.local')
+  const configured = Boolean(
+    process.env.SUPABASE_URL
+    || process.env.VITE_SUPABASE_URL
+    || process.env.SUPABASE_SERVICE_ROLE_KEY
+    || process.env.VITE_SUPABASE_ANON_KEY
+    || existsSync(envFile)
+  )
+  if (!configured) return { state: 'UNCONFIGURED', detail: 'Supabase credentials are not configured on this machine.' }
+  return child('supabase-sync-status-report.mjs')
 }
 
 function main() {
@@ -99,7 +159,9 @@ function main() {
   const identity = child('identity-quality-report.mjs')
   const freshness = child('source-freshness-report.mjs')
   const sourceQuality = child('source-quality-report.mjs')
+  const sourceActivation = buildSourceActivationReport()
   const sourcePipeline = sourcePipelineReport()
+  const publication = supabasePublicationReport()
   let queue = null
   let staleProcessingJobs = []
 
@@ -171,12 +233,32 @@ function main() {
   }
   if (!sourcePipeline.ok) alerts.push(sourcePipeline.error)
   else {
+    if (sourcePipeline.scheduler?.state === 'not_found') {
+      alerts.push(`source pipeline scheduler is not loaded: ${sourcePipeline.scheduler.label}`)
+      actions.push('Load the source pipeline launchd job, then rerun the read-only health report.')
+    } else if (sourcePipeline.scheduler?.state && !['running', 'idle'].includes(sourcePipeline.scheduler.state)) {
+      alerts.push(`source pipeline scheduler is ${sourcePipeline.scheduler.state}: ${sourcePipeline.scheduler.label}`)
+      actions.push('Restart the source pipeline launchd job, then rerun the read-only health report.')
+    }
     if (sourcePipeline.ageMinutes == null || sourcePipeline.ageMinutes > sourcePipelineStaleMinutes) {
       alerts.push(`source pipeline has not completed a run within ${sourcePipelineStaleMinutes} minutes`)
     }
     for (const failure of sourcePipeline.sourceErrors) {
       warnings.push(`source pipeline ${failure.source} last failed: ${failure.error.split('\n')[0]}`)
     }
+  }
+  for (const source of sourceActivation.sources.filter(item => item.status === 'incomplete' && item.enabled)) {
+    alerts.push(`enabled source is incomplete: ${source.source}`)
+  }
+
+  if (publication.state === 'UNCONFIGURED') {
+    warnings.push('Supabase publication status is not configured on this machine')
+    actions.push('Configure the local Supabase status-report credentials before relying on publication alerts.')
+  } else if (publication.state === 'FAIL' || publication.status === 'FAIL') {
+    alerts.push(`Supabase publication status unavailable: ${publication.error || 'status report failed'}`)
+  } else if (publication.publicationReadiness?.status === 'BLOCKED') {
+    warnings.push(`Supabase publication blocked: ${publication.publicationReadiness.reason}`)
+    actions.push('Apply the guarded Supabase bulk-sync migration, verify the RPC, then enable the scheduled sync.')
   }
 
   const scrapeRecent = scrapeFailures.summary?.recent_categories || scrapeFailures.summary?.categories || {}
@@ -224,7 +306,11 @@ function main() {
     thresholds: { unknownFailureLimit, scrapeAheadMinimum, duplicateWarningLimit, staleSourceWarningLimit, staleSourceRatioWarningPercent, scrapeExhaustedWarningLimit, scrapeBlockedWarningLimit, scrapeDeadLinkWarningLimit, scrapeUnknownWarningLimit, canonicalDuplicateRateLimit, sourcePipelineStaleMinutes, reviewBacklogWarningLimit, staleProcessingMinutes },
     queue,
     staleProcessingJobs,
-    classifier: { state: classifier.health?.state || classifier.state || 'FAIL', recent: classifier.queue?.recent || null },
+    classifier: {
+      state: classifier.health?.state || classifier.state || 'FAIL',
+      recent: classifier.queue?.recent || null,
+      backlog: classifier.postgres?.classificationBacklog || null,
+    },
     scrapeFailures: scrapeFailures.summary || null,
     identity: {
       canonical: identity.canonical || null,
@@ -235,7 +321,14 @@ function main() {
     },
     freshness: freshness.sources || null
     ,sourceQuality: sourceQuality.accepted_duplicate_coordinates || null
+    ,sourceActivation
     ,sourcePipeline,
+    publication: {
+      state: publication.state || publication.status || publication.publicationReadiness?.status || 'UNKNOWN',
+      readiness: publication.publicationReadiness || null,
+      bulkRpc: publication.bulkRpc || null,
+      error: publication.error || null,
+    },
     actions: [...new Set(actions)]
   }
   if (json) console.log(JSON.stringify(report, null, 2))

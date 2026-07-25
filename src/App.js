@@ -15,7 +15,7 @@ import DataDashboard from './pages/DataDashboard'
 import PlaceDetailPage from './pages/PlaceDetailPage'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
-import { DEFAULT_THEME_KEY, ThemeKeys } from './themes/siteTheme'
+import { ThemeKeys } from './themes/siteTheme'
 import { supabase } from './supabaseClient'
 import { trackSiteSwitch } from './analytics'
 import { STATE_CENTROIDS } from './data/stateCentroids'
@@ -31,18 +31,26 @@ import {
   publicPlaceSelectForTable,
   publicPizzaPlaceSelect,
 } from './lib/publicPlaceFields'
-import { entityConfigForTheme, normalizeEntityStyle } from './config/entityConfig'
+import { entityConfig, entityConfigForTheme, normalizeEntityStyle } from './config/entityConfig'
 import { normalizeLifecycleStatus } from './lib/lifecycle'
 import { readSupabase } from './lib/supabaseRead'
 import { normalizeRating } from './lib/ratings'
 import { isLegacyPublicSchema, markLegacyPublicSchema } from './lib/publicSchemaCapabilities'
 import { shouldForceIndividualMarkers } from './map/viewport'
+import { readExpiringBrowserCache, writeExpiringBrowserCache } from './lib/expiringBrowserCache'
 
 export { normalizeLifecycleStatus }
 
 export const publicPlaceSelect = publicPizzaPlaceSelect
 export const publicSearchSelectForTable = publicPlaceSearchSelectForTable
 export { publicPlaceSelectForTable }
+
+export const shouldApplyMinimumRating = minimumRating => (
+  minimumRating !== null &&
+  minimumRating !== undefined &&
+  String(minimumRating).trim() !== '' &&
+  Number.isFinite(Number(minimumRating))
+)
 
 // Helper to fetch places for a specific state
 export async function fetchPlacesForState(table, stateCode) {
@@ -308,6 +316,29 @@ export async function fetchPlacesForSearch(table, searchTerms, originalQuery = '
     return data || []
   }))
 
+  // Editorial intent is not stored in the place name. Query the bounded
+  // canonical pick set directly, then let the normal local ranker apply any
+  // accompanying location or identity terms.
+  if (isPicksSearchQuery(originalQuery)) {
+    const entityKey = table === 'taco_places' ? 'taco' : 'pizza'
+    const minimumRating = Number(entityConfig(entityKey).editorial?.picks?.minimumRating ?? 8)
+    const picksQueryFactory = (select) => {
+      let query = supabase
+        .from(table)
+        .select(select)
+        .in('status', ['visited', 'golden'])
+        .gte('rating', minimumRating)
+        .order('rating', { ascending: false, nullsFirst: false })
+        .order('name', { ascending: true })
+        .limit(1000)
+      if (Array.isArray(scopeStates) && scopeStates.length) query = query.in('state', scopeStates)
+      return query
+    }
+    const { data, error } = await executeSearchQuery(picksQueryFactory, table)
+    if (error) throw error
+    responses.push(...(data || []))
+  }
+
   const lifecycleTerms = String(originalQuery || '')
     .toLowerCase()
     .split(/\s+/)
@@ -376,6 +407,62 @@ export async function fetchStateCounts(table, {
   onProgress,
   progressEveryPages = 1,
 } = {}) {
+  // Primary markets are a bounded list of explicit regions. Ask PostgREST for
+  // exact head counts instead of downloading every matching row just to build
+  // aggregate markers. Broad all-market hydration still uses the paginated
+  // path below because it must derive international region keys from rows.
+  const canUseHeadCounts = Array.isArray(includeStates)
+    && includeStates.length > 0
+    && includeStates.every(state => !String(state || '').startsWith('EU'))
+
+  const applyCountFilters = (query, applyHistoricalFilter) => {
+    let nextQuery = query
+    if (Array.isArray(includeStatuses) && includeStatuses.length > 0) {
+      if (caseInsensitiveStatuses) {
+        const statusOr = includeStatuses
+          .map(status => `status.ilike.${String(status).trim().toLowerCase()}*`)
+          .join(',')
+        nextQuery = nextQuery.or(statusOr)
+      } else {
+        nextQuery = nextQuery.in('status', includeStatuses)
+      }
+    }
+    if (requireRating) {
+      nextQuery = nextQuery.not('rating', 'is', null)
+    }
+    if (shouldApplyMinimumRating(minimumRating)) {
+      nextQuery = nextQuery.gte('rating', Number(minimumRating))
+    }
+    if (applyHistoricalFilter && !isLegacyPublicSchema(supabase.from, table) && typeof nextQuery.is === 'function') {
+      nextQuery = nextQuery.is('lifecycle_status', null)
+    }
+    return nextQuery
+  }
+
+  const fetchHeadCounts = async applyHistoricalFilter => {
+    const counts = {}
+    let stateIndex = 0
+    for (const state of includeStates) {
+      const { count, error } = await readSupabase(() => {
+        let query = supabase
+          .from(table)
+          .select('state', { count: 'exact', head: true })
+          .in('state', [state])
+        query = applyCountFilters(query, applyHistoricalFilter)
+        return query
+      })
+      if (error) throw error
+      const numericCount = Number.isFinite(Number(count)) ? Number(count) : 0
+      if (numericCount > 0) counts[state] = numericCount
+      stateIndex += 1
+      if (typeof onProgress === 'function' && stateIndex % progressEveryPages === 0) {
+        onProgress({ ...counts })
+      }
+    }
+    if (typeof onProgress === 'function') onProgress({ ...counts })
+    return counts
+  }
+
   const fetchCounts = async applyHistoricalFilter => {
     const pageSize = 1000
     const counts = {}
@@ -393,25 +480,7 @@ export async function fetchStateCounts(table, {
         if (Array.isArray(includeStates) && includeStates.length > 0) {
           query = query.in('state', includeStates)
         }
-        if (Array.isArray(includeStatuses) && includeStatuses.length > 0) {
-          if (caseInsensitiveStatuses) {
-            const statusOr = includeStatuses
-              .map(status => `status.ilike.${String(status).trim().toLowerCase()}*`)
-              .join(',')
-            query = query.or(statusOr)
-          } else {
-            query = query.in('status', includeStatuses)
-          }
-        }
-        if (requireRating) {
-          query = query.not('rating', 'is', null)
-        }
-        if (Number.isFinite(Number(minimumRating))) {
-          query = query.gte('rating', Number(minimumRating))
-        }
-        if (applyHistoricalFilter && !isLegacyPublicSchema(supabase.from, table) && typeof query.is === 'function') {
-          query = query.is('lifecycle_status', null)
-        }
+        query = applyCountFilters(query, applyHistoricalFilter)
         return query
       })
 
@@ -440,13 +509,15 @@ export async function fetchStateCounts(table, {
   }
 
   try {
-    return await fetchCounts(excludeHistorical)
+    return canUseHeadCounts
+      ? await fetchHeadCounts(excludeHistorical)
+      : await fetchCounts(excludeHistorical)
   } catch (error) {
     // Lifecycle columns are additive. Keep the public app usable against an
     // older Supabase schema until the production migration is applied.
     if (excludeHistorical && isMissingSearchColumnError(error)) {
       markLegacyPublicSchema(supabase.from, table)
-      return fetchCounts(false)
+      return canUseHeadCounts ? fetchHeadCounts(false) : fetchCounts(false)
     }
     throw error
   }
@@ -501,6 +572,13 @@ export const stateCodesForSearch = value => {
   }
 
   return [...codes]
+}
+
+export const searchStateCode = value => {
+  const normalized = normalizeSearchText(value).toUpperCase()
+  if (!normalized) return ''
+  if (US_STATE_CODES.has(normalized)) return normalized
+  return stateCodesForSearch(value)[0] || normalized
 }
 
 const stateAliasTermsForSearch = value => {
@@ -621,6 +699,7 @@ const statusQueryTerms = {
   // words like reviewed/visited/tried for personal-history searches.
   reviewed: ['reviewed', 'visited', 'tried'],
   favorite: ['favorite', 'favorites', 'golden', 'best'],
+  picks: ['pick', 'picks'],
   suggestion: ['suggestion', 'suggestions', 'unvisited'],
   lifecycle: ['closed', 'historical', 'replaced'],
 }
@@ -662,10 +741,20 @@ const termMatchesPlaceStatus = (term, place) => {
     return Boolean(lifecycle)
   }
   if (!status) return false
+  if (statusQueryTerms.picks.includes(term)) {
+    return isAnthonyReviewedPlace(place) && isAnthonysPick(place)
+  }
   if (statusQueryTerms.favorite.includes(term)) return status.startsWith('golden')
   if (statusQueryTerms.reviewed.includes(term)) return status.startsWith('visited') || status.startsWith('golden')
   if (statusQueryTerms.suggestion.includes(term)) return status.startsWith('unvisited')
   return false
+}
+
+export const isPicksSearchQuery = query => {
+  const terms = searchWords(query)
+  return terms.includes('picks') || (
+    terms.includes('pick') && terms.some(term => ['anthony', 'my', 'top'].includes(term))
+  )
 }
 
 const queryMatchesPlaceStatus = (terms, place) =>
@@ -704,10 +793,15 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
   // post-street portion as location evidence without mistaking "Ann Arbor
   // Road" for the city of Ann Arbor.
   const addressLocationText = addressParts.length > 1 ? addressParts.slice(1).join(' ') : ''
+  const normalizedQuery = normalizeSearchText(query)
+  const exactLocationMatch = normalizedQuery && (
+    normalizeSearchText(place?.city) === normalizedQuery ||
+    addressParts.slice(1).some(part => part === normalizedQuery)
+  )
   const website = compactSearchText(place?.website_url)
   const phone = compactSearchText(place?.phone)
   const cityState = normalizeSearchText([place?.city, place?.state].filter(Boolean).join(' '))
-  const stateCode = normalizeSearchText(place?.state).toUpperCase()
+  const stateCode = searchStateCode(place?.state)
   const locationText = normalizeSearchText([place?.address, place?.city, place?.state].filter(Boolean).join(' '))
   const identityText = normalizeSearchText([place?.name, place?.brand, place?.operator].filter(Boolean).join(' '))
   const compactIdentity = compactSearchText([place?.name, place?.brand, place?.operator].filter(Boolean).join(' '))
@@ -715,6 +809,7 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
   const nameWords = searchWords(place?.name)
   const identityWords = searchWords([place?.name, place?.brand, place?.operator].filter(Boolean).join(' '))
   const meaningfulTerms = meaningfulSearchTerms(terms)
+  const hasPicksIntent = isPicksSearchQuery(query)
   const assumedLocationTerm = meaningfulTerms.length >= 2 ? meaningfulTerms[meaningfulTerms.length - 1] : ''
   const assumedNameTerms = assumedLocationTerm ? meaningfulTerms.slice(0, -1) : []
   const price = normalizedPlacePrice(place)
@@ -728,6 +823,7 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
   const isCityOnlyLocationQuery = meaningfulTerms.length >= 2 && !hasStreetAddressSignal && !stateCodesForSearch(query).length
     && !hasWebsiteSignal && !cityState.includes(query) && !hasAddressLocationMatch
   const termExplainsMetadataResult = term =>
+    (hasPicksIntent && ['anthony', 'my', 'top', 'pick', 'picks'].includes(term)) ||
     termMatchesText(identityText, term) ||
     termMatchesText(locationText, term) ||
     termMatchesPrice(term, price) ||
@@ -735,6 +831,9 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
 
   if (name === query) return 0
   if (compactName === compactQuery) return 0.5
+  // A city search should open the city, not a business whose name happens to
+  // start with that city. Full place-name matches still win above this rule.
+  if (exactLocationMatch) return 0.75
   if (website && website.includes(compactQuery) && !isCityOnlyLocationQuery) return 1.25
   if (phone && compactQuery.length >= 4 && phone.includes(compactQuery)) return 1.25
   if (name.startsWith(query)) return 1
@@ -817,12 +916,16 @@ export const placeSearchRank = (place, query, terms = searchWords(query)) => {
 
 export const isAnthonyReviewedPlace = place => {
   const statusRaw = String(place?.statusRaw ?? place?.status ?? '').trim().toLowerCase()
+  const rating = normalizeRating(place?.rating)
   return (
     (statusRaw.startsWith('visited') || statusRaw.startsWith('golden')) &&
-    typeof place?.rating === 'number' &&
-    !Number.isNaN(place.rating)
+    rating !== null
   )
 }
+
+export const isEligibleForAnthonysPicks = (place = {}, options = {}) => (
+  isAnthonyReviewedPlace(place) && isAnthonysPick(place, options)
+)
 
 export const searchResultPriority = place => {
   if (isAnthonyReviewedPlace(place)) return 0
@@ -832,14 +935,31 @@ export const searchResultPriority = place => {
   return 3
 }
 
+export const searchLifecyclePriority = place => (
+  normalizeLifecycleStatus(place?.lifecycleStatus || place?.lifecycle_status || place?.statusRaw) ? 1 : 0
+)
+
 export const searchStatePriority = (place, preferredStates = []) => {
-  const state = normalizeSearchText(place?.state).toUpperCase()
+  const state = searchStateCode(place?.state)
   const index = preferredStates.indexOf(state)
   return index === -1 ? preferredStates.length : index
 }
 
 export const compareSearchResults = (a, b, options = {}) => {
   const preferredStates = Array.isArray(options.preferredStates) ? options.preferredStates : []
+
+  if (options.prioritizeCurrent) {
+    const lifecycleDelta = searchLifecyclePriority(a) - searchLifecyclePriority(b)
+    if (lifecycleDelta !== 0) return lifecycleDelta
+  }
+
+  // An exact identity match is the user's clearest signal. Do this before
+  // market preference only when lifecycle status has not already established
+  // that a current record should lead its historical predecessor.
+  const aIsExactIdentity = (a?._searchRank ?? 99) <= 0.5
+  const bIsExactIdentity = (b?._searchRank ?? 99) <= 0.5
+  if (aIsExactIdentity !== bIsExactIdentity) return aIsExactIdentity ? -1 : 1
+
   if (preferredStates.length) {
     const localityDelta = searchStatePriority(a, preferredStates) - searchStatePriority(b, preferredStates)
     if (localityDelta !== 0) return localityDelta
@@ -847,6 +967,13 @@ export const compareSearchResults = (a, b, options = {}) => {
 
   const rankDelta = (a?._searchRank ?? 99) - (b?._searchRank ?? 99)
   if (rankDelta !== 0) return rankDelta
+
+  // When a chain or common name produces several exact matches, prefer the
+  // records a person can actually locate on the map. Keep incomplete rows in
+  // the result set, but do not let them displace a branch with an address or
+  // coordinates.
+  const locationDelta = searchResultLocationQuality(a) - searchResultLocationQuality(b)
+  if (locationDelta !== 0) return locationDelta
 
   const priorityDelta = searchResultPriority(a) - searchResultPriority(b)
   if (priorityDelta !== 0) return priorityDelta
@@ -867,36 +994,205 @@ const hasUsableSearchAddress = place => {
   return /\d/.test(address) || address.length >= 8
 }
 
+const hasUsableSearchCoordinates = place => (
+  typeof place?.lat === 'number' && Number.isFinite(place.lat) &&
+  typeof place?.lng === 'number' && Number.isFinite(place.lng)
+)
+
+const searchResultLocationQuality = place => {
+  const hasAddress = hasUsableSearchAddress(place)
+  const hasCoordinates = hasUsableSearchCoordinates(place)
+  if (hasAddress && hasCoordinates) return 0
+  if (hasAddress || hasCoordinates) return 1
+  return 2
+}
+
+const normalizeSearchStreet = value => normalizeSearchText(String(value || '').split(',')[0])
+  .replace(/\bnorth\b/g, 'n')
+  .replace(/\bsouth\b/g, 's')
+  .replace(/\beast\b/g, 'e')
+  .replace(/\bwest\b/g, 'w')
+  .replace(/\b(?:street|st)\b/g, 'st')
+  .replace(/\b(?:road|rd)\b/g, 'rd')
+  .replace(/\b(?:avenue|ave)\b/g, 'ave')
+  .replace(/\b(?:boulevard|blvd)\b/g, 'blvd')
+  .replace(/\b(?:drive|dr)\b/g, 'dr')
+  .replace(/\b(?:lane|ln)\b/g, 'ln')
+  .replace(/\b(?:highway|hwy)\b/g, 'hwy')
+  .replace(/\b(?:parkway|pkwy)\b/g, 'pkwy')
+  .replace(/\s+/g, ' ')
+  .trim()
+
+const searchAddressIdentity = place => {
+  const street = normalizeSearchStreet(place?.address)
+  return /\d/.test(street) ? street : ''
+}
+
+const searchPhoneIdentity = value => {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (!digits) return ''
+  return digits.length > 10 ? digits.slice(-10) : digits
+}
+
+const searchWebsiteIdentity = value => {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return ''
+  return raw
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '')
+}
+
+const strongSearchIdentity = place => {
+  const lifecycle = normalizeLifecycleStatus(place?.lifecycleStatus || place?.lifecycle_status || place?.statusRaw)
+  // A current record and its historical predecessor can intentionally share
+  // an address. Never collapse that relationship from contact evidence alone.
+  if (lifecycle) return ''
+
+  const state = normalizeSearchText(place?.state)
+  const googlePlaceId = normalizeSearchText(place?.google_place_id || place?.googlePlaceId)
+  if (googlePlaceId) return `google:${googlePlaceId}`
+
+  const street = searchAddressIdentity(place)
+  if (!state || !street) return ''
+  const phone = searchPhoneIdentity(place?.phone)
+  if (phone.length >= 7) return `phone:${state}|${street}|${phone}`
+  const website = searchWebsiteIdentity(place?.website_url || place?.websiteUrl)
+  return website ? `website:${state}|${street}|${website}` : ''
+}
+
+const strongerSearchRow = (left, right) => (
+  compareSearchResults(left, right) <= 0 ? left : right
+)
+
 export const dedupeSearchRows = rows => {
+  const sourceRows = Array.isArray(rows) ? rows : []
+  const parents = sourceRows.map((_, index) => index)
+  const keyOwners = new Map()
+
+  const find = index => {
+    let root = index
+    while (parents[root] !== root) root = parents[root]
+    while (parents[index] !== index) {
+      const next = parents[index]
+      parents[index] = root
+      index = next
+    }
+    return root
+  }
+
+  const union = (left, right) => {
+    const leftRoot = find(left)
+    const rightRoot = find(right)
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot
+  }
+
+  sourceRows.forEach((row, index) => {
+    const lifecycle = normalizeLifecycleStatus(row?.lifecycleStatus || row?.lifecycle_status || row?.statusRaw)
+    const lifecycleBucket = lifecycle ? `historical:${lifecycle}` : 'current'
+    const name = normalizeSearchText(row?.name)
+    const state = normalizeSearchText(row?.state)
+    const street = searchAddressIdentity(row)
+    const baseIdentity = name && state
+      ? `base:${lifecycleBucket}|${name}|${state}|${street || 'no-street'}`
+      : ''
+    const keys = [baseIdentity, strongSearchIdentity(row) ? `strong:${strongSearchIdentity(row)}` : '']
+      .filter(Boolean)
+
+    keys.forEach(key => {
+      const owner = keyOwners.get(key)
+      if (owner === undefined) keyOwners.set(key, index)
+      else union(index, owner)
+    })
+  })
+
   const groups = new Map()
   const ungrouped = []
-
-  for (const row of Array.isArray(rows) ? rows : []) {
-    const identity = `${normalizeSearchText(row?.name)}|${normalizeSearchText(row?.state)}`
-    if (!identity || identity === '|') {
+  sourceRows.forEach((row, index) => {
+    const name = normalizeSearchText(row?.name)
+    const state = normalizeSearchText(row?.state)
+    if ((!name || !state) && !strongSearchIdentity(row)) {
       ungrouped.push(row)
-      continue
+      return
     }
-    const group = groups.get(identity) || []
+    const root = find(index)
+    const group = groups.get(root) || []
     group.push(row)
-    groups.set(identity, group)
+    groups.set(root, group)
+  })
+
+  const groupNameKey = group => {
+    const first = group[0]
+    const lifecycle = normalizeLifecycleStatus(first?.lifecycleStatus || first?.lifecycle_status || first?.statusRaw)
+    return `${normalizeSearchText(first?.name)}|${normalizeSearchText(first?.state)}|${lifecycle || 'current'}`
   }
+  const locatedNameKeys = new Set(
+    [...groups.values()]
+      .filter(group => group.some(hasUsableSearchAddress))
+      .map(groupNameKey)
+  )
 
   return [
     ...ungrouped,
     ...[...groups.values()].flatMap(group => {
+      if (!group.some(hasUsableSearchAddress) && locatedNameKeys.has(groupNameKey(group))) return []
+      // Strong identifiers can span different source names or languages.
+      // Keep the strongest canonical representation in the public result.
+      if (group.some(strongSearchIdentity) && group.every(row => !normalizeLifecycleStatus(row?.lifecycleStatus || row?.lifecycle_status || row?.statusRaw))) {
+        return [group.reduce(strongerSearchRow)]
+      }
       const located = group.filter(hasUsableSearchAddress)
-      return located.length ? located : group
+      if (!located.length) return group
+
+      // Source providers spell the same street in incompatible ways (for
+      // example, "East William Street" versus "E William St"). Collapse only
+      // an exact normalized street identity, retaining distinct branches.
+      const byStreet = new Map()
+      const withoutStreetIdentity = []
+      located.forEach(row => {
+        const street = searchAddressIdentity(row)
+        if (!street) {
+          withoutStreetIdentity.push(row)
+          return
+        }
+        const existing = byStreet.get(street)
+        byStreet.set(street, existing ? strongerSearchRow(existing, row) : row)
+      })
+
+      return [...byStreet.values(), ...withoutStreetIdentity]
     }),
   ]
 }
 
-const PLACE_TABLE_BY_THEME = Object.fromEntries(
-  Object.values(ThemeKeys).map(themeKey => [themeKey, entityConfigForTheme(themeKey).table])
-)
+export const rankSearchRows = (rows, query, options = {}) => {
+  const normalizedQuery = normalizeSearchText(query)
+  const terms = searchWords(query)
+  return dedupeSearchRows(rows)
+    .map(row => ({
+      ...row,
+      _searchRank: placeSearchRank(row, normalizedQuery, terms),
+    }))
+    .filter(row => row._searchRank < 99)
+    .sort((left, right) => compareSearchResults(left, right, options))
+}
+
 const REGION_COUNTS_CACHE = new Map()
 const ANTHONY_COUNTS_CACHE = new Map()
 const ANTHONY_PICKS_COUNTS_CACHE = new Map()
+const MAP_COUNTS_CACHE_TTL_MS = 15 * 60 * 1000
+const MAP_COUNTS_STORAGE_PREFIX = 'apizza:map-counts:'
+
+const readPersistedMapCounts = key => readExpiringBrowserCache(
+  `${MAP_COUNTS_STORAGE_PREFIX}${key}`,
+  { storage: typeof window === 'undefined' ? null : window.localStorage, ttlMs: MAP_COUNTS_CACHE_TTL_MS },
+)
+
+const writePersistedMapCounts = (key, counts) => writeExpiringBrowserCache(
+  `${MAP_COUNTS_STORAGE_PREFIX}${key}`,
+  counts,
+  { storage: typeof window === 'undefined' ? null : window.localStorage, ttlMs: MAP_COUNTS_CACHE_TTL_MS },
+)
 
 const buildRegionStatesFromCounts = (counts, existing = {}) => {
   const next = { ...existing }
@@ -1043,10 +1339,10 @@ const computeFavorited = (place = {}, normalizedStatus = 'visited') => {
 }
 
 export const isAnthonysPick = (place = {}, options = {}) => {
-  const rating = Number(place.rating)
+  const rating = normalizeRating(place.rating)
   const minimumRating = Number(options.minimumRating)
   const threshold = Number.isFinite(minimumRating) ? minimumRating : 8
-  return Number.isFinite(rating) && rating >= threshold
+  return rating !== null && rating >= threshold
 }
 
 const computePlaceType = (place = {}, fallback) => {
@@ -1099,6 +1395,8 @@ function SiteContainer({ themeKey }) {
   const [searchPlaces, setSearchPlaces] = useState([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState(null)
+  const [searchNotice, setSearchNotice] = useState(null)
+  const [searchRetryToken, setSearchRetryToken] = useState(0)
   const [showAllMarkets, setShowAllMarkets] = useState(initialPublicQuery.showAllMarkets)
   const searchRequestIdRef = React.useRef(0)
   const [userLocation, setUserLocation] = useState(null)
@@ -1113,8 +1411,8 @@ function SiteContainer({ themeKey }) {
   const loadingStatesRef = React.useRef(new Set())
 
   const { theme } = useTheme()
-  const isPizza = themeKey === ThemeKeys.PIZZA
   const entity = entityConfigForTheme(themeKey)
+  const entityTable = entity.table
   const picksConfig = entity.editorial?.picks || {}
   const picksMinimumRating = Number.isFinite(Number(picksConfig.minimumRating))
     ? Number(picksConfig.minimumRating)
@@ -1185,12 +1483,8 @@ function SiteContainer({ themeKey }) {
   }, [filters.styles, filters.prices, filters.statuses, searchQuery, showAnthonysPicks, showHistorical, showAllMarkets])
 
   useEffect(() => {
-    const pageTitle = isPizza
-      ? 'APizzaMichigan - Best Michigan Pizza Map'
-      : 'TacoBoutMichigan - Best Michigan Taco Map'
-    const description = isPizza
-      ? 'Discover Michigan\'s best pizza joints with live filters, maps, and crowd-sourced intel.'
-      : 'Track down Michigan\'s top tacos with the same interactive map experience, now in festive colors.'
+    const pageTitle = entity.pageTitle
+    const description = entity.pageDescription
 
     document.title = pageTitle
 
@@ -1219,12 +1513,12 @@ function SiteContainer({ themeKey }) {
     upsertMeta('name', 'description', description)
     upsertMeta('property', 'og:title', pageTitle)
     upsertMeta('property', 'og:description', description)
-    setFavicon(isPizza ? '/favicon-pizza.svg' : '/favicon-taco.svg')
-  }, [isPizza, themeKey, theme.brandName])
+    setFavicon(entity.favicon)
+  }, [entity])
 
   useEffect(() => {
-    setLoadingVariant(isPizza ? 'pizza' : 'taco')
-  }, [isPizza, setLoadingVariant])
+    setLoadingVariant(entity.loadingVariant)
+  }, [entity, setLoadingVariant])
 
   // Normalize place data (extracted for reuse)
   const normalizePlaceData = useCallback((data, photoMap, defaultPlaceType) => {
@@ -1234,7 +1528,7 @@ function SiteContainer({ themeKey }) {
         place.ID ??
         place.place_id ??
         place.slug ??
-        `${themeKey === ThemeKeys.TACO ? 'taco' : 'pizza'}-${index}`
+        `${entity.entity}-${index}`
       const normalizedPhotos = (() => {
         const fromMap = Array.isArray(photoMap[place.id]) ? photoMap[place.id] : []
         const fallback = convertLegacyPhotos(place.photos)
@@ -1263,9 +1557,9 @@ function SiteContainer({ themeKey }) {
       return {
         ...place,
         id: canonicalId,
-        type: themeKey === ThemeKeys.TACO ? 'taco' : 'pizza',
+        type: entity.entity,
         raw_style: rawStyle,
-        style: normalizeEntityStyle(entity.entity, themeKey === ThemeKeys.TACO ? place.type || place.style : place.style),
+        style: normalizeEntityStyle(entity.entity, entity.entity === 'taco' ? place.type || place.style : place.style),
         price: normalizedPrice,
         price_range: normalizedPriceRange,
         priceRange: normalizedPriceRange,
@@ -1287,7 +1581,7 @@ function SiteContainer({ themeKey }) {
         markerIconUrl,
       }
     })
-  }, [entity.entity, themeKey])
+  }, [entity.entity])
 
   // Initial load: prioritize Michigan + nearby states, then progressively hydrate the rest
   useEffect(() => {
@@ -1296,11 +1590,14 @@ function SiteContainer({ themeKey }) {
     async function initialLoad() {
       setMapLoading(true)
       openLoading(theme.copy.loading || 'Loading map…')
-      const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+      const table = entityTable
       try {
         const regionCountsKey = `${table}:${showHistorical ? 'all' : 'active'}:primary`
-        const cachedRegionCounts = REGION_COUNTS_CACHE.get(regionCountsKey)
-        const cachedAnthonyCounts = ANTHONY_COUNTS_CACHE.get(regionCountsKey)
+        const cachedRegionCounts = REGION_COUNTS_CACHE.get(regionCountsKey) || readPersistedMapCounts(regionCountsKey)
+        const cachedAnthonyCounts = ANTHONY_COUNTS_CACHE.get(regionCountsKey) || readPersistedMapCounts(`${regionCountsKey}:reviewed`)
+
+        if (cachedRegionCounts) REGION_COUNTS_CACHE.set(regionCountsKey, cachedRegionCounts)
+        if (cachedAnthonyCounts) ANTHONY_COUNTS_CACHE.set(regionCountsKey, cachedAnthonyCounts)
 
         if (cachedAnthonyCounts) {
           setAnthonysCountsByState(cachedAnthonyCounts)
@@ -1308,14 +1605,16 @@ function SiteContainer({ themeKey }) {
           setAnthonysCountsByState({})
         }
 
-        if (cachedRegionCounts) {
+        if (cachedRegionCounts && cachedAnthonyCounts) {
           setRegionStates(buildRegionStatesFromCounts(cachedRegionCounts))
           setMapError(null)
           setMapLoading(false)
           closeLoading()
         } else {
           const [priorityCounts, priorityAnthonyCounts] = await Promise.all([
-            fetchStateCounts(table, { includeStates: initialStates, excludeHistorical: !showHistorical }),
+            cachedRegionCounts
+              ? Promise.resolve(cachedRegionCounts)
+              : fetchStateCounts(table, { includeStates: initialStates, excludeHistorical: !showHistorical }),
             cachedAnthonyCounts
               ? Promise.resolve(cachedAnthonyCounts)
               : fetchStateCounts(table, {
@@ -1329,9 +1628,11 @@ function SiteContainer({ themeKey }) {
           if (!isMounted) return
 
           setRegionStates(buildRegionStatesFromCounts(priorityCounts))
-          if (!cachedAnthonyCounts) {
-            setAnthonysCountsByState(priorityAnthonyCounts)
-          }
+          setAnthonysCountsByState(priorityAnthonyCounts)
+          REGION_COUNTS_CACHE.set(regionCountsKey, priorityCounts)
+          ANTHONY_COUNTS_CACHE.set(regionCountsKey, priorityAnthonyCounts)
+          writePersistedMapCounts(regionCountsKey, priorityCounts)
+          writePersistedMapCounts(`${regionCountsKey}:reviewed`, priorityAnthonyCounts)
           setMapError(null)
           setMapLoading(false)
           closeLoading()
@@ -1351,7 +1652,7 @@ function SiteContainer({ themeKey }) {
       isMounted = false
       closeLoading()
     }
-  }, [themeKey, theme.copy.loading, initialStates, openLoading, closeLoading, showHistorical])
+  }, [themeKey, entityTable, theme.copy.loading, initialStates, openLoading, closeLoading, showHistorical])
 
   // The default map only needs the configured primary states. Loading every
   // market is explicit because this aggregate query scans the public table.
@@ -1359,10 +1660,11 @@ function SiteContainer({ themeKey }) {
     if (!showAllMarkets) return undefined
 
     let isMounted = true
-    const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+    const table = entityTable
     const countsKey = `${table}:${showHistorical ? 'all' : 'active'}:all`
-    const cachedCounts = REGION_COUNTS_CACHE.get(countsKey)
+    const cachedCounts = REGION_COUNTS_CACHE.get(countsKey) || readPersistedMapCounts(countsKey)
     if (cachedCounts) {
+      REGION_COUNTS_CACHE.set(countsKey, cachedCounts)
       setRegionStates(prev => buildRegionStatesFromCounts(cachedCounts, prev))
       return () => {
         isMounted = false
@@ -1374,6 +1676,7 @@ function SiteContainer({ themeKey }) {
       onProgress: counts => {
         if (!isMounted) return
         REGION_COUNTS_CACHE.set(countsKey, counts)
+        writePersistedMapCounts(countsKey, counts)
         setRegionStates(prev => buildRegionStatesFromCounts(counts, prev))
       },
       progressEveryPages: 3,
@@ -1385,7 +1688,7 @@ function SiteContainer({ themeKey }) {
     return () => {
       isMounted = false
     }
-  }, [themeKey, showAllMarkets, showHistorical])
+  }, [themeKey, entityTable, showAllMarkets, showHistorical])
 
   // Primary-state reviewed counts arrive with the initial load. Only scan
   // the complete table when the user explicitly asks for all-market reviews.
@@ -1393,10 +1696,11 @@ function SiteContainer({ themeKey }) {
     if (!showAllMarkets || !showAnthonysVisits) return undefined
 
     let isMounted = true
-    const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+    const table = entityTable
     const countsKey = `${table}:${showHistorical ? 'all' : 'active'}:all-reviewed`
-    const cachedCounts = ANTHONY_COUNTS_CACHE.get(countsKey)
+    const cachedCounts = ANTHONY_COUNTS_CACHE.get(countsKey) || readPersistedMapCounts(`${countsKey}:reviewed`)
     if (cachedCounts) {
+      ANTHONY_COUNTS_CACHE.set(countsKey, cachedCounts)
       setAnthonysCountsByState(cachedCounts)
       return () => {
         isMounted = false
@@ -1411,6 +1715,7 @@ function SiteContainer({ themeKey }) {
       onProgress: counts => {
         if (!isMounted) return
         ANTHONY_COUNTS_CACHE.set(countsKey, counts)
+        writePersistedMapCounts(`${countsKey}:reviewed`, counts)
         setAnthonysCountsByState(counts)
       },
       progressEveryPages: 3,
@@ -1422,7 +1727,7 @@ function SiteContainer({ themeKey }) {
     return () => {
       isMounted = false
     }
-  }, [themeKey, showAllMarkets, showAnthonysVisits, showHistorical])
+  }, [themeKey, entityTable, showAllMarkets, showAnthonysVisits, showHistorical])
 
   // Picks is an opt-in view. Avoid another full-table count scan on ordinary
   // map loads, especially on the smallest Supabase compute tier.
@@ -1430,10 +1735,11 @@ function SiteContainer({ themeKey }) {
     if (!showAnthonysPicks) return undefined
 
     let isMounted = true
-    const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+    const table = entityTable
     const countsKey = `${table}:${showHistorical ? 'all' : 'active'}`
-    const cachedCounts = ANTHONY_PICKS_COUNTS_CACHE.get(countsKey)
+    const cachedCounts = ANTHONY_PICKS_COUNTS_CACHE.get(countsKey) || readPersistedMapCounts(`${countsKey}:picks`)
     if (cachedCounts) {
+      ANTHONY_PICKS_COUNTS_CACHE.set(countsKey, cachedCounts)
       setAnthonysPickCountsByState(cachedCounts)
       return () => {
         isMounted = false
@@ -1449,6 +1755,7 @@ function SiteContainer({ themeKey }) {
       onProgress: (counts) => {
         if (!isMounted) return
         ANTHONY_PICKS_COUNTS_CACHE.set(countsKey, counts)
+        writePersistedMapCounts(`${countsKey}:picks`, counts)
         setAnthonysPickCountsByState(counts)
       },
       progressEveryPages: 1,
@@ -1460,7 +1767,7 @@ function SiteContainer({ themeKey }) {
     return () => {
       isMounted = false
     }
-  }, [themeKey, showAnthonysPicks, showHistorical, picksMinimumRating])
+  }, [themeKey, entityTable, showAnthonysPicks, showHistorical, picksMinimumRating])
 
   // Load places for a region when clicked or zoomed into
   const handleStateClick = useCallback(async (stateCode) => {
@@ -1483,27 +1790,22 @@ function SiteContainer({ themeKey }) {
     loadingStatesRef.current.add(loadKey)
 
     const defaultPlaceType = entity.defaultPlaceType
-    const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+    const table = entityTable
 
     try {
       const stateData = await fetchPlacesForState(table, loadKey)
 
-      // Fetch photos
-      let photoMap = {}
-      if (stateData.length) {
-        const placeIds = stateData.map(p => p.id).filter(Boolean)
-        if (placeIds.length) {
-          photoMap = await fetchPhotoMap(placeIds)
-        }
-      }
-
-      const normalized = normalizePlaceData(stateData, photoMap, defaultPlaceType)
+      // Region loading should stay focused on map data. Review photos are
+      // loaded lazily when a user opens a place popup; fetching every photo in
+      // a state-sized batch creates unnecessary database and storage work.
+      const normalized = normalizePlaceData(stateData, {}, defaultPlaceType)
 
       // Mark as loaded (aggregate hides, markers show)
       setRegionStates(prev => ({
         ...prev,
         [loadKey]: { ...prev[loadKey], status: 'loaded', places: normalized }
       }))
+      return normalized
     } catch (err) {
       // Revert to unloaded on error (aggregate stays visible)
       setRegionStates(prev => ({
@@ -1511,10 +1813,20 @@ function SiteContainer({ themeKey }) {
         [loadKey]: { ...prev[loadKey], status: 'unloaded' }
       }))
       console.error(`[App] Failed to load region ${loadKey}:`, err)
+      return null
     } finally {
       loadingStatesRef.current.delete(loadKey)
     }
-  }, [regionStates, entity.defaultPlaceType, themeKey, normalizePlaceData])
+  }, [regionStates, entity.defaultPlaceType, entityTable, normalizePlaceData])
+
+  // Keep a normalized local set available as a graceful search fallback when
+  // the remote lookup is temporarily unavailable.
+  const allLoadedPlaces = useMemo(() => {
+    const loadedPlaces = Object.values(regionStates)
+      .filter(r => r.status === 'loaded')
+      .flatMap(r => r.places)
+    return dedupeSearchRows(loadedPlaces)
+  }, [regionStates])
 
   useEffect(() => {
     let isMounted = true
@@ -1526,6 +1838,7 @@ function SiteContainer({ themeKey }) {
     if (!lookupTerms.length) {
       setSearchPlaces([])
       setSearchError(null)
+      setSearchNotice(null)
       setSearchLoading(false)
       return () => {
         isMounted = false
@@ -1535,8 +1848,9 @@ function SiteContainer({ themeKey }) {
     async function loadSearchPlaces() {
       setSearchLoading(true)
       setSearchError(null)
+      setSearchNotice(null)
       setSearchPlaces([])
-      const table = PLACE_TABLE_BY_THEME[themeKey] || PLACE_TABLE_BY_THEME[DEFAULT_THEME_KEY]
+      const table = entityTable
       const defaultPlaceType = entity.defaultPlaceType
 
       try {
@@ -1555,15 +1869,7 @@ function SiteContainer({ themeKey }) {
         // Rank and cap before loading photo metadata. Broad searches such as
         // "pizza" can otherwise turn one keystroke into hundreds of photo
         // requests before the map has anything useful to render.
-        const rankedRows = dedupeSearchRows(rows)
-          .map(row => ({
-            ...row,
-            _searchRank: placeSearchRank(row, normalizeSearchText(searchQuery), searchWords(searchQuery)),
-          }))
-          .filter(row => row._searchRank < 99)
-          .sort((left, right) => {
-            return compareSearchResults(left, right)
-          })
+        const rankedRows = rankSearchRows(rows, searchQuery)
           .slice(0, SEARCH_RESULT_LIMIT)
 
         let photoMap = {}
@@ -1580,8 +1886,16 @@ function SiteContainer({ themeKey }) {
         setSearchPlaces(normalizePlaceData(rankedRows, photoMap, defaultPlaceType))
       } catch (err) {
         if (!isCurrentRequest()) return
-        setSearchPlaces([])
-        setSearchError(err)
+        const fallbackRows = rankSearchRows(allLoadedPlaces, searchQuery)
+          .slice(0, SEARCH_RESULT_LIMIT)
+        if (fallbackRows.length) {
+          setSearchPlaces(normalizePlaceData(fallbackRows, {}, defaultPlaceType))
+          setSearchNotice('Search is temporarily unavailable. Showing places already loaded on the map.')
+          setSearchError(null)
+        } else {
+          setSearchPlaces([])
+          setSearchError(err)
+        }
         console.warn('[App] Search lookup failed:', err)
       } finally {
         if (isCurrentRequest()) setSearchLoading(false)
@@ -1593,7 +1907,7 @@ function SiteContainer({ themeKey }) {
       isMounted = false
       window.clearTimeout(debounceTimer)
     }
-  }, [searchQuery, themeKey, entity.defaultPlaceType, normalizePlaceData, showAllMarkets, publicScopeStates])
+  }, [searchQuery, searchRetryToken, themeKey, entity.defaultPlaceType, entityTable, normalizePlaceData, showAllMarkets, publicScopeStates, allLoadedPlaces])
 
   // Handle Near Me toggle
   const handleNearMeToggle = useCallback(() => {
@@ -1632,13 +1946,6 @@ function SiteContainer({ themeKey }) {
     )
   }, [nearMeActive, userLocation])
 
-  // Derive all loaded places from regionStates
-  const allLoadedPlaces = useMemo(() => {
-    return Object.values(regionStates)
-      .filter(r => r.status === 'loaded')
-      .flatMap(r => r.places)
-  }, [regionStates])
-
   const effectiveStatusSet = useMemo(
     () => (
       showAnthonysVisits
@@ -1674,7 +1981,7 @@ function SiteContainer({ themeKey }) {
         nextPlace = { ...nextPlace, _distance: distance }
       }
 
-      if (showAnthonysPicks && !isAnthonysPick(place, { minimumRating: picksMinimumRating })) return matches
+      if (showAnthonysPicks && !isEligibleForAnthonysPicks(place, { minimumRating: picksMinimumRating })) return matches
 
       // Style, price, status filters
       const placeStatus = place.status || 'visited'
@@ -1694,6 +2001,7 @@ function SiteContainer({ themeKey }) {
     } else if (searchLower) {
       results = results.slice().sort((left, right) => compareSearchResults(left, right, {
         preferredStates: preferredSearchStates,
+        prioritizeCurrent: !searchTerms.some(term => LIFECYCLE_SEARCH_TERMS.has(term)),
       }))
     }
 
@@ -1803,11 +2111,9 @@ function SiteContainer({ themeKey }) {
     [theme]
   )
 
-  const nextThemeKey = isPizza ? ThemeKeys.TACO : ThemeKeys.PIZZA
-  const switchTarget = isPizza ? '/tacos' : '/'
-  const switchLabel = isPizza
-    ? 'Check out TacoBoutMichigan'
-    : 'Check out APizzaMichigan'
+  const nextThemeKey = entity.switchTo.themeKey
+  const switchTarget = entity.switchTo.route
+  const switchLabel = entity.switchTo.label
 
   const handleLocatePlace = useCallback(
     details => {
@@ -1818,13 +2124,13 @@ function SiteContainer({ themeKey }) {
       if (lat !== null && lng !== null) {
         // nothing additional; map layer will pan when popup opens
       }
-      const targetType = details.entity === 'taco' ? 'taco' : 'pizza'
+      const targetType = details.entity || entity.entity
       const id = details.id || details.place_id || null
       if (id) {
         openMapPopup(targetType, id)
       }
     },
-    [openMapPopup]
+    [entity.entity, openMapPopup]
   )
 
   // Handle clicking a place in the results list
@@ -1832,12 +2138,12 @@ function SiteContainer({ themeKey }) {
     (place) => {
       if (!place) return
       setView('map')
-      const targetType = isPizza ? 'pizza' : 'taco'
+      const targetType = entity.entity
       if (place.id) {
         openMapPopup(targetType, place.id)
       }
     },
-    [isPizza, openMapPopup]
+    [entity.entity, openMapPopup]
   )
 
   const handleSiteSwitch = () => {
@@ -1871,10 +2177,10 @@ function SiteContainer({ themeKey }) {
           <div className="view-toggle">
             {['map', 'frozen'].map(mode => {
               const isActive = view === mode
-              const isTacoComingSoonTab = !isPizza && mode === 'frozen'
+              const isFrozenComingSoon = mode === 'frozen' && entity.features?.frozenDirectory === false
               const label = mode === 'map'
                 ? theme.copy.frozenToggleMap
-                : (isTacoComingSoonTab ? 'Coming Soon' : theme.copy.frozenToggleFrozen)
+                : (isFrozenComingSoon ? 'Coming Soon' : theme.copy.frozenToggleFrozen)
               return (
                 <button
                   key={mode}
@@ -1910,6 +2216,9 @@ function SiteContainer({ themeKey }) {
                     locationError={locationError}
                     searchLoading={searchLoading}
                     searchError={searchError}
+                    searchNotice={searchNotice}
+                    searchResultLimitReached={Boolean(searchQuery.trim()) && searchPlaces.length >= SEARCH_RESULT_LIMIT}
+                    onSearchRetry={() => setSearchRetryToken(value => value + 1)}
                     onNearMeToggle={handleNearMeToggle}
                     onRadiusChange={setNearMeRadius}
                     filteredPlaces={filteredPlaces}
@@ -1919,10 +2228,10 @@ function SiteContainer({ themeKey }) {
                   />
                   <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
                     <MapView
-                      key={isPizza ? 'pizza-map' : 'taco-map'}
+                      key={`${entity.entity}-map`}
                       places={filteredPlaces}
                       theme={theme}
-                      site={isPizza ? 'pizza' : 'taco'}
+                      site={entity.entity}
                       showClusterCounts={showClusterCounts}
                       stateAggregates={filteredDisplayAggregates}
                       onStateClick={handleStateClick}
@@ -1934,16 +2243,15 @@ function SiteContainer({ themeKey }) {
                         placeCount: filteredPlaces.length,
                       })}
                       showAllMarkets={showAllMarkets}
-                      onScopeChange={setShowAllMarkets}
                       resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}-${showAnthonysPicks ? 'anthonys-picks' : 'all-places'}-${showHistorical ? 'historical' : 'current'}`}
                     />
                   </Suspense>
                 </div>
               )
             ) : (
-              themeKey === ThemeKeys.TACO ? (
+              entity.features?.frozenDirectory === false ? (
                 <div className="map-status" data-status="loading">
-                  Taco recipes are coming soon.
+                  {entity.frozenUnavailableMessage}
                 </div>
               ) : (
                 <FrozenPizzaDirectory filters={filters} theme={theme} themeKey={themeKey} />
@@ -1961,13 +2269,13 @@ function SiteContainer({ themeKey }) {
         <aside className="sidebar-wrapper sidebar-wrapper--recommendations" aria-label="Recommendations and statistics">
           <div className="sidebar-inner sidebar-inner--sticky">
             <StatsPanel
-              table={isPizza ? 'pizza_places' : 'taco_places'}
+              table={entity.table}
               states={showAllMarkets ? [] : publicScopeStates}
             />
             <SuggestionForm
               key={themeKey}
               theme={theme}
-              isPizza={isPizza}
+              isPizza={entity.entity === 'pizza'}
               onLocatePlace={handleLocatePlace}
             />
             <BugReportFab />

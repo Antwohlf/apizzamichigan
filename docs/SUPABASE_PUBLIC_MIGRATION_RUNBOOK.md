@@ -23,7 +23,10 @@ fields already searched by the public sites. It is safe to run either
 migration again.
 The migration also installs the guarded `apply_pizza_places_sync_batch(jsonb)`
 RPC. It performs approved updates in one database transaction and is callable
-only by the Supabase service role.
+only by the Supabase service role. Non-null `style`, `price`, `price_range`,
+and `style_confidence` values come from the local canonical `pizza_places` row
+and may correct stale legacy values in the public mirror. Null local values do
+not clear public values.
 
 If the lifecycle columns are already present but the readiness report says the
 RPC is missing, run the smaller repair file instead:
@@ -52,20 +55,24 @@ On the iMac, run the read-only check:
 
 ```bash
 cd /srv/apizzamichigan
-/usr/local/bin/node scripts/ops/supabase-sync-readiness-report.mjs --batch 20 --sample 3
+ENABLE_LIFECYCLE_SYNC=1 /usr/local/bin/node scripts/ops/supabase-sync-readiness-report.mjs --batch 20 --sample 3
 ```
+
+The explicit environment prefix matters: an interactive SSH shell does not
+inherit the `ENABLE_LIFECYCLE_SYNC=1` value from the launchd service. The
+command is read-only; it only makes the check evaluate the same lifecycle
+contract as the scheduled publisher.
 
 The expected lifecycle section is:
 
 ```text
-- enabled: no
+- enabled: yes
 - remote schema: ready
 ```
 
-Only after `remote schema: ready` is confirmed, add
-`ENABLE_LIFECYCLE_SYNC=1` to the environment used by
-`com.apizzamichigan.supabase-sync`, reload that launchd job, and rerun the
-same readiness report. The lifecycle section should then show
+If the remote schema is ready, the launchd template already contains the
+required lifecycle flag. Reload the service only when the iMac checkout has
+the current template, then rerun the same readiness report and require
 `enabled: yes` with no remote-schema error.
 
 ## Optional Search Index Step
