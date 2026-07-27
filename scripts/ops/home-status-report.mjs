@@ -468,6 +468,7 @@ async function main() {
   ]
   const schedulers = [
     launchdServiceReport('com.apizzamichigan.source-pipeline'),
+    launchdServiceReport('com.apizzamichigan.taco-source-pipeline'),
     launchdServiceReport('com.apizzamichigan.classifier-reconciler'),
     launchdServiceReport('com.apizzamichigan.classifier-retry-feeder'),
     launchdServiceReport('com.apizzamichigan.menu-parser'),
