@@ -115,6 +115,28 @@ test('accepts scheduled source and backup jobs plus a running classifier', () =>
   assert.deepEqual(result.remaining, [])
 })
 
+test('accepts scheduled source and backup jobs reported under schedulers', () => {
+  const result = summarizeOperationalReadiness({
+    runtime: { ok: true },
+    syncPolicy: { ok: true },
+    sync: { ok: true, value: { status: 'OK', bulkRpc: { state: 'ready' } } },
+    reviewedNew: { ok: true, value: { missing_count: 0 } },
+    homeStatus: {
+      launchd: [
+        { label: 'com.apizzamichigan.classifier', ok: true, operationalState: 'running' },
+      ],
+      schedulers: [
+        { label: 'com.apizzamichigan.source-pipeline', ok: true, operationalState: 'scheduled_idle' },
+        { label: 'com.apizzamichigan.backup', ok: true, operationalState: 'scheduled_idle' },
+      ],
+      backup: { ok: true },
+    },
+  })
+
+  assert.equal(result.ready, true)
+  assert.deepEqual(result.remaining, [])
+})
+
 test('orders actionable handoff items by the next production gate and removes duplicates', () => {
   const actions = nextActions([
     { workstream: '5. Product/UI', status: 'partial', remaining: ['check the rendered mobile layout'] },
