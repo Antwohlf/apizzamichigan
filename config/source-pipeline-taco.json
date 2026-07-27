@@ -25,7 +25,7 @@
   "sources": {
     "osm": {
       "enabled": true,
-      "cadence_hours": 24,
+      "cadence_hours": 1,
       "regions_per_run": 1,
       "auto_create": true,
       "capabilities": ["discover", "match_existing", "enrich_evidence"],

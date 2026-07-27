@@ -104,7 +104,9 @@ export function buildSourceActivationReport({
   return {
     generated_at: new Date().toISOString(),
     entity: config.entity || null,
-    schedule_owner: 'com.apizzamichigan.source-pipeline',
+    schedule_owner: config.entity === 'taco'
+      ? 'com.apizzamichigan.taco-source-pipeline'
+      : 'com.apizzamichigan.source-pipeline',
     operational_regions: operationalRegions,
     source_pipeline_enabled: Boolean(config.entity),
     sources,
