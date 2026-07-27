@@ -41,8 +41,14 @@ if (!config.sources.official_website.capabilities.includes('promote_contact')) {
 if (required.filter(key => config.sources[key].capabilities.includes('promote_contact')).length !== 1) {
   throw new Error('exactly one source may currently promote contact fields automatically');
 }
-if (config.limits.new_places_per_run !== 50 || config.limits.new_places_per_day !== 250 || config.limits.classify_queue_jobs_per_region_per_run !== 50 || config.limits.classify_partial_retry_jobs_per_region_per_run !== 2) {
+if (config.limits.new_places_per_run !== 50 || config.limits.new_places_per_day !== 250 || config.limits.classify_queue_jobs_per_region_per_run !== 50 || config.limits.classify_partial_retry_jobs_per_region_per_run !== 0) {
   throw new Error('new-place caps and classifier feeder cap must remain bounded');
+}
+if (config.classifier_retry_feeder?.enabled !== true
+  || config.classifier_retry_feeder.high_water !== 2
+  || config.classifier_retry_feeder.batch_per_run !== 2
+  || JSON.stringify(config.classifier_retry_feeder.states) !== JSON.stringify(['MI', 'NY'])) {
+  throw new Error('classifier retry feeder must remain enabled and bounded to two MI/NY jobs');
 }
 if (config.sources.wikidata.auto_create || config.sources.official_website.auto_create) {
   throw new Error('enrichment-only sources cannot auto-create places');
@@ -139,8 +145,8 @@ if (!runner.includes('SOURCE_PIPELINE_RUN_SCRAPER') || !runner.includes('managed
 if (!runner.includes('record-website-provenance.mjs')) {
   throw new Error('source runner must record website evidence after managed scraping');
 }
-if (!runner.includes('populate-classify-from-db.mjs') || !runner.includes("'--skip-existing'") || !runner.includes("'--retry-partial'") || !runner.includes('classify_queue_jobs_per_region_per_run') || !runner.includes('classify_partial_retry_jobs_per_region_per_run') || !runner.includes('populateClassifierQueue(config, options.apply, regions)') || !runner.includes('regions.map(region => region.key)') || runner.includes("for (const state of ['MI', 'NY'])")) {
-  throw new Error('source runner must feed bounded classifier jobs from configured operational regions without duplicating existing queue work');
+if (!runner.includes('populate-classify-from-db.mjs') || !runner.includes("'--skip-existing'") || !runner.includes('classify_queue_jobs_per_region_per_run') || !runner.includes('populateClassifierQueue(config, options.apply, regions)') || !runner.includes('regions.map(region => region.key)') || runner.includes("for (const state of ['MI', 'NY'])") || runner.includes("'--retry-partial'")) {
+  throw new Error('source runner must feed only new bounded classifier jobs; partial retries belong to the dedicated feeder');
 }
 if (!runner.includes('auto-link-source-review-queue.mjs')
   || !runner.includes('sourceAutoLinkArguments')

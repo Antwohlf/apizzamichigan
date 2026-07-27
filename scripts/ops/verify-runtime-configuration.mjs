@@ -19,6 +19,7 @@ const REQUIRED_SCRIPTS = [
   'scripts/ops/run-source-pipeline.mjs',
   'scripts/ops/source-activation-report.mjs',
   'scripts/ops/reconcile-classifier-queue.mjs',
+  'scripts/ops/feed-classifier-retries.mjs',
   'scripts/ops/verify-canonical-contract.mjs',
   'scripts/enrichment/agents/llm-classifier.mjs',
   'scripts/enrichment/agents/web-scraper.mjs',
@@ -88,6 +89,10 @@ function main() {
   assert(backup.includes('create-local-backup.mjs'), 'backup service must run the local backup job');
   assert(backup.includes('--retention 7'), 'backup service must retain seven runs');
   assert(backup.includes('<key>StartCalendarInterval</key>'), 'backup service must run on a calendar schedule');
+
+  const retryFeeder = read('infra/local/launchd/com.apizzamichigan.classifier-retry-feeder.plist.template');
+  assert(retryFeeder.includes('feed-classifier-retries.mjs --apply'), 'classifier retry feeder must run the bounded retry feeder');
+  assert(retryFeeder.includes('<integer>300</integer>'), 'classifier retry feeder should run every five minutes');
 
   const gitignore = read('.gitignore');
   assert(gitignore.split('\n').some(line => line.trim() === '.env'), '.gitignore must protect .env');

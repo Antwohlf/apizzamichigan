@@ -269,7 +269,6 @@ function promoteContactFields(config, apply) {
 function populateClassifierQueue(config, apply, regions) {
   if (!apply || config.entity !== 'pizza') return 'disabled';
   const limit = Number(config.limits.classify_queue_jobs_per_region_per_run || 50);
-  const partialRetryLimit = Number(config.limits.classify_partial_retry_jobs_per_region_per_run || 0);
   const outputs = [];
   for (const state of regions.map(region => region.key)) {
     outputs.push(run(NODE, [
@@ -278,15 +277,6 @@ function populateClassifierQueue(config, apply, regions) {
       '--limit', String(limit),
       '--skip-existing',
     ], { timeout: 180000 }).slice(-1200));
-    if (partialRetryLimit > 0) {
-      outputs.push(run(NODE, [
-        'scripts/enrichment/populate-classify-from-db.mjs',
-        '--state', state,
-        '--limit', String(partialRetryLimit),
-        '--skip-existing',
-        '--retry-partial',
-      ], { timeout: 180000 }).slice(-1200));
-    }
   }
   return outputs.join('\n');
 }

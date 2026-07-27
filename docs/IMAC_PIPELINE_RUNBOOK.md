@@ -386,6 +386,19 @@ The JSON health report identifies the expected service as
 launchd policy is the recovery mechanism. A live listener proves connectivity,
 but does not prove the laptop launchd job is currently installed.
 
+### Classifier retry feeder
+
+Partial classifier outputs are retried by a separate bounded feeder so source
+downloads cannot starve recovery. It runs every five minutes, keeps at most two
+classify jobs pending or processing, and gives up after one partial retry; the
+remaining exhausted rows stay in the human review backlog:
+
+```bash
+ssh example-host 'cd /srv/apizzamichigan && cp infra/local/launchd/com.apizzamichigan.classifier-retry-feeder.plist.template ~/Library/LaunchAgents/com.apizzamichigan.classifier-retry-feeder.plist && plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.classifier-retry-feeder.plist && launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.classifier-retry-feeder.plist && launchctl enable "gui/$(id -u)/com.apizzamichigan.classifier-retry-feeder" && launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.classifier-retry-feeder"'
+ssh example-host 'cd /srv/apizzamichigan && /usr/local/bin/node scripts/ops/feed-classifier-retries.mjs --dry-run'
+ssh example-host 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier-retry-feeder"'
+```
+
 ### Classifier queue reconciler
 
 The classifiers recover detached jobs during their normal loop. A separate
