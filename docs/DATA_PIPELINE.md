@@ -83,7 +83,15 @@ source of truth for the publication boundary:
 | Entity | Public table | Bulk RPC | Publication |
 | --- | --- | --- | --- |
 | pizza | `pizza_places` | `apply_pizza_places_sync_batch` | enabled |
-| taco | `taco_places` | `apply_taco_places_sync_batch` | dry-run only |
+| taco | `taco_places` | `apply_taco_places_sync_batch` | enabled after `supabase-taco-publication-migration.sql` |
+
+Taco uses the same local-first source and classifier architecture as pizza.
+Its bounded scheduler is `config/source-pipeline-taco.json`; install
+`com.apizzamichigan.taco-source-pipeline.plist.template` only after reviewing
+the first dry run. Public taco publication is guarded by
+`scripts/enrichment/supabase-taco-publication-migration.sql`; the taco sync
+launchd template must remain stopped until that migration has been applied and
+the taco readiness report shows the bulk RPC as available.
 
 The low-level sync policy resolves an entity-specific table from that registry
 and rejects an entity/table mismatch before selecting or writing rows. Pizza is

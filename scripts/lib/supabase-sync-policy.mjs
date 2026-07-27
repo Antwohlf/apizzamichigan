@@ -108,7 +108,10 @@ export const LOCAL_SYNC_COLS = [
 ];
 
 export const ENTITY_EXCLUDED_SYNC_COLS = Object.freeze({
-  taco: Object.freeze(['menu_data', 'menu_parse_confidence', 'menu_parse_notes', 'menu_last_parsed_at']),
+  taco: Object.freeze([
+    'menu_data', 'menu_parse_confidence', 'menu_parse_notes', 'menu_last_parsed_at',
+    'qa_status', 'qa_schema_version',
+  ]),
 });
 
 export function syncColumnsForEntity(columns, entity = 'pizza') {

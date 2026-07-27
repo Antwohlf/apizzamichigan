@@ -11,7 +11,7 @@ export const SUPABASE_SYNC_PROFILES = Object.freeze({
     entity: 'taco',
     targetTable: 'taco_places',
     bulkRpc: 'apply_taco_places_sync_batch',
-    publicationEnabled: false,
+    publicationEnabled: true,
   }),
 });
 
