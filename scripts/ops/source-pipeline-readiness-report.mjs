@@ -12,13 +12,17 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { summarizeOsmManifest } from '../lib/osm-refresh-summary.mjs';
 
 function parseArgs(argv) {
-  const args = { json: false, regions: null };
+  const args = { json: false, regions: null, entity: 'pizza' };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--json') args.json = true;
     else if (arg === '--regions') {
       args.regions = String(argv[++i] || '').split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
       if (!args.regions.length) throw new Error('--regions requires at least one region');
+    }
+    else if (arg === '--entity') {
+      args.entity = String(argv[++i] || '').trim().toLowerCase();
+      if (!['pizza', 'taco'].includes(args.entity)) throw new Error('--entity must be pizza or taco');
     }
     else if (arg === '--help') {
       printHelp();
@@ -36,11 +40,37 @@ function printHelp() {
 Options:
   --json   Emit machine-readable JSON
   --regions MI,NY  Limit the report to the active operating regions
+  --entity pizza|taco  Select the source pipeline contract (default: pizza)
 
-Read-only. Reports current evidence for the APizzaMichigan source pipeline
+Read-only. Reports current evidence for the selected source pipeline
 backlog: matching performance, ATP readiness, review queue, FSQ status,
 Supabase boundary, UI/search, and canonical promotion policy.
 `);
+}
+
+function entityConfig(entity) {
+  return JSON.parse(read(`config/source-pipeline${entity === 'pizza' ? '' : `-${entity}`}.json`));
+}
+
+function entitySourceStatus(entity, config) {
+  const configured = Object.entries(config.sources || {})
+    .filter(([, source]) => source?.enabled !== false)
+    .map(([name, source]) => ({ source: name, cadence_hours: source.refresh_after_hours || source.cadence_hours || null }));
+  const deferred = entity === 'taco'
+    ? ['ATP franchise manifests', 'Wikidata export']
+    : [];
+  return {
+    item: `${entity} source configuration`,
+    status: configured.length ? 'ready' : 'blocked',
+    evidence: [
+      `entity=${entity}`,
+      `operational_regions=${(config.operational_regions || []).join(',')}`,
+      `enabled_sources=${configured.map(row => row.source).join(',')}`,
+      ...(deferred.length ? [`deferred_sources=${deferred.join(',')}`] : []),
+    ],
+    remaining: configured.length ? [] : ['no enabled source adapters configured'],
+    sources: configured,
+  };
 }
 
 function read(path) {
@@ -186,11 +216,10 @@ function sourceFreshnessStatus(regions) {
   };
 }
 
-function osmStatus(files, regions) {
+function osmStatus(files, regions, pipelineConfig) {
   const evidence = [];
   const remaining = [];
   const nextActions = [];
-  const pipelineConfig = JSON.parse(read('config/source-pipeline.json'));
   const configuredStep = Number(pipelineConfig.sources?.osm?.tile_step || 0.5);
   const configuredRegions = new Map((pipelineConfig.regions || []).map(region => [region.key, region.bbox]));
   const operatingRegions = new Set(
@@ -213,7 +242,8 @@ function osmStatus(files, regions) {
       if (!existsSync(manifestPath)) continue;
       const manifest = JSON.parse(read(manifestPath));
       const manifestName = manifestPath.split('/').pop();
-      const regionMatch = manifestName.match(/^([a-z]+)-pizza(?:\.step-[^.]+)?(?:\.json)?\.manifest\.json$/i);
+      const entity = pipelineConfig.entity || 'pizza';
+      const regionMatch = manifestName.match(new RegExp(`^([a-z]+)-${entity}(?:\\.step-[^.]+)?(?:\\.json)?\\.manifest\\.json$`, 'i'));
       const regionKey = regionMatch?.[1]?.toUpperCase() || '';
       if (!operatingRegions.has(regionKey)) {
         evidence.push(`out_of_scope_manifest=${manifestPath}`);
@@ -253,7 +283,7 @@ function osmStatus(files, regions) {
       evidence.push(`estimated_hours_remaining=${estimatedHours ?? 'unknown'}`);
       const hasRetryableTiles = Boolean(statuses.failed || statuses.partial);
       if (refreshQueueTiles > 0 || hasRetryableTiles) {
-        const output = `reports/osm/${regionKey.toLowerCase()}-pizza.json`;
+        const output = `reports/osm/${regionKey.toLowerCase()}-${pipelineConfig.entity || 'pizza'}.json`;
         const commands = expectedBbox
           ? osmResumeCommands({
             bbox: expectedBbox,
@@ -580,20 +610,25 @@ function renderMarkdown(report) {
 function main() {
   const args = parseArgs(process.argv);
   const files = loadFiles();
-  const pipelineConfig = JSON.parse(read('config/source-pipeline.json'));
+  const pipelineConfig = entityConfig(args.entity);
   const regions = args.regions?.length ? args.regions : pipelineConfig.operational_regions;
   const items = [
-    osmStatus(files, regions),
+    entitySourceStatus(args.entity, pipelineConfig),
+    osmStatus(files, regions, pipelineConfig),
     sourceMatchingStatus(files),
-    sourceFreshnessStatus(regions),
-    atpStatus(files),
     likelyNewStatus(files),
     reviewWorkflowStatus(files),
-    fsqStatus(files),
-    supabaseBoundaryStatus(files),
-    uiSearchStatus(files),
     promotionPolicyStatus(files),
   ];
+  if (args.entity === 'pizza') {
+    items.push(
+      sourceFreshnessStatus(regions),
+      atpStatus(files),
+      fsqStatus(files),
+      supabaseBoundaryStatus(files),
+      uiSearchStatus(files),
+    );
+  }
   const report = {
     generated_at: new Date().toISOString(),
     overall_status: minStatus(items.map(item => item.status)),
