@@ -193,7 +193,6 @@ async function loadRows(options) {
         website_url,
         osm_tags,
         scrape_notes,
-        source_evidence,
         scrape_method,
         enrichment_status,
         last_enriched_at
@@ -214,7 +213,6 @@ async function loadRows(options) {
         website_url,
         osm_tags,
         scrape_notes,
-        source_evidence,
         scrape_method,
         enrichment_status,
         last_enriched_at
