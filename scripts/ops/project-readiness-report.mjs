@@ -130,7 +130,13 @@ export function summarizeOperationalReadiness({ runtime, syncPolicy, sync, revie
   const syncVerified = runtime.ok && syncPolicy.ok && sync.ok && sync.value.status === 'OK'
   const bulkRpcReady = sync.ok && sync.value.bulkRpc?.state === 'ready'
   const reviewedNewReady = reviewedNew.ok && reviewedNew.value.missing_count === 0
-  const services = homeStatus?.launchd || []
+  // home-status-report separates continuously running jobs from scheduled
+  // jobs. Treat both collections as services for readiness purposes; otherwise
+  // healthy schedulers are incorrectly reported as unavailable.
+  const services = [
+    ...(homeStatus?.launchd || []),
+    ...(homeStatus?.schedulers || []),
+  ]
   const service = label => services.find(row => row.label === label)
   const sourcePipeline = service('com.apizzamichigan.source-pipeline')
   const classifier = service('com.apizzamichigan.classifier')
