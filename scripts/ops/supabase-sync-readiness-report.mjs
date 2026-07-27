@@ -322,6 +322,12 @@ async function main() {
         qaDefaults: qaDefaults.length,
       },
       fieldCounts: countBy(changedFields, value => value),
+      // Protected-field accounting is not part of the current sync profile.
+      // Keep the report sections stable and explicit rather than crashing while
+      // rendering fields from the retired accounting path.
+      protectedFillCounts: [],
+      protectedSkipCounts: [],
+      protectedConflictSamples: [],
       payloadSamples,
       missingSupabaseSamples: sample(missingSupabaseRows, options).map(row => ({
         id: row.id,
