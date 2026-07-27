@@ -268,6 +268,7 @@ async function main() {
     ]);
 
     const nextSelector = {
+      entity: options.entity,
       batch: options.batch,
       changedSinceHours: options.hours,
       onlyClassified: true,
