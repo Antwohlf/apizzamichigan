@@ -7,6 +7,7 @@ import pg from 'pg';
 import 'dotenv/config';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
+import { homedir } from 'os';
 import { createClient } from '@supabase/supabase-js';
 import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
@@ -167,9 +168,17 @@ function publicationReadiness({ lifecycleRemoteSchema, bulkRpc }) {
 }
 
 function bulkRpcConfigured(env) {
-  return /^(1|true|yes)$/i.test(String(
+  if (/^(1|true|yes)$/i.test(String(
     env.APIZZA_SYNC_BULK_RPC || process.env.APIZZA_SYNC_BULK_RPC || '',
-  ).trim());
+  ).trim())) return true;
+
+  // Direct health/status invocations do not inherit launchd's environment.
+  // Read only the installed plist's boolean setting so operational reports
+  // reflect the actual scheduler configuration without reading secrets.
+  const plistPath = resolve(homedir(), 'Library/LaunchAgents/com.apizzamichigan.supabase-sync.plist');
+  if (!existsSync(plistPath)) return false;
+  const plist = readFileSync(plistPath, 'utf8');
+  return /<key>APIZZA_SYNC_BULK_RPC<\/key>\s*<string>(?:1|true|yes)<\/string>/i.test(plist);
 }
 
 async function inspectBulkRpc(supabase, configured, lifecycleRemoteSchema, rpc) {
