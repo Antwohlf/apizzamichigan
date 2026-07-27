@@ -31,6 +31,7 @@ import {
   localSyncSelectParams,
   localSyncSelectSql,
   SUPABASE_SYNC_SELECT_COLS,
+  supabaseSyncSelectCols,
   buildSupabaseInsertPayload,
 } from './lib/supabase-sync-policy.mjs';
 import { supabaseSyncProfile } from './lib/supabase-sync-profiles.mjs';
@@ -293,7 +294,7 @@ async function main() {
       const { data: sbRows } = await supabaseRequest(
         () => sb
           .from(profile.targetTable)
-          .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
+          .select(supabaseSyncSelectCols(args.entity).join(', '))
           .in('id', ids),
         `read ids=${ids.length}`,
       );
@@ -328,7 +329,7 @@ async function main() {
         const current = sbMap.get(String(local.id));
         if (!current) {
           if (args.insertMissingReviewedNew && reviewedNewImportedIds.has(Number(local.id))) {
-            inserts.push(buildSupabaseInsertPayload(local));
+            inserts.push(buildSupabaseInsertPayload(local, { entity: args.entity }));
             wouldInsert++;
           } else if (args.verbose) {
             // No row in Supabase with this id. We skip to avoid duplicates.
@@ -337,7 +338,7 @@ async function main() {
           continue;
         }
 
-        const payload = buildSupabasePayload(local, current, { lifecycleOnly: args.lifecycleOnly });
+      const payload = buildSupabasePayload(local, current, { lifecycleOnly: args.lifecycleOnly, entity: args.entity });
         if (payload) {
           updates.push(payload);
           wouldUpdate++;

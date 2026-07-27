@@ -6,6 +6,7 @@ import {
   syncTargetForEntity,
   supabaseSyncProfile,
 } from './supabase-sync-profiles.mjs';
+import { localSyncSelectSql, supabaseSyncSelectCols } from './supabase-sync-policy.mjs';
 
 test('keeps pizza as the enabled default publication profile', () => {
   assert.deepEqual(supabaseSyncProfile(), SUPABASE_SYNC_PROFILES.pizza);
@@ -25,4 +26,10 @@ test('resolves entity-specific target tables and bulk RPCs from one profile', ()
   assert.equal(syncTargetForEntity('taco'), 'taco_places');
   assert.equal(syncRpcForEntity('pizza'), 'apply_pizza_places_sync_batch');
   assert.equal(syncRpcForEntity('taco'), 'apply_taco_places_sync_batch');
+});
+
+test('keeps taco sync selection compatible with its narrower local schema', () => {
+  assert.ok(!localSyncSelectSql({ entity: 'taco', batch: 1 }).includes('menu_data'));
+  assert.ok(!supabaseSyncSelectCols('taco').includes('menu_data'));
+  assert.ok(supabaseSyncSelectCols('pizza').includes('menu_data'));
 });
