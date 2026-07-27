@@ -107,6 +107,15 @@ export const LOCAL_SYNC_COLS = [
   ...LIFECYCLE_COLS,
 ];
 
+export const ENTITY_EXCLUDED_SYNC_COLS = Object.freeze({
+  taco: Object.freeze(['menu_data', 'menu_parse_confidence', 'menu_parse_notes', 'menu_last_parsed_at']),
+});
+
+export function syncColumnsForEntity(columns, entity = 'pizza') {
+  const excluded = new Set(ENTITY_EXCLUDED_SYNC_COLS[String(entity || 'pizza').toLowerCase()] || []);
+  return columns.filter(column => !excluded.has(column));
+}
+
 const LOCAL_SYNC_CHECKPOINT_COL = `to_char(last_enriched_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as sync_checkpoint_last_enriched_at`;
 
 export const SUPABASE_SYNC_SELECT_COLS = [
@@ -122,6 +131,10 @@ export const LOCAL_SYNC_VALUE_COLS = [
   ...OVERWRITE_COLS,
   ...LIFECYCLE_COLS,
 ];
+
+export function supabaseSyncSelectCols(entity = 'pizza') {
+  return syncColumnsForEntity(SUPABASE_SYNC_SELECT_COLS, entity);
+}
 
 export function assertSupabaseSyncTableBoundary({
   entity = null,
@@ -176,7 +189,8 @@ export function localSyncSelect(options = {}) {
     : SUPABASE_SYNC_TARGET_TABLE);
   assertSupabaseSyncTableBoundary({ entity: options.entity || null, targetTable });
   const params = [];
-  const valueCols = selector.lifecycleOnly ? LIFECYCLE_COLS : LOCAL_SYNC_VALUE_COLS;
+  const entity = options.entity || 'pizza';
+  const valueCols = selector.lifecycleOnly ? LIFECYCLE_COLS : syncColumnsForEntity(LOCAL_SYNC_VALUE_COLS, entity);
   const filters = [
     `(
             ${valueCols.map(col => `${col} is not null`).join('\n            or ')}
@@ -219,7 +233,7 @@ export function localSyncSelect(options = {}) {
 
   const sql = `
         select
-          ${LOCAL_SYNC_COLS.join(',\n          ')},
+          ${syncColumnsForEntity(LOCAL_SYNC_COLS, entity).join(',\n          ')},
           ${LOCAL_SYNC_CHECKPOINT_COL}
         from ${targetTable}
         where ${filters.join('\n          and ')}
@@ -248,12 +262,13 @@ export function localSyncSelectQueryParams(options = {}) {
 export function buildSupabasePayload(local, current, {
   nowIso = new Date().toISOString(),
   lifecycleOnly = false,
+  entity = 'pizza',
 } = {}) {
   if (!current) return null;
 
   const payload = { id: local.id };
 
-  for (const col of lifecycleOnly ? [] : OVERWRITE_COLS) {
+  for (const col of lifecycleOnly ? [] : syncColumnsForEntity(OVERWRITE_COLS, entity)) {
     const value = local[col];
     if (value !== null && value !== undefined && !syncValuesEqual(value, current[col])) {
       payload[col] = value;
@@ -262,7 +277,7 @@ export function buildSupabasePayload(local, current, {
 
   // A non-null local canonical value is authoritative for the public mirror.
   // Null local values never clear a public value.
-  for (const col of lifecycleOnly ? [] : CANONICAL_MIRROR_COLS) {
+  for (const col of lifecycleOnly ? [] : syncColumnsForEntity(CANONICAL_MIRROR_COLS, entity)) {
     const localValue = local[col];
     if (localValue !== null && localValue !== undefined && !syncValuesEqual(localValue, current[col])) {
       payload[col] = localValue;
@@ -304,7 +319,7 @@ function syncValuesEqual(localValue, supabaseValue) {
   return normalizeSyncValue(localValue) === normalizeSyncValue(supabaseValue);
 }
 
-export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOString() } = {}) {
+export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOString(), entity = 'pizza' } = {}) {
   const payload = {};
 
   for (const col of LOCAL_CONTEXT_COLS) {
@@ -314,7 +329,11 @@ export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOStr
     }
   }
 
-  for (const col of [...OVERWRITE_COLS, ...CANONICAL_MIRROR_COLS, ...LIFECYCLE_COLS]) {
+  for (const col of [
+    ...syncColumnsForEntity(OVERWRITE_COLS, entity),
+    ...syncColumnsForEntity(CANONICAL_MIRROR_COLS, entity),
+    ...LIFECYCLE_COLS,
+  ]) {
     const value = local[col];
     if (value !== null && value !== undefined) payload[col] = value;
   }

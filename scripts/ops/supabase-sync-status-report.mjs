@@ -14,7 +14,7 @@ import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import { readSyncRunState, syncRunStatePath } from '../lib/supabase-sync-run-state.mjs';
 import { summarizeSyncStatusError } from '../lib/supabase-sync-status.mjs';
 import {
-  SUPABASE_SYNC_SELECT_COLS,
+  supabaseSyncSelectCols,
   assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
@@ -293,7 +293,7 @@ async function main() {
     const { data: sbRows, error } = ids.length
       ? await supabase
         .from(profile.targetTable)
-        .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
+      .select(supabaseSyncSelectCols(options.entity).join(', '))
         .in('id', ids)
       : { data: [], error: null };
 
@@ -310,7 +310,7 @@ async function main() {
         continue;
       }
 
-      const payload = buildSupabasePayload(local, current);
+      const payload = buildSupabasePayload(local, current, { entity: options.entity });
       if (payload) updates.push({ local, current, payload });
     }
 

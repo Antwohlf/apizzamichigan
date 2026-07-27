@@ -20,7 +20,7 @@ import {
   LOCAL_ONLY_SUPABASE_TABLES,
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
-  SUPABASE_SYNC_SELECT_COLS,
+  supabaseSyncSelectCols,
   assertSupabaseSyncTableBoundary,
   buildSupabasePayload,
   localSyncSelectParams,
@@ -234,7 +234,7 @@ async function main() {
 
     const { data: sbRows, error } = await supabase
       .from(profile.targetTable)
-      .select(SUPABASE_SYNC_SELECT_COLS.join(', '))
+      .select(supabaseSyncSelectCols(options.entity).join(', '))
       .in('id', ids);
 
     if (error) throw error;
@@ -251,7 +251,7 @@ async function main() {
         continue;
       }
 
-      const payload = buildSupabasePayload(local, current, { nowIso, lifecycleOnly: options.lifecycleOnly });
+      const payload = buildSupabasePayload(local, current, { nowIso, lifecycleOnly: options.lifecycleOnly, entity: options.entity });
       if (payload) updates.push({ local, current, payload });
     }
 
