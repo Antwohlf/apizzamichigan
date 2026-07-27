@@ -20,6 +20,7 @@ import pg from 'pg'
 import 'dotenv/config'
 import { getQueue } from './queue.mjs'
 import { calculatePriority } from './priority.mjs'
+import { enrichmentEntity } from '../lib/enrichment-entity.mjs'
 
 function parseArgs() {
   const args = process.argv.slice(2)
@@ -69,9 +70,7 @@ async function main() {
     printHelp()
     return
   }
-  if (type !== 'pizza') {
-    throw new Error(`Unsupported --type ${type}. populate-classify-from-db.mjs is currently pizza_places only.`)
-  }
+  const entity = enrichmentEntity(type)
 
   const client = new pg.Client({
     host: process.env.PGHOST || 'localhost',
@@ -91,13 +90,13 @@ async function main() {
       OR EXISTS (
         SELECT 1
         FROM place_sources ps
-        WHERE ps.entity_type = 'pizza'
-          AND ps.place_id = pizza_places.id
+        WHERE ps.entity_type = $1
+          AND ps.place_id = ${entity.table}.id
           AND ps.match_confidence >= 0.9
       ))`,
     '(style IS NULL OR price_range IS NULL)'
   ]
-  const params = []
+  const params = [entity.entity]
 
   if (ids.length) {
     params.push(ids)
@@ -139,7 +138,7 @@ async function main() {
 
   const { rows } = await client.query(
     `SELECT id, google_place_id, state, style, price_range
-     FROM pizza_places
+     FROM ${entity.table}
      WHERE ${clauses.join(' AND ')}
      ORDER BY id ASC
      ${limitSql}`,

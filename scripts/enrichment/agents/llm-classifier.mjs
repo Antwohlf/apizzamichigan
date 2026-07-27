@@ -18,6 +18,8 @@ import 'dotenv/config'
 import { inferStyleFromName, inferPriceFromChain, isKnownChain } from '../../lib/style-inference.mjs'
 import { hasStyleEvidence } from '../../lib/style-evidence.mjs'
 import { PIZZA_STYLES, normalizePizzaStyle } from '../../lib/pizza-style-taxonomy.mjs'
+import { enrichmentEntity, normalizeEnrichmentStyle } from '../../lib/enrichment-entity.mjs'
+import { inferTypeFromName, inferPriceFromChain as inferTacoPrice, isKnownChain as isKnownTacoChain, formatTypesForStorage } from '../../lib/type-inference-tacos.mjs'
 
 const PRICE_RANGES = ['$', '$$', '$$$', '$$$$']
 
@@ -67,8 +69,8 @@ function safeJsonParse(text) {
   return null
 }
 
-function normalizeStyle(style) {
-  return normalizePizzaStyle(style)
+function normalizeStyle(style, entity = 'pizza') {
+  return entity === 'pizza' ? normalizePizzaStyle(style) : normalizeEnrichmentStyle(style, entity)
 }
 
 function normalizePrice(price) {
@@ -195,7 +197,7 @@ function parseScrapeNotes(scrapeNotes) {
   }
 }
 
-function buildPrompt(row) {
+function buildPrompt(row, entity = 'pizza') {
   const osmTags = row.osm_tags ? JSON.stringify(pruneOsmTags(row.osm_tags)) : ''
   const sourceEvidence = row.source_evidence?.length
     ? truncateText(JSON.stringify(row.source_evidence), 1800)
@@ -225,7 +227,8 @@ function buildPrompt(row) {
 
   const scrapeNotes = Object.keys(scrapeData).length ? truncateText(JSON.stringify(scrapeData), 2500) : ''
 
-  return `You are classifying a pizza restaurant into a fixed taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${PIZZA_STYLES.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the style (e.g. \"Detroit-style\"). Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, accepted source evidence, then style_hints and text excerpts.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nAccepted source evidence:\n${sourceEvidence}\n\nScrape hints (prioritized):\n${scrapeNotes}\n`
+  const profile = enrichmentEntity(entity)
+  return `You are classifying a restaurant into a fixed ${profile.taxonomyLabel} taxonomy.\n\nReturn ONLY valid JSON with this schema:\n{\n  \"style\": string|null,\n  \"price_range\": \"$\"|\"$$\"|\"$$$\"|\"$$$$\"|null,\n  \"style_confidence\": \"confirmed\"|\"inferred\"\n}\n\nRules:\n- style must be exactly one of: ${profile.taxonomy.map(s => `\"${s}\"`).join(', ')}\n- If unsure, use null for style and/or price_range (do not guess).\n- Use style_confidence=confirmed only if the source explicitly states the type/style. Otherwise inferred.\n- Prefer high-signal evidence first: JSON-LD structured data, accepted source evidence, then style hints and text excerpts.\n\nRestaurant:\n- name: ${row.name}\n- state: ${row.state || ''}\n- website_url: ${row.website_url || ''}\n\nOSM tags (subset):\n${osmTags}\n\nAccepted source evidence:\n${sourceEvidence}\n\nScrape hints (prioritized):\n${scrapeNotes}\n`
 }
 
 class LlmClassifier {
@@ -295,7 +298,7 @@ class LlmClassifier {
     })
   }
 
-  async updatePizzaRow(id, patch) {
+  async updateCanonicalRow(id, entity, patch) {
     // Keep the canonical classification contract intact even when an upstream
     // result omits confidence: a written style must always carry provenance.
     if (patch.style && !patch.style_confidence) {
@@ -314,13 +317,14 @@ class LlmClassifier {
     if (!cols.length) return
 
     await this.pgClient.query(
-      `UPDATE pizza_places SET ${cols.join(', ')}, last_enriched_at = NOW() WHERE id = $1`,
+      `UPDATE ${enrichmentEntity(entity).table} SET ${cols.join(', ')}, last_enriched_at = NOW() WHERE id = $1`,
       vals
     )
   }
 
   async processJob(job) {
-    // pizza-only for now
+    const entity = job.placeType || 'pizza'
+    const profile = enrichmentEntity(entity)
     const { rows } = await this.pgClient.query(
       `SELECT id, name, state, website_url, osm_tags, scrape_notes, scrape_method,
               COALESCE((
@@ -330,12 +334,12 @@ class LlmClassifier {
                   'data', ps.data
                 ) ORDER BY ps.match_confidence DESC NULLS LAST, ps.retrieved_at DESC)
                 FROM place_sources ps
-                WHERE ps.entity_type = 'pizza' AND ps.place_id = pizza_places.id
+                WHERE ps.entity_type = $2 AND ps.place_id = ${profile.table}.id
               ), '[]'::jsonb) AS source_evidence
-       FROM pizza_places
+       FROM ${profile.table}
        WHERE google_place_id = $1
        LIMIT 1`,
-      [job.osmId]
+      [job.osmId, entity]
     )
 
     const row = rows[0]
@@ -346,15 +350,16 @@ class LlmClassifier {
     }
 
     // Chain override layer
-    const chainStyle = inferStyleFromName(row.name, '')
-    const chainPrice = inferPriceFromChain(row.name)
+    const tacoInference = entity === 'taco' ? inferTypeFromName(row.name, row.address || '') : null
+    const chainStyle = entity === 'taco' ? { style: formatTypesForStorage(tacoInference?.types) } : inferStyleFromName(row.name, '')
+    const chainPrice = entity === 'taco' ? inferTacoPrice(row.name) : inferPriceFromChain(row.name)
     const hasBrandSignal = Boolean(row.osm_tags?.['brand:wikidata'] || row.osm_tags?.['operator:wikidata'])
 
-    if (isKnownChain(row.name) || hasBrandSignal) {
+    if ((entity === 'taco' ? isKnownTacoChain(row.name) : isKnownChain(row.name)) || hasBrandSignal) {
       const style = chainStyle?.style || null
       const priceRange = chainPrice?.price || null
 
-      await this.updatePizzaRow(row.id, {
+      await this.updateCanonicalRow(row.id, entity, {
         style,
         price_range: priceRange,
         style_confidence: style ? 'confirmed' : null
@@ -373,7 +378,7 @@ class LlmClassifier {
       return
     }
 
-    const prompt = buildPrompt(row)
+    const prompt = buildPrompt(row, entity)
     console.log(`[${this.workerId}] Prompt size for job ${job.id}: ${prompt.length} chars`)
 
     let resp
@@ -411,19 +416,19 @@ class LlmClassifier {
       return
     }
 
-    let style = normalizeStyle(parsed.style)
+    let style = normalizeStyle(parsed.style, entity)
     const priceRange = normalizePrice(parsed.price_range)
     let styleConfidence = parsed.style_confidence === 'confirmed' ? 'confirmed' : 'inferred'
 
     // Extra guardrail: require source evidence before writing any LLM style.
     // A model may still provide price without enough evidence for pizza style.
-    if (style && !hasStyleEvidence(row, style)) {
+    if (entity === 'pizza' && style && !hasStyleEvidence(row, style)) {
       style = null
       styleConfidence = null
     }
 
     // Conservative write: nulls allowed; never write unknown values
-    await this.updatePizzaRow(row.id, {
+    await this.updateCanonicalRow(row.id, entity, {
       style,
       price_range: priceRange,
       style_confidence: style ? styleConfidence : null

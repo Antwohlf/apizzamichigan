@@ -8,10 +8,10 @@ import { sourceAutoLinkArguments } from '../lib/source-auto-link-policy.mjs';
 import { summarizeOsmManifest } from '../lib/osm-refresh-summary.mjs';
 
 const ROOT = process.cwd();
-const CONFIG_PATH = resolve(ROOT, 'config/source-pipeline.json');
-const STATE_PATH = resolve(ROOT, 'scripts/.source-pipeline-state.json');
-const LAST_REPORT_PATH = resolve(ROOT, 'scripts/.source-pipeline-last-report.json');
-const LAST_DRY_RUN_PATH = resolve(ROOT, 'scripts/.source-pipeline-last-dry-run.json');
+const CONFIG_PATH = resolve(ROOT, process.env.SOURCE_PIPELINE_CONFIG || 'config/source-pipeline.json');
+const STATE_PATH = resolve(ROOT, process.env.SOURCE_PIPELINE_STATE || `scripts/.${basename(CONFIG_PATH, '.json')}-state.json`);
+const LAST_REPORT_PATH = resolve(ROOT, process.env.SOURCE_PIPELINE_LAST_REPORT || `scripts/.${basename(CONFIG_PATH, '.json')}-last-report.json`);
+const LAST_DRY_RUN_PATH = resolve(ROOT, process.env.SOURCE_PIPELINE_LAST_DRY_RUN || `scripts/.${basename(CONFIG_PATH, '.json')}-last-dry-run.json`);
 const LOCK_PATH = '/tmp/apizzamichigan/source-pipeline.lock';
 const NODE = process.execPath;
 const OSM_PIPELINE_TIMEOUT_MS = Number.parseInt(process.env.OSM_PIPELINE_TIMEOUT_MS || '', 10) || 1200000;
@@ -155,7 +155,7 @@ function runAdapter(source, region, output, config, state) {
     // Keep the regional export and manifest stable across hourly runs. The
     // tiled runner resumes completed Overpass tiles instead of re-querying a
     // whole region or losing progress when one endpoint fails.
-    const regionalOutput = resolve(ROOT, 'reports/osm', `${region.key.toLowerCase()}-pizza.json`);
+    const regionalOutput = resolve(ROOT, 'reports/osm', `${region.key.toLowerCase()}-${config.entity}.json`);
     const step = Number(config.sources.osm.tile_step || 0.5);
     const defaultTilesPerRun = Number(config.sources.osm.tiles_per_run || 1);
     const tilesPerRunByRegion = config.sources.osm.tiles_per_run_by_region || {};
@@ -173,7 +173,7 @@ function runAdapter(source, region, output, config, state) {
       '--max-tiles', String(tilesPerRun),
       '--output', regionalOutput,
       '--manifest', manifest,
-    ], { timeout: OSM_PIPELINE_TIMEOUT_MS, env: { ...process.env, OSM_TILE_TIMEOUT_MS: String(tileTimeout), OSM_REFRESH_AFTER_HOURS: String(refreshAfterHours), OVERPASS_REQUEST_TIMEOUT_MS: String(requestTimeout), OVERPASS_QUERY_TIMEOUT_SECONDS: String(queryTimeout) } });
+    ], { timeout: OSM_PIPELINE_TIMEOUT_MS, env: { ...process.env, OSM_ENTITY: config.entity, OSM_TILE_TIMEOUT_MS: String(tileTimeout), OSM_REFRESH_AFTER_HOURS: String(refreshAfterHours), OVERPASS_REQUEST_TIMEOUT_MS: String(requestTimeout), OVERPASS_QUERY_TIMEOUT_SECONDS: String(queryTimeout) } });
     writeFileSync(output, readFileSync(regionalOutput));
   } else if (source === 'overture_places') {
     const overtureOutput = resolve(ROOT, 'data/source-inputs', `overture_places-${region.key}.json`);
@@ -244,12 +244,12 @@ function runWebsiteDrain(config, apply) {
   // Operators can still opt into a bounded manual drain when diagnosing a
   // scraper-specific issue.
   if (process.env.SOURCE_PIPELINE_RUN_SCRAPER !== '1') {
-    run(NODE, ['scripts/ops/record-website-provenance.mjs', '2'], { timeout: 180000 });
+    run(NODE, ['scripts/ops/record-website-provenance.mjs', '2'], { timeout: 180000, env: { ...process.env, APIZZA_SYNC_ENTITY: config.entity } });
     return 'managed-launchd-scraper';
   }
   const env = { ...process.env, SCRAPE_REQUEUE_BATCH: '0', SCRAPE_MAX_JOBS: String(config.limits.website_jobs_per_run), SCRAPE_CANT_SCRAPE_LOG: '/tmp/apizzamichigan/scrape-cant-scrape.jsonl' };
   const output = run(NODE, ['scripts/enrichment/agents/web-scraper.mjs', '--worker-id', 'source-pipeline-scraper', '--max-jobs', String(config.limits.website_jobs_per_run)], { timeout: 1200000, env });
-  run(NODE, ['scripts/ops/record-website-provenance.mjs', '2'], { timeout: 180000 });
+  run(NODE, ['scripts/ops/record-website-provenance.mjs', '2'], { timeout: 180000, env: { ...process.env, APIZZA_SYNC_ENTITY: config.entity } });
   return output.slice(-1000);
 }
 
@@ -267,12 +267,13 @@ function promoteContactFields(config, apply) {
 }
 
 function populateClassifierQueue(config, apply, regions) {
-  if (!apply || config.entity !== 'pizza') return 'disabled';
+  if (!apply) return 'disabled';
   const limit = Number(config.limits.classify_queue_jobs_per_region_per_run || 50);
   const outputs = [];
   for (const state of regions.map(region => region.key)) {
     outputs.push(run(NODE, [
       'scripts/enrichment/populate-classify-from-db.mjs',
+      '--type', config.entity,
       '--state', state,
       '--limit', String(limit),
       '--skip-existing',
