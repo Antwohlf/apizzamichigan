@@ -28,7 +28,7 @@ function parseArgs(argv) {
     hours: 6,
     batch: 50,
     sample: 10,
-    checkpoint: 'scripts/.supabase-sync-checkpoint.json',
+    checkpoint: null,
     requireBulkRpc: false,
     entity: process.env.APIZZA_SYNC_ENTITY || 'pizza',
     json: false,
@@ -51,7 +51,7 @@ Options:
   --batch <n>       Next batch size to inspect (default 50)
   --sample <n>      Rows per detail table (default 10)
   --entity <name>   Sync profile to inspect (pizza or taco)
-  --checkpoint <p>  Checkpoint path (default scripts/.supabase-sync-checkpoint.json)
+  --checkpoint <p>  Checkpoint path (defaults per entity; pizza keeps the legacy path)
   --require-bulk-rpc Require the low-I/O bulk RPC to be available
   --json            Emit JSON instead of Markdown
 `);
@@ -65,6 +65,11 @@ Options:
   if (!Number.isFinite(out.batch) || out.batch <= 0) throw new Error('Invalid --batch');
   if (!Number.isFinite(out.sample) || out.sample <= 0) throw new Error('Invalid --sample');
   supabaseSyncProfile(out.entity);
+  if (!out.checkpoint) {
+    out.checkpoint = out.entity === 'pizza'
+      ? 'scripts/.supabase-sync-checkpoint.json'
+      : `scripts/.${out.entity}-supabase-sync-checkpoint.json`;
+  }
   return out;
 }
 
