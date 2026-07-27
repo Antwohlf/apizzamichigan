@@ -94,6 +94,24 @@ launchctl print "gui/$(id -u)/com.apizzamichigan.source-pipeline"
 tail -f /tmp/apizzamichigan/source-pipeline.log
 ```
 
+## Classifier Retry Feeder
+
+Partial classifier outputs are retried by a separate five-minute launchd job.
+It maintains a small high-water mark so the single iMac classifier stays fed
+without building an unbounded local queue. Exhausted partial results remain in
+the review backlog rather than being retried forever.
+
+```bash
+cp infra/local/launchd/com.apizzamichigan.classifier-retry-feeder.plist.template \
+  ~/Library/LaunchAgents/com.apizzamichigan.classifier-retry-feeder.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.classifier-retry-feeder.plist
+launchctl enable "gui/$(id -u)/com.apizzamichigan.classifier-retry-feeder"
+launchctl kickstart -k "gui/$(id -u)/com.apizzamichigan.classifier-retry-feeder"
+```
+
+The source pipeline only creates new classification jobs; this feeder owns
+partial-result recovery.
+
 ## Menu Parser Slowlane
 
 The deterministic menu parser is deliberately scheduled separately from the
