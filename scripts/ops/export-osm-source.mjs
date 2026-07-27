@@ -15,7 +15,9 @@ if (![south, west, north, east].every(Number.isFinite) || !output) {
 
 const overpassTimeoutSeconds = positiveInt(process.env.OVERPASS_QUERY_TIMEOUT_SECONDS, 120);
 const requestTimeoutMs = positiveInt(process.env.OVERPASS_REQUEST_TIMEOUT_MS, (overpassTimeoutSeconds + 30) * 1000);
-const query = `[out:json][timeout:${overpassTimeoutSeconds}];(nwr["amenity"="restaurant"]["cuisine"~"pizza|pizzeria",i](${south},${west},${north},${east});nwr["amenity"="fast_food"]["cuisine"~"pizza|pizzeria",i](${south},${west},${north},${east});nwr["disused:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east});nwr["abandoned:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east});nwr["demolished:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east}););out center tags;`;
+const entity = String(process.env.OSM_ENTITY || 'pizza').toLowerCase();
+const cuisine = entity === 'taco' ? 'mexican|taco|tex-mex|burrito' : 'pizza|pizzeria';
+const query = `[out:json][timeout:${overpassTimeoutSeconds}];(nwr["amenity"="restaurant"]["cuisine"~"${cuisine}",i](${south},${west},${north},${east});nwr["amenity"="fast_food"]["cuisine"~"${cuisine}",i](${south},${west},${north},${east});nwr["disused:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east});nwr["abandoned:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east});nwr["demolished:amenity"~"restaurant|fast_food",i](${south},${west},${north},${east}););out center tags;`;
 const endpoints = (process.env.OVERPASS_ENDPOINTS
   ? process.env.OVERPASS_ENDPOINTS.split(',')
   : [
@@ -72,7 +74,7 @@ const rows = (payload.elements || []).map(element => {
   };
 }).filter(row => row.name && Number.isFinite(row.lat) && Number.isFinite(row.lng));
 writeFileSync(output, `${JSON.stringify(rows, null, 2)}\n`);
-console.log(JSON.stringify({ source: 'osm', rows: rows.length, output }));
+console.log(JSON.stringify({ source: 'osm', entity, rows: rows.length, output }));
 
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);

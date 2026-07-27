@@ -28,8 +28,8 @@
       "taxonomy_file": "src/data/tacoTypes.js",
       "source_policy_file": null,
       "source_pipeline": {
-        "enabled": false,
-        "config_file": null
+        "enabled": true,
+        "config_file": "config/source-pipeline-taco.json"
       },
       "editorial": {
         "picks": {

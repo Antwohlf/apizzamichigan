@@ -10,9 +10,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
-const CONFIG_PATH = join(ROOT, 'config/source-pipeline.json')
+const CONFIG_PATH = join(ROOT, process.env.SOURCE_PIPELINE_CONFIG || 'config/source-pipeline.json')
 const RUNNER_PATH = join(ROOT, 'scripts/ops/run-source-pipeline.mjs')
-const STATE_PATH = join(ROOT, 'scripts/.source-pipeline-state.json')
+const STATE_PATH = join(ROOT, process.env.SOURCE_PIPELINE_STATE || `scripts/.${CONFIG_PATH.split('/').pop().replace(/\.json$/, '')}-state.json`)
 
 const SOURCE_IMPLEMENTATIONS = {
   osm: {

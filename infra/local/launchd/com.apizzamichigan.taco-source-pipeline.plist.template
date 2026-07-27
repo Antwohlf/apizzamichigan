@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.apizzamichigan.taco-source-pipeline</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /srv/apizzamichigan &amp;&amp; SOURCE_PIPELINE_CONFIG=config/source-pipeline-taco.json /usr/local/bin/node scripts/ops/run-source-pipeline.mjs --apply --regions MI,NY --max-work-units 2 --max-new-places 25</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/srv/apizzamichigan</string>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/apizzamichigan/taco-source-pipeline.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/apizzamichigan/taco-source-pipeline.log</string>
+</dict>
+</plist>
