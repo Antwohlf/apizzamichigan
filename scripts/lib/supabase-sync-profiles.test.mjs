@@ -14,10 +14,10 @@ test('keeps pizza as the enabled default publication profile', () => {
   assert.equal(SUPABASE_SYNC_PROFILES.pizza.publicationEnabled, true);
 });
 
-test('exposes taco for dry-run planning but keeps publication disabled', () => {
+test('exposes taco as a guarded publication profile', () => {
   const taco = supabaseSyncProfile('taco');
   assert.equal(taco.targetTable, 'taco_places');
-  assert.equal(taco.publicationEnabled, false);
+  assert.equal(taco.publicationEnabled, true);
   assert.throws(() => supabaseSyncProfile('dessert'), /Unsupported sync entity/);
 });
 
