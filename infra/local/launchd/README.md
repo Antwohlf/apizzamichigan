@@ -67,10 +67,13 @@ tail -f /tmp/apizzamichigan/supabase-sync.log
 
 ## Source Pipeline Service
 
-The source pipeline runs one bounded, round-robin source work unit each hour.
-It keeps source fetches, review queue updates, strict reviewed-new imports, and
-website enrichment under one lock. It is dry-run by default when invoked
-manually; the launchd template is the explicit apply path.
+The source pipeline wakes every 15 minutes and runs up to six bounded,
+round-robin source work units. Source-specific cadence controls prevent large
+datasets from being fetched too often, while Overture and Wikidata rotate
+through both operational regions when due. It keeps source fetches, review
+queue updates, strict reviewed-new imports, and website enrichment under one
+lock. It is dry-run by default when invoked manually; the launchd template is
+the explicit apply path.
 
 Install:
 

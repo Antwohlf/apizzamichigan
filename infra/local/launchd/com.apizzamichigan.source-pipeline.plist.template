@@ -8,7 +8,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /srv/apizzamichigan &amp;&amp; /usr/local/bin/node scripts/ops/run-source-pipeline.mjs --apply --regions MI,NY --max-work-units 4 --max-new-places 50</string>
+    <string>cd /srv/apizzamichigan &amp;&amp; /usr/local/bin/node scripts/ops/run-source-pipeline.mjs --apply --regions MI,NY --max-work-units 6 --max-new-places 50</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/srv/apizzamichigan</string>
