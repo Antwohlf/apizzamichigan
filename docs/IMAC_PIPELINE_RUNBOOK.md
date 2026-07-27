@@ -259,9 +259,9 @@ the work should stay within the product's priority geography; without that
 option the runner uses all configured regions. Launchd does not use either
 operator-only flag, so scheduled runs remain cadence-controlled and global.
 
-The launchd template is the explicit apply path. It caps heavy work at four
-units per hour, strict new-place creation at 50 per run and 250 per day, and
-website scraping at 75 bounded jobs per run. OSM itself runs on an hourly
+The launchd template is the explicit apply path. It caps heavy work at six
+units per 15-minute run, strict new-place creation at 50 per run and 250 per day, and
+website scraping at 75 bounded jobs per run. OSM itself runs every 15 minutes
 cadence and processes its configured regional budget per scheduler run. The runner never starts
 concurrent top-level OSM workers; its hard runtime cap, request timeouts,
 endpoint failover, and resumable manifests keep the regional batch bounded
