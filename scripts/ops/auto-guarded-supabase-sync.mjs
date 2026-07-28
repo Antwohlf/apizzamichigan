@@ -183,21 +183,28 @@ try {
   }
   lockAcquired = true;
 
-  const confidenceRepair = spawnSync(process.execPath, [
-    'scripts/ops/repair-missing-classification-confidence.mjs',
-    '--hours', options.hours,
-    '--limit', '5000',
-    '--apply',
-    '--json',
-  ], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: process.env,
-    timeout: 120000,
-  });
-  if (confidenceRepair.error) throw confidenceRepair.error;
-  if (confidenceRepair.status !== 0) {
-    throw new Error(`classification confidence repair failed with status ${confidenceRepair.status ?? 1}`);
+  // This repair script is intentionally pizza-specific. Taco classification
+  // writes confidence as part of the entity-aware classifier and must not
+  // trigger unrelated pizza mutations from the taco scheduler.
+  if (options.entity === 'pizza') {
+    const confidenceRepair = spawnSync(process.execPath, [
+      'scripts/ops/repair-missing-classification-confidence.mjs',
+      '--hours', options.hours,
+      '--limit', '5000',
+      '--apply',
+      '--json',
+    ], {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+      env: process.env,
+      timeout: 120000,
+    });
+    if (confidenceRepair.error) throw confidenceRepair.error;
+    if (confidenceRepair.status !== 0) {
+      throw new Error(`classification confidence repair failed with status ${confidenceRepair.status ?? 1}`);
+    }
+  } else {
+    console.log(`[sync] skipped pizza-only confidence repair for entity=${options.entity}`);
   }
 
   if (options.runReconciliation) {
