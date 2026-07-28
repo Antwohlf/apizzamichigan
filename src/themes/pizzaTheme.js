@@ -1,16 +1,17 @@
 // src/themes/pizzaTheme.js
 import { ThemeKeys } from './siteTheme'
+import { US_STATE_CODES } from '../data/usStateCodes'
 
 /** @type {import('./siteTheme').SiteTheme} */
 export const pizzaTheme = {
   brandName: 'A Pizza Michigan',
   titleRotation: ['#f97316', '#dc2626', '#f59e0b'],
   palette: {
-    bg: '#181a1b',
-    card: '#202224',
-    text: '#ffffff',
-    mutedText: '#c9c9c9',
-    border: '#2b2f31',
+    bg: '#0b0c0e',
+    card: '#141619',
+    text: '#f4f4f2',
+    mutedText: '#aeb2b7',
+    border: '#30353b',
     accent: '#f97316',
     accentMuted: '#b45309',
   },
@@ -37,8 +38,10 @@ export const pizzaTheme = {
   },
   search: {
     preferredStates: ['MI', 'NY'],
-    initialStates: ['MI', 'NY'],
-    publicStates: ['MI', 'NY'],
+    // Keep the home markets prominent in ranking, but show every market on
+    // the public map and in the global statistics.
+    initialStates: US_STATE_CODES,
+    publicStates: [],
   },
 }
 

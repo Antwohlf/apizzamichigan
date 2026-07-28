@@ -1,6 +1,6 @@
 // src/App.js
 import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react'
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 
 import Sidebar from './Sidebar'
 import SuggestionForm from './SuggestionForm'
@@ -8,11 +8,14 @@ import AdminForm from './AdminForm'
 import FrozenPizzaDirectory from './FrozenPizzaDirectory'
 import AdminSubmit from './AdminSubmit'
 import AdminReviewsPage from './admin/AdminReviewsPage'
-import { SiteTitle } from './header/SiteTitle'
 import { StatsPanel } from './sidebar/StatsPanel'
 import { MapPopupProvider, useMapPopup } from './map/useMapPopup'
 import DataDashboard from './pages/DataDashboard'
 import PlaceDetailPage from './pages/PlaceDetailPage'
+import DiscoveryConceptPage from './pages/DiscoveryConceptPage'
+import PublicSuggestionPage from './pages/PublicSuggestionPage'
+import { BugReportFab } from './components/bug-report/BugReportFab'
+import ProductionDiscoveryShell, { sortProductionPlaces } from './components/ProductionDiscoveryShell'
 
 import { ThemeProvider, useTheme } from './themes/ThemeProvider'
 import { ThemeKeys } from './themes/siteTheme'
@@ -23,7 +26,7 @@ import { getDistanceMiles } from './utils/geo'
 import './App.css'
 import { GlobalLoadingProvider, useGlobalLoading } from './hooks/useGlobalLoading'
 import { SelectedPlaceProvider } from './store/selectedPlace'
-import { BugReportFab } from './components/bug-report/BugReportFab'
+import { useSelectedPlace } from './store/selectedPlace'
 import { MapControls } from './map/MapControls'
 import {
   publicPlaceSearchSelectForTable,
@@ -1404,6 +1407,11 @@ function SiteContainer({ themeKey }) {
   const [nearMeRadius, setNearMeRadius] = useState(25)
   const [locationError, setLocationError] = useState(null)
   const [flyToLocation, setFlyToLocation] = useState(null)
+  const [sortMode, setSortMode] = useState('recommended')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [visibleMapBounds, setVisibleMapBounds] = useState(null)
+  const [appliedMapBounds, setAppliedMapBounds] = useState(null)
+  const [mapMoved, setMapMoved] = useState(false)
 
   // Three-state region model: UNLOADED -> LOADING -> LOADED
   // Shape: { [stateCode]: { status: 'unloaded'|'loading'|'loaded', places: [], originalCount } }
@@ -1423,14 +1431,30 @@ function SiteContainer({ themeKey }) {
     theme.search?.publicStates || theme.search?.preferredStates || []
   ), [theme])
   const initialStates = useMemo(() => (
-    Array.isArray(theme.search?.initialStates) && theme.search.initialStates.length
+    Array.isArray(theme.search?.initialStates)
       ? theme.search.initialStates
       : (theme.search?.preferredStates || [])
   ), [theme])
   const { open: openMapPopup } = useMapPopup()
+  const { selectedPlace } = useSelectedPlace()
   const { open: openLoading, close: closeLoading, setVariant: setLoadingVariant } = useGlobalLoading()
 
   const handleFilterChange = useCallback(next => setFilters(next), [])
+
+  const handleMapViewportChange = useCallback((bounds, initial = false) => {
+    if (!bounds) return
+    setVisibleMapBounds(bounds)
+    if (!initial) {
+      setMapMoved(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    setVisibleMapBounds(null)
+    setAppliedMapBounds(null)
+    setMapMoved(false)
+    setSortMode('recommended')
+  }, [themeKey, showAllMarkets])
 
   useEffect(() => {
     document.body.style.backgroundColor = theme.palette.bg
@@ -1592,7 +1616,8 @@ function SiteContainer({ themeKey }) {
       openLoading(theme.copy.loading || 'Loading map…')
       const table = entityTable
       try {
-        const regionCountsKey = `${table}:${showHistorical ? 'all' : 'active'}:primary`
+        const scopeKey = initialStates.length ? initialStates.join(',') : 'all'
+        const regionCountsKey = `${table}:${showHistorical ? 'all' : 'active'}:${scopeKey}`
         const cachedRegionCounts = REGION_COUNTS_CACHE.get(regionCountsKey) || readPersistedMapCounts(regionCountsKey)
         const cachedAnthonyCounts = ANTHONY_COUNTS_CACHE.get(regionCountsKey) || readPersistedMapCounts(`${regionCountsKey}:reviewed`)
 
@@ -2008,6 +2033,14 @@ function SiteContainer({ themeKey }) {
     return results
   }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits, showAnthonysPicks, showHistorical, preferredSearchStates, showAllMarkets, publicScopeStates, picksMinimumRating])
 
+  const mapVisiblePlaces = useMemo(() => {
+    const searchIsActive = Boolean(searchQuery.trim()) || nearMeActive
+    const scopedPlaces = searchIsActive || !appliedMapBounds
+      ? filteredPlaces
+      : filteredPlaces.filter(place => appliedMapBounds.contains([place.lat, place.lng]))
+    return sortProductionPlaces(scopedPlaces, sortMode)
+  }, [appliedMapBounds, filteredPlaces, nearMeActive, searchQuery, sortMode])
+
   const shouldDimUnloadedAggregates = useMemo(() => {
     return (
       filters.styles?.length > 0 ||
@@ -2150,138 +2183,122 @@ function SiteContainer({ themeKey }) {
     trackSiteSwitch(themeKey, nextThemeKey)
   }
 
+  const filterPanel = (
+    <Sidebar
+      onFilterChange={handleFilterChange}
+      themeKey={themeKey}
+      filters={filters}
+      showClusterCounts={showClusterCounts}
+      onClusterCountsToggle={setShowClusterCounts}
+      showAnthonysVisits={showAnthonysVisits}
+      onAnthonysVisitsToggle={setShowAnthonysVisits}
+      showAnthonysPicks={showAnthonysPicks}
+      onAnthonysPicksToggle={setShowAnthonysPicks}
+      anthonysPicksLabel={picksLabel}
+      anthonysPicksMinimumRating={picksMinimumRating}
+      showHistorical={showHistorical}
+      onHistoricalToggle={setShowHistorical}
+    />
+  )
+
+  const mapControls = (
+    <MapControls
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      nearMeActive={nearMeActive}
+      nearMeRadius={nearMeRadius}
+      locationError={locationError}
+      searchLoading={searchLoading}
+      searchError={searchError}
+      searchNotice={searchNotice}
+      searchResultLimitReached={Boolean(searchQuery.trim()) && searchPlaces.length >= SEARCH_RESULT_LIMIT}
+      onSearchRetry={() => setSearchRetryToken(value => value + 1)}
+      onNearMeToggle={handleNearMeToggle}
+      onRadiusChange={setNearMeRadius}
+      filteredPlaces={mapVisiblePlaces}
+      onPlaceClick={handlePlaceClick}
+      showAllMarkets={showAllMarkets}
+      onAllMarketsToggle={setShowAllMarkets}
+    />
+  )
+
+  const mapNode = (
+    <div className="map-container-wrapper">
+      <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
+        <MapView
+          key={`${entity.entity}-map`}
+          places={mapVisiblePlaces}
+          theme={theme}
+          site={entity.entity}
+          showClusterCounts={showClusterCounts}
+          stateAggregates={filteredDisplayAggregates}
+          onStateClick={handleStateClick}
+          flyToLocation={flyToLocation}
+          onViewportChange={handleMapViewportChange}
+          searchFocusKey={searchQuery.trim() ? `${normalizeSearchText(searchQuery)}:${mapVisiblePlaces.map(place => place.id).join(',')}` : ''}
+          forceIndividualMarkers={shouldForceIndividualMarkers({
+            searchActive: Boolean(searchQuery.trim()),
+            nearMeActive,
+            placeCount: mapVisiblePlaces.length,
+          })}
+          showAllMarkets={showAllMarkets}
+          resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}-${showAnthonysPicks ? 'anthonys-picks' : 'all-places'}-${showHistorical ? 'historical' : 'current'}`}
+        />
+      </Suspense>
+    </div>
+  )
+
+  const frozenNode = entity.features?.frozenDirectory === false
+    ? <div className="map-status" data-status="loading">{entity.frozenUnavailableMessage}</div>
+    : <FrozenPizzaDirectory filters={filters} theme={theme} themeKey={themeKey} />
+
   return (
     <div className="app-shell" style={themeStyles}>
-      <div className="app-layout">
-        <aside className="sidebar-wrapper sidebar-wrapper--filters" aria-label="Map filters">
-          <Sidebar
-            onFilterChange={handleFilterChange}
-            themeKey={themeKey}
-            filters={filters}
-            showClusterCounts={showClusterCounts}
-            onClusterCountsToggle={setShowClusterCounts}
-            showAnthonysVisits={showAnthonysVisits}
-            onAnthonysVisitsToggle={setShowAnthonysVisits}
-            showAnthonysPicks={showAnthonysPicks}
-            onAnthonysPicksToggle={setShowAnthonysPicks}
-            anthonysPicksLabel={picksLabel}
-            anthonysPicksMinimumRating={picksMinimumRating}
-            showHistorical={showHistorical}
-            onHistoricalToggle={setShowHistorical}
+      <ProductionDiscoveryShell
+        theme={theme}
+        entity={entity.entity}
+        view={view}
+        setView={setView}
+        mapLoading={mapLoading}
+        mapError={mapError ? new Error(`${theme.copy.errorPrefix}: ${mapError.message}`) : null}
+        mapNode={mapNode}
+        mapControls={mapControls}
+        places={mapVisiblePlaces}
+        hasMapAggregates={filteredDisplayAggregates.some(aggregate => aggregate.count > 0)}
+        searchActive={Boolean(searchQuery.trim()) || nearMeActive}
+        selectedPlace={selectedPlace}
+        onPlaceClick={handlePlaceClick}
+        onPicksToggle={setShowAnthonysPicks}
+        showPicks={showAnthonysPicks}
+        picksLabel={picksLabel}
+        isPickForPlace={place => isEligibleForAnthonysPicks(place, { minimumRating: picksMinimumRating })}
+        sortMode={sortMode}
+        onSortChange={setSortMode}
+        filterPanel={filterPanel}
+        filtersOpen={filtersOpen}
+        onFiltersToggle={() => setFiltersOpen(open => !open)}
+        statsPanel={<StatsPanel variant="compact" table={entity.table} states={showAllMarkets ? [] : publicScopeStates} />}
+        suggestionPanel={<>
+          <SuggestionForm
+            key={themeKey}
+            theme={theme}
+            isPizza={entity.entity === 'pizza'}
+            onLocatePlace={handleLocatePlace}
           />
-        </aside>
-
-        <main className="main-content">
-          <SiteTitle title={theme.brandName} />
-
-          <div className="view-toggle">
-            {['map', 'frozen'].map(mode => {
-              const isActive = view === mode
-              const isFrozenComingSoon = mode === 'frozen' && entity.features?.frozenDirectory === false
-              const label = mode === 'map'
-                ? theme.copy.frozenToggleMap
-                : (isFrozenComingSoon ? 'Coming Soon' : theme.copy.frozenToggleFrozen)
-              return (
-                <button
-                  key={mode}
-                  onClick={() => setView(mode)}
-                  className={isActive ? 'toggle-button active' : 'toggle-button'}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-
-          <div
-            className="map-or-directory"
-            style={{ contentVisibility: 'auto', containIntrinsicSize: '600px' }}
-          >
-            {view === 'map' ? (
-              mapLoading ? (
-                <div className="map-status" data-status="loading">
-                  {theme.copy.loading}
-                </div>
-              ) : mapError ? (
-                <div className="map-status" data-status="error">
-                  {theme.copy.errorPrefix}: {mapError.message}
-                </div>
-              ) : (
-                <div className="map-container-wrapper">
-                  <MapControls
-                    searchQuery={searchQuery}
-                    onSearchChange={setSearchQuery}
-                    nearMeActive={nearMeActive}
-                    nearMeRadius={nearMeRadius}
-                    locationError={locationError}
-                    searchLoading={searchLoading}
-                    searchError={searchError}
-                    searchNotice={searchNotice}
-                    searchResultLimitReached={Boolean(searchQuery.trim()) && searchPlaces.length >= SEARCH_RESULT_LIMIT}
-                    onSearchRetry={() => setSearchRetryToken(value => value + 1)}
-                    onNearMeToggle={handleNearMeToggle}
-                    onRadiusChange={setNearMeRadius}
-                    filteredPlaces={filteredPlaces}
-                    onPlaceClick={handlePlaceClick}
-                    showAllMarkets={showAllMarkets}
-                    onAllMarketsToggle={setShowAllMarkets}
-                  />
-                  <Suspense fallback={<div className="map-status" data-status="loading">{theme.copy.loading}</div>}>
-                    <MapView
-                      key={`${entity.entity}-map`}
-                      places={filteredPlaces}
-                      theme={theme}
-                      site={entity.entity}
-                      showClusterCounts={showClusterCounts}
-                      stateAggregates={filteredDisplayAggregates}
-                      onStateClick={handleStateClick}
-                      flyToLocation={flyToLocation}
-                      searchFocusKey={searchQuery.trim() ? `${normalizeSearchText(searchQuery)}:${filteredPlaces.map(place => place.id).join(',')}` : ''}
-                      forceIndividualMarkers={shouldForceIndividualMarkers({
-                        searchActive: Boolean(searchQuery.trim()),
-                        nearMeActive,
-                        placeCount: filteredPlaces.length,
-                      })}
-                      showAllMarkets={showAllMarkets}
-                      resetKey={`${themeKey}-${filters.styles.join(',')}-${filters.prices.join(',')}-${filters.statuses.join(',')}-${showAnthonysVisits ? 'anthony-visits' : 'all-statuses'}-${showAnthonysPicks ? 'anthonys-picks' : 'all-places'}-${showHistorical ? 'historical' : 'current'}`}
-                    />
-                  </Suspense>
-                </div>
-              )
-            ) : (
-              entity.features?.frozenDirectory === false ? (
-                <div className="map-status" data-status="loading">
-                  {entity.frozenUnavailableMessage}
-                </div>
-              ) : (
-                <FrozenPizzaDirectory filters={filters} theme={theme} themeKey={themeKey} />
-              )
-            )}
-          </div>
-
-          <footer className="site-footer">
-            <Link to={switchTarget} className="cta-switch" onClick={handleSiteSwitch}>
-              {switchLabel}
-            </Link>
-          </footer>
-        </main>
-
-        <aside className="sidebar-wrapper sidebar-wrapper--recommendations" aria-label="Recommendations and statistics">
-          <div className="sidebar-inner sidebar-inner--sticky">
-            <StatsPanel
-              table={entity.table}
-              states={showAllMarkets ? [] : publicScopeStates}
-            />
-            <SuggestionForm
-              key={themeKey}
-              theme={theme}
-              isPizza={entity.entity === 'pizza'}
-              onLocatePlace={handleLocatePlace}
-            />
-            <BugReportFab />
-          </div>
-        </aside>
-      </div>
+        </>}
+        switchTarget={switchTarget}
+        switchLabel={switchLabel}
+        onSwitch={handleSiteSwitch}
+        suggestTarget={entity.entity === 'pizza' ? '/suggest' : '/tacos/suggest'}
+        isPizza={entity.entity === 'pizza'}
+        scopeNotice={mapMoved ? 'Map moved. Search this area to update the place list.' : null}
+        onSearchArea={mapMoved && visibleMapBounds ? () => {
+          setAppliedMapBounds(visibleMapBounds)
+          setMapMoved(false)
+        } : null}
+        frozenNode={frozenNode}
+      />
+      <BugReportFab />
     </div>
   )
 }
@@ -2315,6 +2332,10 @@ export default function App() {
             <Route path="/places/:id" element={<PlaceDetailRoute themeKey={ThemeKeys.PIZZA} />} />
             <Route path="/tacos/places/:id" element={<PlaceDetailRoute themeKey={ThemeKeys.TACO} />} />
             <Route path="/data" element={<DataDashboard />} />
+            <Route path="/concept" element={<DiscoveryConceptPage entity="pizza" />} />
+            <Route path="/concept/tacos" element={<DiscoveryConceptPage entity="taco" />} />
+            <Route path="/suggest" element={<PublicSuggestionPage entity="pizza" />} />
+            <Route path="/tacos/suggest" element={<PublicSuggestionPage entity="taco" />} />
             <Route path="/admin/submit" element={<AdminSubmit />} />
             <Route path="/admin/reviews/*" element={<AdminReviewsPage />} />
             <Route

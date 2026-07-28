@@ -1,18 +1,21 @@
 // src/themes/tacoTheme.js
 import { ThemeKeys } from './siteTheme'
+import { US_STATE_CODES } from '../data/usStateCodes'
 
 /** @type {import('./siteTheme').SiteTheme} */
 export const tacoTheme = {
   brandName: 'Taco Bout Michigan',
-  titleRotation: ['#E52420', '#FFFFFF', '#007A33'],
+  // Keep the Mexican flag movement, with a warm sand middle stop that remains
+  // readable against the light interface.
+  titleRotation: ['#b92d27', '#8c6848', '#176a45'],
   palette: {
-    bg: '#f7f2e7',
-    card: '#efe5d6',
+    bg: '#f3e8d7',
+    card: '#fbf6ed',
     text: '#2a241b',
-    mutedText: '#6b5e4b',
-    border: '#dacbb4',
-    accent: '#b57c3b',
-    accentMuted: '#8f642f',
+    mutedText: '#70604e',
+    border: '#d5c2a7',
+    accent: '#c96f2d',
+    accentMuted: '#a56f2b',
   },
   copy: {
     styleLabel: 'Taco Type',
@@ -28,8 +31,8 @@ export const tacoTheme = {
     popupAnchor: [0, -24],
   },
   map: {
-    tileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    tileUrl: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
     primaryView: {
       center: [44.3148, -85.6024],
       zoom: 6,
@@ -37,8 +40,10 @@ export const tacoTheme = {
   },
   search: {
     preferredStates: ['MI', 'NY'],
-    initialStates: ['MI', 'NY'],
-    publicStates: ['MI', 'NY'],
+    // Keep the home markets prominent in ranking, but show every market on
+    // the public map and in the global statistics.
+    initialStates: US_STATE_CODES,
+    publicStates: [],
   },
 }
 
