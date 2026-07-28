@@ -5,6 +5,7 @@
 
 ALTER TABLE IF EXISTS public.taco_places
   ADD COLUMN IF NOT EXISTS enrichment_status TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS last_enriched_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS enrichment_agent TEXT,
   ADD COLUMN IF NOT EXISTS enrichment_run_id INTEGER,
@@ -32,7 +33,8 @@ ALTER TABLE IF EXISTS public.taco_places
   ADD COLUMN IF NOT EXISTS osm_last_fetched_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS osm_fetch_status TEXT,
   ADD COLUMN IF NOT EXISTS osm_fetch_error TEXT,
-  ADD COLUMN IF NOT EXISTS style_confidence TEXT;
+  ADD COLUMN IF NOT EXISTS style_confidence TEXT,
+  ADD COLUMN IF NOT EXISTS price_range TEXT;
 
 CREATE OR REPLACE FUNCTION public.apply_taco_places_sync_batch(p_rows jsonb)
 RETURNS jsonb
