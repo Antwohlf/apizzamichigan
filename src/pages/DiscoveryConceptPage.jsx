@@ -8,7 +8,6 @@ import {
   ListFilter,
   LocateFixed,
   MapPin,
-  Palette,
   Search,
   SlidersHorizontal,
   Star,
@@ -230,7 +229,11 @@ function ClusteredPlaces({ places, selectedPlace, onSelect, markerAssets }) {
   )
 }
 
-function ResultCard({ place, selected, onSelect, iconPath }) {
+function ResultCard({ place, selected, onSelect, iconPath, isPizza }) {
+  const tacoOrder = isPizza
+    ? null
+    : (place.style ? `${place.style} tacos` : 'the house tacos')
+
   return (
     <button
       id={`concept-result-${place.id}`}
@@ -254,10 +257,13 @@ function ResultCard({ place, selected, onSelect, iconPath }) {
         </span>
         <span className="concept-result__meta">
           <b>{Number(place.rating).toFixed(1)}</b>
-          <span>{place.style}</span>
+          <span>{isPizza ? place.style : (tacoOrder || 'Tacos')}</span>
           <span>{priceLabel(place.price)}</span>
         </span>
         <span className="concept-result__address">{place.address}</span>
+        <span className="concept-result__note">
+          {isPizza ? (place.review || 'Worth knowing') : `Order: ${tacoOrder || 'the house tacos'}`}
+        </span>
       </span>
       <ArrowUpRight className="concept-result__arrow" size={17} aria-hidden="true" />
     </button>
@@ -318,7 +324,31 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
   const siblingRoute = isPizza ? '/concept/tacos' : '/concept'
   const suggestRoute = isPizza ? '/suggest' : '/tacos/suggest'
   const locationLabel = isPizza ? 'Ann Arbor, Michigan' : 'Metro Detroit, Michigan'
-  const directoryHeading = isPizza ? 'Pizza worth knowing' : 'Tacos worth knowing'
+  const destination = isPizza ? {
+    kicker: 'The late-night pie counter',
+    heading: 'Tonight’s special: a better slice',
+    intro: 'A personal diner-style field guide to the pies, places, and people worth the drive.',
+    stamp: 'ANN ARBOR / MICHIGAN',
+    listKicker: 'The counter menu',
+    listHeading: 'Pizza worth knowing',
+    mapLabel: 'The pie map',
+    featureHeading: 'Anthony’s picks',
+    featureCopy: 'The places I would send a hungry friend first.',
+    browseHeading: 'Browse by style',
+    browseItems: ['Detroit', 'New York', 'Tavern', 'Neapolitan', 'Sicilian', 'Grandma'],
+  } : {
+    kicker: 'The neighborhood taquería guide',
+    heading: 'What should we order?',
+    intro: 'A warm, food-first guide to the tacos, taquerías, and stops worth crossing town for.',
+    stamp: 'MICHIGAN / TACOS',
+    listKicker: 'Behind the counter',
+    listHeading: 'Tacos worth knowing',
+    mapLabel: 'The taco map',
+    featureHeading: 'Tacos worth the drive',
+    featureCopy: 'Start with a dish, then follow the map to the taquería.',
+    browseHeading: 'Browse by taco',
+    browseItems: ['Al pastor', 'Carnitas', 'Birria', 'Barbacoa', 'Breakfast', 'Vegetarian'],
+  }
   const [contentMode, setContentMode] = useState('map')
   const [query, setQuery] = useState('')
   const [selectedStyle, setSelectedStyle] = useState('All styles')
@@ -332,8 +362,6 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
   const [visibleBounds, setVisibleBounds] = useState(null)
   const [appliedBounds, setAppliedBounds] = useState(null)
   const [locateState, setLocateState] = useState('idle')
-  const [themeMode, setThemeMode] = useState('standard')
-
   useEffect(() => {
     document.title = isPizza ? 'A Pizza Michigan' : 'TacoBoutMichigan'
   }, [isPizza])
@@ -421,21 +449,22 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
     (picksOnly ? 1 : 0)
   )
 
-  const isSignatureTheme = themeMode === 'signature'
+  const featuredPlaces = places.filter(place => place.isPick).slice(0, 3)
+
   const mapTileUrl = isPizza
     ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
     : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
 
   return (
-    <div className={`discovery-concept discovery-concept--${entityLabel}${isSignatureTheme ? ' is-signature-theme' : ''}`}>
-      <header className="concept-topbar">
-        <div className="concept-mode-switch" aria-label="Content">
+    <div className={`discovery-concept discovery-concept--${entityLabel} is-signature-theme ${isPizza ? 'concept-diner' : 'concept-taqueria'}`}>
+      <header className={`concept-topbar ${isPizza ? 'concept-topbar--diner' : 'concept-topbar--taqueria'}`}>
+        <div className="concept-counter-nav" aria-label="Concept navigation">
           <button
             type="button"
             className={contentMode === 'map' ? 'is-active' : ''}
             onClick={() => setContentMode('map')}
           >
-            {isPizza ? 'Pizza Map' : 'Taco Map'}
+            {isPizza ? 'The Pie Map' : 'The Taco Map'}
           </button>
           {isPizza ? (
             <button
@@ -443,7 +472,7 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
               className={contentMode === 'frozen' ? 'is-active' : ''}
               onClick={() => setContentMode('frozen')}
             >
-              Frozen Pizzas
+              Frozen counter
             </button>
           ) : null}
         </div>
@@ -454,16 +483,6 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
           <small>by Anthony Wohlfeil</small>
         </a>
         <div className="concept-topbar-actions">
-          <button
-            type="button"
-            className="concept-theme-toggle"
-            aria-pressed={isSignatureTheme}
-            onClick={() => setThemeMode(value => value === 'standard' ? 'signature' : 'standard')}
-            title={isSignatureTheme ? 'Use standard theme' : `Use ${isPizza ? 'retro diner' : 'taquería'} theme`}
-          >
-            <Palette size={16} aria-hidden="true" />
-            <span>{isSignatureTheme ? 'Standard' : isPizza ? 'Diner mode' : 'Taquería mode'}</span>
-          </button>
           <a className="concept-taco-link" href={siblingRoute}>
             <img src={isPizza ? '/taco-icon.svg' : '/pizza-icon.svg'} alt="" />
             <span>{isPizza ? <>TacoBout<wbr />Michigan</> : <>A Pizza <wbr />Michigan</>}</span>
@@ -474,6 +493,60 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
           </a>
         </div>
       </header>
+
+      <section className="concept-destination-hero" aria-labelledby="concept-destination-heading">
+        <div className="concept-destination-hero__copy">
+          <span className="concept-destination-hero__kicker">{destination.kicker}</span>
+          <h1 id="concept-destination-heading">{destination.heading}</h1>
+          <p>{destination.intro}</p>
+        </div>
+        <div className="concept-destination-hero__sign" aria-label={destination.stamp}>
+          <span>{isPizza ? 'Now serving' : 'Open table'}</span>
+          <strong>{destination.stamp}</strong>
+          <small>{isPizza ? 'Start with the map. Stay for the stories.' : 'Follow the smoke, not the hype.'}</small>
+        </div>
+      </section>
+
+      <section className="concept-feature-rail" aria-labelledby="concept-feature-heading">
+        <div className="concept-feature-rail__intro">
+          <span className="concept-feature-rail__kicker">{destination.featureHeading}</span>
+          <p id="concept-feature-heading">{destination.featureCopy}</p>
+        </div>
+        <div className="concept-feature-rail__cards">
+          {featuredPlaces.map(place => (
+            <button
+              type="button"
+              className="concept-feature-card"
+              key={`feature-${place.id}`}
+              onClick={() => setSelectedPlace(place)}
+            >
+              <span className="concept-feature-card__score">{Number(place.rating).toFixed(1)}</span>
+              <span className="concept-feature-card__body">
+                <strong>{place.name}</strong>
+                <small>{isPizza ? place.style : (place.style || 'House specialty')} · {priceLabel(place.price)}</small>
+              </span>
+              <ArrowUpRight size={16} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <nav className="concept-browse-rail" aria-label={destination.browseHeading}>
+        <strong>{destination.browseHeading}</strong>
+        {destination.browseItems.map(item => (
+          <button
+            type="button"
+            key={item}
+            className={normalizeText(query) === normalizeText(item) ? 'is-active' : ''}
+            onClick={() => {
+              setQuery(normalizeText(query) === normalizeText(item) ? '' : item)
+              setSelectedStyle('All styles')
+            }}
+          >
+            {item}
+          </button>
+        ))}
+      </nav>
 
       {isPizza && contentMode === 'frozen' ? (
         <main className="concept-frozen-workspace">
@@ -582,8 +655,8 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
 
           <div className="concept-results-summary">
             <div>
-              <span className="concept-results-summary__eyebrow">{locationLabel}</span>
-              <h1>{directoryHeading}</h1>
+              <span className="concept-results-summary__eyebrow">{destination.listKicker} · {locationLabel}</span>
+              <h2>{destination.listHeading}</h2>
             </div>
             <span>{filteredPlaces.length} places</span>
             <StatsPanel table={isPizza ? 'pizza_places' : 'taco_places'} states={CONCEPT_STATES} variant="compact" />
@@ -597,6 +670,7 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
                 selected={selectedPlace?.id === place.id}
                 onSelect={setSelectedPlace}
                 iconPath={placeIcon}
+                isPizza={isPizza}
               />
             )) : (
               <div className="concept-empty-state">
@@ -608,7 +682,7 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
           </div>
         </section>
 
-        <section className="concept-map-region" aria-label={`Map of ${pluralLabel}`}>
+        <section className="concept-map-region" aria-label={`${destination.mapLabel} for ${pluralLabel}`}>
           <MapContainer
             center={mapCenter}
             zoom={mapZoom}
