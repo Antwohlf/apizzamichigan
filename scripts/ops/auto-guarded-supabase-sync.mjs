@@ -39,6 +39,7 @@ function parseArgs(argv) {
     else if (arg === '--max-batches') out.maxBatches = argv[++i];
     else if (arg === '--checkpoint') out.checkpoint = argv[++i];
     else if (arg === '--sample') out.sample = argv[++i];
+    else if (arg === '--bulk-rpc') out.bulkRpc = true;
     else if (arg === '--insert-missing-reviewed-new') out.insertMissingReviewedNew = true;
     else if (arg === '--reconcile-reviewed-new') out.runReconciliation = true;
     else if (arg === '--help') {
