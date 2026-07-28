@@ -32,6 +32,7 @@
       "failure_rotation_threshold": 1,
       "tile_step": 0.25,
       "refresh_after_hours": 720,
+      "retry_failed": true,
       "provenance_refresh_limit_per_run": 500,
       "tiles_per_run": 2,
       "tile_timeout_ms": 180000,

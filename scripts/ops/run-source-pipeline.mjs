@@ -173,6 +173,7 @@ function runAdapter(source, region, output, config, state) {
       '--max-tiles', String(tilesPerRun),
       '--output', regionalOutput,
       '--manifest', manifest,
+      ...(config.sources.osm.retry_failed ? ['--retry-failed'] : []),
     ], { timeout: OSM_PIPELINE_TIMEOUT_MS, env: { ...process.env, OSM_ENTITY: config.entity, OSM_TILE_TIMEOUT_MS: String(tileTimeout), OSM_REFRESH_AFTER_HOURS: String(refreshAfterHours), OVERPASS_REQUEST_TIMEOUT_MS: String(requestTimeout), OVERPASS_QUERY_TIMEOUT_SECONDS: String(queryTimeout) } });
     writeFileSync(output, readFileSync(regionalOutput));
   } else if (source === 'overture_places') {
