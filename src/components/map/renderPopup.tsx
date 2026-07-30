@@ -69,6 +69,7 @@ function displayStatus(place: Place) {
   const raw = String(place.status || '').trim()
   if (!raw) return null
   const normalized = raw.toLowerCase()
+  if (normalized === 'unvisited') return null
   if (normalized.startsWith('visited')) return 'Anthony reviewed'
   if (normalized.startsWith('golden')) return null
   return raw
@@ -209,7 +210,12 @@ export function renderExpanded(
         ×
       </button>
       <div className="popup-card__body">
-        <div className="title">{place.name}</div>
+        <div className="popup-card__header">
+          <div className="title">{place.name}</div>
+          {normalizeRating(place.rating) !== null ? (
+            <div className="rating">★ {normalizeRating(place.rating)!.toFixed(1)}</div>
+          ) : null}
+        </div>
         {(style || price || status || lifecycle || isGolden) ? (
           <div className="popup-card__chips">
             {style ? <span className="badge badge--style">{style}</span> : null}
@@ -240,33 +246,32 @@ export function renderExpanded(
             ) : null}
           </div>
         ) : null}
-        {normalizeRating(place.rating) !== null ? (
-          <div className="rating">★ {normalizeRating(place.rating)!.toFixed(1)}</div>
-        ) : null}
-        {location ? (
-          <div className="addr">
-            {location}
-          </div>
-        ) : null}
-        {phone ? (
-          <div className="addr">
-            {phoneUrl ? <a href={phoneUrl} onClick={stopPopupEvent}>{phone}</a> : phone}
-          </div>
-        ) : null}
-        {hours ? (
-          hourEntries.length ? (
-            <div className="addr popup-card__hours">
-              <strong>Hours</strong>
-              <ul aria-label="Opening hours">
-                {hourEntries.map(({ label, value }, index) => (
-                  <li key={`${label}-${index}`}>
-                    {label ? <strong>{label}</strong> : null}<span>{value}</span>
-                  </li>
-                ))}
-              </ul>
+        <div className="popup-card__facts">
+          {location ? (
+            <div className="addr popup-card__fact">
+              <span>{location}</span>
             </div>
-          ) : <div className="addr">Hours: {hours}</div>
-        ) : null}
+          ) : null}
+          {phone ? (
+            <div className="addr popup-card__fact">
+              {phoneUrl ? <a href={phoneUrl} onClick={stopPopupEvent}>{phone}</a> : <span>{phone}</span>}
+            </div>
+          ) : null}
+          {hours ? (
+            hourEntries.length ? (
+              <div className="addr popup-card__hours popup-card__fact">
+                <strong className="popup-card__fact-label">Hours</strong>
+                <ul aria-label="Opening hours">
+                  {hourEntries.map(({ label, value }, index) => (
+                    <li key={`${label}-${index}`}>
+                      {label ? <strong>{label}</strong> : null}<span>{value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : <div className="addr popup-card__fact"><span className="popup-card__fact-label">Hours</span><span>{hours}</span></div>
+          ) : null}
+        </div>
         {photos.length ? (
           <div className="review-gallery-wrap">
             <ReviewGallery photos={photos} placeName={place.name} />
@@ -274,92 +279,43 @@ export function renderExpanded(
         ) : null}
       </div>
       <div className="actions">
-        {place.href ? (
+        <div className="popup-card__primary-action">
           <a
-            href={place.href}
-            className="popup-link--details"
-            onClick={event => {
-              onDetailsNavigate?.()
-              stopPopupEvent(event)
-            }}
-            onMouseDown={stopPopupEvent}
-            onPointerDown={stopPopupEvent}
-          >
-            View place details
-          </a>
-        ) : (
-          <a
-            href={internalDetailHref(place)}
-            className="popup-link--details"
-            onClick={event => {
-              onDetailsNavigate?.()
-              stopPopupEvent(event)
-            }}
-            onMouseDown={stopPopupEvent}
-            onPointerDown={stopPopupEvent}
-          >
-            View place details
-          </a>
-        )}
-        {phoneUrl ? (
-          <a
-            href={phoneUrl}
+            href={place.href || internalDetailHref(place)}
             className="popup-link--primary"
-            onClick={stopPopupEvent}
+            onClick={event => {
+              onDetailsNavigate?.()
+              stopPopupEvent(event)
+            }}
             onMouseDown={stopPopupEvent}
             onPointerDown={stopPopupEvent}
           >
-            Call restaurant
+            View place details
           </a>
-        ) : null}
-        {website ? (
-          <a
-            href={website}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="popup-link--details"
-            onClick={stopPopupEvent}
-            onMouseDown={stopPopupEvent}
-            onPointerDown={stopPopupEvent}
-          >
-            Official website
+        </div>
+        <div className="popup-card__secondary-actions">
+          {phoneUrl ? (
+            <a href={phoneUrl} className="popup-link--details" onClick={stopPopupEvent} onMouseDown={stopPopupEvent} onPointerDown={stopPopupEvent}>
+              Call restaurant
+            </a>
+          ) : null}
+          {website ? (
+            <a href={website} target="_blank" rel="noopener noreferrer" className="popup-link--details" onClick={stopPopupEvent} onMouseDown={stopPopupEvent} onPointerDown={stopPopupEvent}>
+              Official website
+            </a>
+          ) : null}
+          {menu ? (
+            <a href={menu} target="_blank" rel="noopener noreferrer" className="popup-link--details" onClick={stopPopupEvent} onMouseDown={stopPopupEvent} onPointerDown={stopPopupEvent}>
+              Menu
+            </a>
+          ) : null}
+          <a target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`} className="popup-link--details" onClick={stopPopupEvent} onMouseDown={stopPopupEvent} onPointerDown={stopPopupEvent}>
+            Directions
           </a>
-        ) : null}
-        {menu ? (
-          <a
-            href={menu}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="popup-link--details"
-            onClick={stopPopupEvent}
-            onMouseDown={stopPopupEvent}
-            onPointerDown={stopPopupEvent}
-          >
-            Menu
+          <a href={buildGoogleMapsUrl(place)} target="_blank" rel="noopener noreferrer" className="popup-link--details" onClick={stopPopupEvent} onMouseDown={stopPopupEvent} onPointerDown={stopPopupEvent}>
+            Open in Google Maps
           </a>
-        ) : null}
-        <a
-          target="_blank"
-          rel="noopener noreferrer"
-          href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`}
-          className="popup-link--primary"
-          onClick={stopPopupEvent}
-          onMouseDown={stopPopupEvent}
-          onPointerDown={stopPopupEvent}
-        >
-          Directions
-        </a>
-        <a
-          href={buildGoogleMapsUrl(place)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="popup-link--details"
-          onClick={stopPopupEvent}
-          onMouseDown={stopPopupEvent}
-          onPointerDown={stopPopupEvent}
-        >
-          Open in Google Maps
-        </a>
+        </div>
       </div>
     </div>
   )
