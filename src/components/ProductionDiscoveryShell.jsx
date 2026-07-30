@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownUp,
   ArrowUpRight,
+  List,
   ListFilter,
+  Map as MapIcon,
   Search,
   SlidersHorizontal,
   Star,
@@ -130,11 +132,17 @@ export default function ProductionDiscoveryShell({
 }) {
   const [sortOpen, setSortOpen] = useState(false)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState('map')
   const suggestionCloseRef = useRef(null)
   const iconPath = isPizza ? '/pizza-icon.svg' : '/taco-icon.svg'
   const scopedPlaces = useMemo(() => sortProductionPlaces(places, sortMode), [places, sortMode])
   const visiblePlaces = scopedPlaces.slice(0, 250)
   const title = theme.brandName
+
+  const handlePlaceSelect = place => {
+    onPlaceClick(place)
+    setMobilePanel('map')
+  }
 
   useEffect(() => {
     if (!suggestionOpen) return undefined
@@ -188,7 +196,7 @@ export default function ProductionDiscoveryShell({
             aria-haspopup="dialog"
             aria-expanded={suggestionOpen}
           >
-            Suggest a place
+            <span>Suggest a place</span>
             <ArrowUpRight size={15} aria-hidden="true" />
           </button>
         </div>
@@ -234,8 +242,28 @@ export default function ProductionDiscoveryShell({
       {view === 'frozen' ? (
         <main className="production-discovery__frozen">{frozenNode}</main>
       ) : (
-        <main className="production-discovery__workspace">
+        <main className="production-discovery__workspace" data-mobile-panel={mobilePanel}>
           <section className="production-discovery__results" aria-label={`${entity} places`}>
+            <div className="production-discovery__mobile-view-switch" role="group" aria-label="Browse view">
+              <button
+                type="button"
+                className={mobilePanel === 'map' ? 'is-active' : ''}
+                onClick={() => setMobilePanel('map')}
+                aria-pressed={mobilePanel === 'map'}
+              >
+                <MapIcon size={15} aria-hidden="true" />
+                Map
+              </button>
+              <button
+                type="button"
+                className={mobilePanel === 'list' ? 'is-active' : ''}
+                onClick={() => setMobilePanel('list')}
+                aria-pressed={mobilePanel === 'list'}
+              >
+                <List size={15} aria-hidden="true" />
+                Places
+              </button>
+            </div>
             <div className="production-discovery__search">{mapControls}</div>
 
             <div className="production-discovery__toolbar">
@@ -312,7 +340,7 @@ export default function ProductionDiscoveryShell({
                   key={place.id}
                   place={place}
                   selected={selectedPlace?.id === place.id}
-                  onSelect={onPlaceClick}
+                  onSelect={handlePlaceSelect}
                   iconPath={iconPath}
                   picksLabel={picksLabel}
                   isPickForPlace={isPickForPlace}
@@ -320,8 +348,21 @@ export default function ProductionDiscoveryShell({
               )) : (
                 <div className="production-discovery__empty">
                   <ListFilter size={22} aria-hidden="true" />
-                  <strong>{hasMapAggregates && !searchActive ? 'Search this map area' : 'No places match this view'}</strong>
-                  <span>{hasMapAggregates && !searchActive ? 'Places are grouped on the map. Search this area to browse them.' : 'Try changing your search or filters.'}</span>
+                  <strong>{hasMapAggregates && !searchActive ? (onSearchArea ? 'Search this map area' : 'Choose an area to browse') : 'No places match this view'}</strong>
+                  <span>{hasMapAggregates && !searchActive
+                    ? (onSearchArea ? 'Places are grouped on the map. Search this area to browse them.' : 'Places are grouped on the map. Open the map and zoom into an area to browse them.')
+                    : 'Try changing your search or filters.'}</span>
+                  {hasMapAggregates && !searchActive && onSearchArea ? (
+                    <button type="button" onClick={onSearchArea}>
+                      <Search size={15} aria-hidden="true" />
+                      Search this area
+                    </button>
+                  ) : hasMapAggregates && !searchActive ? (
+                    <button type="button" onClick={() => setMobilePanel('map')}>
+                      <MapIcon size={15} aria-hidden="true" />
+                      Open map
+                    </button>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -337,6 +378,18 @@ export default function ProductionDiscoveryShell({
                 Search this area
               </button>
             ) : null}
+            <div className="production-discovery__mobile-map-dock">
+              <button type="button" onClick={() => setMobilePanel('list')}>
+                <List size={15} aria-hidden="true" />
+                View places
+              </button>
+              {onSearchArea ? (
+                <button type="button" onClick={onSearchArea}>
+                  <Search size={15} aria-hidden="true" />
+                  Search area
+                </button>
+              ) : null}
+            </div>
           </section>
         </main>
       )}

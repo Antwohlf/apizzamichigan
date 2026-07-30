@@ -160,6 +160,28 @@ describe('renderExpanded', () => {
     )
   })
 
+  test('does not show the unvisited status badge in expanded popups', () => {
+    // renderExpanded owns a detached React root outside Testing Library's render helper.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    act(() => {
+      renderExpanded(
+        node,
+        {
+          id: '123',
+          name: 'Unvisited Pizza',
+          lat: 42.1,
+          lng: -83.1,
+          type: 'pizza',
+          status: 'unvisited',
+        },
+        jest.fn()
+      )
+    })
+
+    expect(screen.getByRole('dialog', { name: /unvisited pizza details/i })).toBeInTheDocument()
+    expect(screen.queryByText('unvisited')).not.toBeInTheDocument()
+  })
+
   test('exposes verified contact actions when public data includes them', () => {
     // renderExpanded owns a detached React root outside Testing Library's render helper.
     // eslint-disable-next-line testing-library/no-unnecessary-act
