@@ -2,7 +2,16 @@ import React, { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { readSupabase } from '../lib/supabaseRead'
 
-function StatRow({ label, value, loading }) {
+function StatRow({ label, value, loading, compact = false }) {
+  if (compact) {
+    return (
+      <span className="stats-panel__item">
+        <strong>{loading ? '...' : value}</strong>
+        <span>{label}</span>
+      </span>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.25rem 0' }}>
       <span style={{ fontSize: '0.9rem', color: 'var(--app-text-muted)' }}>{label}</span>
@@ -55,7 +64,7 @@ async function fetchStats(table, states = []) {
   }
 }
 
-export function StatsPanel({ table = 'pizza_places', states = [] }) {
+export function StatsPanel({ table = 'pizza_places', states = [], variant = 'default' }) {
   const [stats, setStats] = useState({ tried: 0, unvisited: 0, average: '—' })
   const [loading, setLoading] = useState(true)
 
@@ -83,6 +92,31 @@ export function StatsPanel({ table = 'pizza_places', states = [] }) {
       isMounted = false
     }
   }, [table, states])
+
+  if (variant === 'compact') {
+    return (
+      <div className="stats-panel stats-panel--compact" aria-label="APizzaMichigan statistics">
+        <StatRow
+          compact
+          label="tried"
+          value={stats.tried.toLocaleString()}
+          loading={loading}
+        />
+        <StatRow
+          compact
+          label="to discover"
+          value={stats.unvisited.toLocaleString()}
+          loading={loading}
+        />
+        <StatRow
+          compact
+          label="average rating"
+          value={stats.average}
+          loading={loading}
+        />
+      </div>
+    )
+  }
 
   return (
     <div style={{ marginBottom: '1rem' }}>

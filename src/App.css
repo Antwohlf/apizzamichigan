@@ -85,6 +85,14 @@ body {
   filter: drop-shadow(0 0 12px rgba(250, 204, 21, 0.65)) drop-shadow(0 0 20px rgba(250, 204, 21, 0.45));
 }
 
+/* MarkerCluster's default zoom transition moves child markers outward from
+   their old cluster position. That reads as an explosion on dense maps; the
+   map itself still animates, while marker membership changes settle in place. */
+.leaflet-cluster-anim .leaflet-marker-icon,
+.leaflet-cluster-anim .leaflet-marker-shadow {
+  transition: none !important;
+}
+
 /* Historical places remain discoverable, but should not read as current
    recommendations when the map-history filter is enabled. */
 .leaflet-marker-icon.place-marker--historical {

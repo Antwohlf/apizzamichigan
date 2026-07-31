@@ -133,10 +133,11 @@ export default function ProductionDiscoveryShell({
   const [sortOpen, setSortOpen] = useState(false)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [mobilePanel, setMobilePanel] = useState('map')
+  const [visibleLimit, setVisibleLimit] = useState(250)
   const suggestionCloseRef = useRef(null)
   const iconPath = isPizza ? '/pizza-icon.svg' : '/taco-icon.svg'
   const scopedPlaces = useMemo(() => sortProductionPlaces(places, sortMode), [places, sortMode])
-  const visiblePlaces = scopedPlaces.slice(0, 250)
+  const visiblePlaces = scopedPlaces.slice(0, visibleLimit)
   const title = theme.brandName
 
   const handlePlaceSelect = place => {
@@ -150,6 +151,20 @@ export default function ProductionDiscoveryShell({
     const previousActiveElement = document.activeElement
     const handleKeyDown = event => {
       if (event.key === 'Escape') setSuggestionOpen(false)
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(document.querySelectorAll(
+        '.production-discovery__dialog button, .production-discovery__dialog input, .production-discovery__dialog textarea, .production-discovery__dialog select, .production-discovery__dialog a[href]',
+      )).filter(element => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true')
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
 
     document.addEventListener('keydown', handleKeyDown)
@@ -366,6 +381,15 @@ export default function ProductionDiscoveryShell({
                 </div>
               )}
             </div>
+            {visiblePlaces.length < scopedPlaces.length ? (
+              <button
+                type="button"
+                className="production-discovery__show-more"
+                onClick={() => setVisibleLimit(limit => limit + 250)}
+              >
+                Show more places ({scopedPlaces.length - visiblePlaces.length} remaining)
+              </button>
+            ) : null}
           </section>
 
           <section className="production-discovery__map" aria-label={`Map of ${entity} places`}>

@@ -11,6 +11,13 @@
     "country": "US",
     "tel": "+1 734-555-0100",
     "website": "https://example.com/fixture-pizza",
+    "fixture_candidate": {
+      "name": "Fixture Pizza Ann Arbor",
+      "address": "100 Fixture St, Ann Arbor, MI 48104",
+      "phone": "+1 734-555-0100",
+      "website": "https://example.com/fixture-pizza"
+    },
+    "fixture_name_relationship": "equivalent",
     "fsq_category_labels": ["Dining and Drinking", "Restaurant", "Pizzeria"]
   },
   {
@@ -25,6 +32,11 @@
     "country": "US",
     "tel": "+1 313-555-0100",
     "website": "https://example.com/fixture-slice",
+    "fixture_candidate": {
+      "name": "Fixture Slice Detroit",
+      "address": "200 Fixture Ave, Detroit, MI 48226"
+    },
+    "fixture_name_relationship": "equivalent",
     "fsq_category_labels": ["Pizza", "Restaurant"]
   },
   {
@@ -39,6 +51,14 @@
     "country": "US",
     "tel": "+1 517-555-0100",
     "website": "https://example.com/closed-fixture",
+    "fixture_candidate": {
+      "name": "New Fixture Pizza",
+      "address": "300 Fixture Rd, Lansing, MI 48933",
+      "phone": "+1 517-555-0100",
+      "website": "https://example.com/closed-fixture"
+    },
+    "fixture_name_relationship": "different",
+    "fixture_replacement_risk": true,
     "fsq_category_labels": ["Pizzeria"],
     "date_closed": "2025-01-01"
   }

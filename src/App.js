@@ -2034,12 +2034,11 @@ function SiteContainer({ themeKey }) {
   }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits, showAnthonysPicks, showHistorical, preferredSearchStates, showAllMarkets, publicScopeStates, picksMinimumRating])
 
   const mapVisiblePlaces = useMemo(() => {
-    const searchIsActive = Boolean(searchQuery.trim()) || nearMeActive
-    const scopedPlaces = searchIsActive || !appliedMapBounds
+    const scopedPlaces = !appliedMapBounds
       ? filteredPlaces
       : filteredPlaces.filter(place => appliedMapBounds.contains([place.lat, place.lng]))
     return sortProductionPlaces(scopedPlaces, sortMode)
-  }, [appliedMapBounds, filteredPlaces, nearMeActive, searchQuery, sortMode])
+  }, [appliedMapBounds, filteredPlaces, sortMode])
 
   const shouldDimUnloadedAggregates = useMemo(() => {
     return (

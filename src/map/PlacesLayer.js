@@ -852,7 +852,12 @@ export function PlacesLayer({
         forceIndividualMarkers ? markers : (
           <MarkerClusterGroup
             key={`cluster-${site}-${showClusterCounts}`}
-            chunkedLoading
+            // Keep the visible marker set stable while the map moves. Chunked
+            // insertion makes places appear in waves, which is especially
+            // distracting on dense city views.
+            chunkedLoading={false}
+            removeOutsideVisibleBounds={false}
+            animateAddingMarkers={false}
             maxClusterRadius={clusterRadiusForZoom}
             // Keep clusters spatially stable while zooming. The default
             // animation makes dense pizza areas appear to jump apart.
