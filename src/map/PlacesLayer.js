@@ -49,7 +49,7 @@ const createClusterIcon = (site, showCounts) => (cluster) => {
   const childMarkers = cluster.getAllChildMarkers()
 
   // Check if all markers have the same status
-  const statuses = childMarkers.map(m => m.options?.status || 'visited')
+  const statuses = childMarkers.map(m => m.options?.status || 'unvisited')
   const uniqueStatuses = [...new Set(statuses)]
   const clusterStatus = uniqueStatuses.length === 1 ? uniqueStatuses[0] : 'visited'
 
@@ -749,7 +749,7 @@ export function PlacesLayer({
         if (lat === null || lng === null) return null
         const markerKey = getMarkerKey(place, idx)
 
-        const status = place.status || 'visited'
+        const status = place.status || 'unvisited'
 
         return (
           <Marker
