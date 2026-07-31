@@ -1252,7 +1252,9 @@ const normalizeStatus = (status) => {
       return lower
     }
   }
-  return 'visited'
+  // Source-discovered places can legitimately have no editorial status yet.
+  // Never represent missing data as an Anthony review.
+  return 'unvisited'
 }
 
 const convertLegacyPhotos = photos =>
@@ -1331,7 +1333,7 @@ const parseBoolean = value => {
   return null
 }
 
-const computeFavorited = (place = {}, normalizedStatus = 'visited') => {
+const computeFavorited = (place = {}, normalizedStatus = 'unvisited') => {
   for (const field of FAVORITE_FLAG_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(place, field)) {
       const parsed = parseBoolean(place[field])
@@ -2009,7 +2011,7 @@ function SiteContainer({ themeKey }) {
       if (showAnthonysPicks && !isEligibleForAnthonysPicks(place, { minimumRating: picksMinimumRating })) return matches
 
       // Style, price, status filters
-      const placeStatus = place.status || 'visited'
+      const placeStatus = place.status || 'unvisited'
       const isExplicitAnthonyVisit = isAnthonyReviewedPlace(place)
       const passesFilters = (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
