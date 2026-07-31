@@ -1,6 +1,6 @@
 // src/map.js
 import React, { useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import 'leaflet-rotatedmarker'
 
 import { PlacesLayer } from './map/PlacesLayer'
@@ -26,6 +26,23 @@ function ScopeViewController({ showAllMarkets = false, primaryView }) {
   return null
 }
 
+function ViewportReporter({ onViewportChange }) {
+  const initialReportRef = useRef(true)
+  const map = useMapEvents({
+    dragend: () => onViewportChange?.(map.getBounds(), false),
+    zoomend: event => {
+      if (!initialReportRef.current) onViewportChange?.(map.getBounds(), false)
+    },
+  })
+
+  useEffect(() => {
+    onViewportChange?.(map.getBounds(), true)
+    initialReportRef.current = false
+  }, [map, onViewportChange])
+
+  return null
+}
+
 const Map = ({
   places,
   theme,
@@ -38,6 +55,7 @@ const Map = ({
   resetKey,
   showAllMarkets = false,
   searchFocusKey = '',
+  onViewportChange,
 }) => {
   const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
@@ -64,6 +82,7 @@ const Map = ({
       style={{ height: '100%', width: '100%', position: 'relative' }}
     >
       <TileLayer attribution={attribution} url={tileUrl} />
+      <ViewportReporter onViewportChange={onViewportChange} />
       <PopupProviderBridge>
         <PlacesLayer
           site={site}
