@@ -15,7 +15,7 @@
 import { getQueue } from '../queue.mjs'
 import pg from 'pg'
 import 'dotenv/config'
-import { inferStyleFromName, inferPriceFromChain, isKnownChain } from '../../lib/style-inference.mjs'
+import { inferStyleFromName, inferStyleFromBrandWikidata, inferPriceFromChain } from '../../lib/style-inference.mjs'
 import { hasStyleEvidence } from '../../lib/style-evidence.mjs'
 import { PIZZA_STYLES, normalizePizzaStyle } from '../../lib/pizza-style-taxonomy.mjs'
 import { enrichmentEntity, normalizeEnrichmentStyle } from '../../lib/enrichment-entity.mjs'
@@ -351,11 +351,21 @@ class LlmClassifier {
 
     // Chain override layer
     const tacoInference = entity === 'taco' ? inferTypeFromName(row.name, row.address || '') : null
-    const chainStyle = entity === 'taco' ? { style: formatTypesForStorage(tacoInference?.types) } : inferStyleFromName(row.name, '')
+    const nameStyle = entity === 'taco' ? { style: formatTypesForStorage(tacoInference?.types) } : inferStyleFromName(row.name, '')
+    const brandStyle = entity === 'pizza'
+      ? inferStyleFromBrandWikidata(row.osm_tags?.['brand:wikidata'] || row.osm_tags?.['operator:wikidata'])
+      : null
+    const chainStyle = brandStyle?.style ? brandStyle : nameStyle
     const chainPrice = entity === 'taco' ? inferTacoPrice(row.name) : inferPriceFromChain(row.name)
-    const hasBrandSignal = Boolean(row.osm_tags?.['brand:wikidata'] || row.osm_tags?.['operator:wikidata'])
 
-    if ((entity === 'taco' ? isKnownTacoChain(row.name) : isKnownChain(row.name)) || hasBrandSignal) {
+    // A brand identifier is useful evidence for the LLM, but it is not itself a
+    // classification. Only bypass inference when the deterministic catalog has
+    // an actual style or price answer to apply.
+    const hasDeterministicOverride = entity === 'taco'
+      ? isKnownTacoChain(row.name)
+      : Boolean(chainStyle?.style || chainPrice?.price)
+
+    if (hasDeterministicOverride) {
       const style = chainStyle?.style || null
       const priceRange = chainPrice?.price || null
 
