@@ -99,6 +99,17 @@ const CHAIN_STYLE_MAP = {
   "toarminas": 'Standard Round',
 }
 
+// Brand identifiers are less ambiguous than display names. Keep this catalog
+// intentionally small: each entry represents the brand's primary pizza style.
+const WIKIDATA_BRAND_STYLE_MAP = {
+  // California Pizza Kitchen specializes in California-style pizza.
+  Q15109854: 'California',
+  // Uno's origin and signature product are Chicago deep dish.
+  Q7897209: 'Chicago Deep Dish',
+  // Happy's serves conventional round pizzas across its Metro Detroit stores.
+  Q5652393: 'Standard Round',
+}
+
 // Keywords that suggest specific styles
 const STYLE_KEYWORDS = {
   // Detroit
@@ -288,6 +299,20 @@ export function inferStyleFromName(name, address = '') {
     confidence: null,
     source: null,
     match: null,
+  }
+}
+
+/**
+ * Infer a primary pizza style from a verified OSM brand or operator Wikidata ID.
+ */
+export function inferStyleFromBrandWikidata(wikidataId) {
+  const id = String(wikidataId || '').trim()
+  const style = WIKIDATA_BRAND_STYLE_MAP[id]
+  return {
+    style: style ? normalizePizzaStyle(style) : null,
+    confidence: style ? 'high' : null,
+    source: style ? 'brand_wikidata_map' : null,
+    match: style ? id : null,
   }
 }
 
