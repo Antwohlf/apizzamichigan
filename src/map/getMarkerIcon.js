@@ -21,8 +21,8 @@ const iconBySiteStatus = {
   },
 }
 
-export function getMarkerIcon(site, status = 'visited', lifecycleStatus = null) {
-  const safeStatus = status && iconBySiteStatus[site] && iconBySiteStatus[site][status] ? status : 'visited'
+export function getMarkerIcon(site, status = 'unvisited', lifecycleStatus = null) {
+  const safeStatus = status && iconBySiteStatus[site] && iconBySiteStatus[site][status] ? status : 'unvisited'
   const iconUrl = iconBySiteStatus[site][safeStatus]
   const historical = isHistoricalLifecycle(lifecycleStatus)
 

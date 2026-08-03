@@ -1252,7 +1252,9 @@ const normalizeStatus = (status) => {
       return lower
     }
   }
-  return 'visited'
+  // Source-discovered places can legitimately have no editorial status yet.
+  // Never represent missing data as an Anthony review.
+  return 'unvisited'
 }
 
 const convertLegacyPhotos = photos =>
@@ -1331,7 +1333,7 @@ const parseBoolean = value => {
   return null
 }
 
-const computeFavorited = (place = {}, normalizedStatus = 'visited') => {
+const computeFavorited = (place = {}, normalizedStatus = 'unvisited') => {
   for (const field of FAVORITE_FLAG_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(place, field)) {
       const parsed = parseBoolean(place[field])
@@ -2009,7 +2011,7 @@ function SiteContainer({ themeKey }) {
       if (showAnthonysPicks && !isEligibleForAnthonysPicks(place, { minimumRating: picksMinimumRating })) return matches
 
       // Style, price, status filters
-      const placeStatus = place.status || 'visited'
+      const placeStatus = place.status || 'unvisited'
       const isExplicitAnthonyVisit = isAnthonyReviewedPlace(place)
       const passesFilters = (
         (filters.styles.length === 0 || filters.styles.includes(place.style)) &&
@@ -2034,12 +2036,11 @@ function SiteContainer({ themeKey }) {
   }, [allLoadedPlaces, searchPlaces, filters, searchQuery, nearMeActive, userLocation, nearMeRadius, effectiveStatusSet, showAnthonysVisits, showAnthonysPicks, showHistorical, preferredSearchStates, showAllMarkets, publicScopeStates, picksMinimumRating])
 
   const mapVisiblePlaces = useMemo(() => {
-    const searchIsActive = Boolean(searchQuery.trim()) || nearMeActive
-    const scopedPlaces = searchIsActive || !appliedMapBounds
+    const scopedPlaces = !appliedMapBounds
       ? filteredPlaces
       : filteredPlaces.filter(place => appliedMapBounds.contains([place.lat, place.lng]))
     return sortProductionPlaces(scopedPlaces, sortMode)
-  }, [appliedMapBounds, filteredPlaces, nearMeActive, searchQuery, sortMode])
+  }, [appliedMapBounds, filteredPlaces, sortMode])
 
   const shouldDimUnloadedAggregates = useMemo(() => {
     return (
