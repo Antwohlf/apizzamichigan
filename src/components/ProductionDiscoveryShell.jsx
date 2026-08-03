@@ -5,6 +5,7 @@ import {
   List,
   ListFilter,
   Map as MapIcon,
+  Plus,
   Search,
   SlidersHorizontal,
   Star,
@@ -210,9 +211,10 @@ export default function ProductionDiscoveryShell({
             onClick={() => setSuggestionOpen(true)}
             aria-haspopup="dialog"
             aria-expanded={suggestionOpen}
+            aria-label="Suggest a place"
           >
             <span>Suggest a place</span>
-            <ArrowUpRight size={15} aria-hidden="true" />
+            <Plus size={17} aria-hidden="true" />
           </button>
         </div>
       </header>
