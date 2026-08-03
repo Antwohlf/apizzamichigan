@@ -22,6 +22,8 @@
     <string>1</string>
     <key>APIZZA_SYNC_CHECKPOINT</key>
     <string>scripts/.supabase-sync-checkpoint.json</string>
+    <key>APIZZA_SYNC_STATUS_FILE</key>
+    <string>scripts/.supabase-sync-status.json</string>
     <key>APIZZA_SYNC_SAMPLE</key>
     <string>10</string>
     <key>APIZZA_SYNC_INSERT_MISSING_REVIEWED_NEW</key>
