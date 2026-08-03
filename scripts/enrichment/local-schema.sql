@@ -125,6 +125,24 @@ CREATE TABLE IF NOT EXISTS taco_places (
   scrape_notes TEXT
 );
 
+-- Explicit, human-approved lifecycle changes are local operational history.
+-- They are intentionally not part of the public source provenance model.
+CREATE TABLE IF NOT EXISTS place_lifecycle_history (
+  id BIGSERIAL PRIMARY KEY,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('pizza', 'taco')),
+  place_id BIGINT NOT NULL,
+  previous_lifecycle_status TEXT,
+  previous_replaced_by_id BIGINT,
+  lifecycle_status TEXT,
+  replaced_by_id BIGINT,
+  reason TEXT NOT NULL,
+  changed_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_place_lifecycle_history_place
+  ON place_lifecycle_history (entity_type, place_id, created_at DESC);
+
 -- ============================================================
 -- ENRICHMENT_LOG: Track all enrichment attempts (local only)
 -- ============================================================

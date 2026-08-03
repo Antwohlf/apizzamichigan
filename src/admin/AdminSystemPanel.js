@@ -288,7 +288,11 @@ export default function AdminSystemPanel({ entity }) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ entity, lifecycleStatus: 'closed' }),
+        body: JSON.stringify({
+          entity,
+          lifecycleStatus: 'closed',
+          reason: 'Closure confirmed during manual admin review.',
+        }),
       })
       if (!response.ok) throw new Error(await response.text() || 'The place could not be marked closed.')
       setLifecycleConfirmation(null)
