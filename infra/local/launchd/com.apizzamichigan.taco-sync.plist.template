@@ -8,12 +8,14 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /Users/ant/clawd/projects/apizzamichigan &amp;&amp; APIZZA_SYNC_ENTITY=taco APIZZA_SYNC_BULK_RPC=1 /usr/local/bin/node scripts/ops/auto-guarded-supabase-sync.mjs --entity taco --bulk-rpc --checkpoint scripts/.taco-supabase-sync-checkpoint.json</string>
+    <string>cd /Users/ant/clawd/projects/apizzamichigan &amp;&amp; APIZZA_SYNC_ENTITY=taco APIZZA_SYNC_BULK_RPC=1 ENABLE_LIFECYCLE_SYNC=1 /usr/local/bin/node scripts/ops/auto-guarded-supabase-sync.mjs --entity taco --bulk-rpc --checkpoint scripts/.taco-supabase-sync-checkpoint.json</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>APIZZA_SYNC_ENTITY</key><string>taco</string>
     <key>APIZZA_SYNC_BULK_RPC</key><string>1</string>
+    <key>APIZZA_SYNC_STATUS_FILE</key><string>scripts/.taco-supabase-sync-status.json</string>
+    <key>ENABLE_LIFECYCLE_SYNC</key><string>1</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>/Users/ant/clawd/projects/apizzamichigan</string>

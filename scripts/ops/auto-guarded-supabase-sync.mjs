@@ -10,14 +10,16 @@ import { mkdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { makeSyncRunState, summarizeSyncFailure, syncRunStatePath, writeSyncRunState } from '../lib/supabase-sync-run-state.mjs';
 import { supabaseSyncProfile } from '../lib/supabase-sync-profiles.mjs';
+import { defaultSyncStatusFile } from '../lib/supabase-sync-status-file.mjs';
 
 const LOCK_DIR = process.env.APIZZA_SYNC_LOCK_DIR || '/tmp/apizzamichigan/supabase-sync.lock';
 const LOCK_MAX_AGE_MS = parseInt(process.env.APIZZA_SYNC_LOCK_MAX_AGE_MS || String(25 * 60 * 1000), 10);
-const STATUS_FILE = syncRunStatePath(process.env.APIZZA_SYNC_STATUS_FILE || 'scripts/.supabase-sync-status.json');
+const syncEntity = process.env.APIZZA_SYNC_ENTITY || 'pizza';
+const STATUS_FILE = syncRunStatePath(process.env.APIZZA_SYNC_STATUS_FILE || defaultSyncStatusFile(syncEntity));
 
 function parseArgs(argv) {
   const out = {
-    entity: process.env.APIZZA_SYNC_ENTITY || 'pizza',
+    entity: syncEntity,
     hours: process.env.APIZZA_SYNC_HOURS || '168',
     batch: process.env.APIZZA_SYNC_BATCH || '100',
     maxBatches: process.env.APIZZA_SYNC_MAX_BATCHES || '1',

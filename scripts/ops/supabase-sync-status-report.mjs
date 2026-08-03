@@ -13,6 +13,7 @@ import { execFileSync } from 'child_process';
 import { readSyncCheckpoint } from '../lib/supabase-sync-checkpoint.mjs';
 import { readSyncRunState, syncRunStatePath } from '../lib/supabase-sync-run-state.mjs';
 import { summarizeSyncStatusError } from '../lib/supabase-sync-status.mjs';
+import { defaultSyncStatusFile } from '../lib/supabase-sync-status-file.mjs';
 import {
   supabaseSyncSelectCols,
   assertSupabaseSyncTableBoundary,
@@ -226,7 +227,7 @@ async function main() {
   const env = loadEnvLocal();
   const checkpoint = readSyncCheckpoint(options.checkpoint);
   const runState = readSyncRunState(syncRunStatePath(
-    env.APIZZA_SYNC_STATUS_FILE || 'scripts/.supabase-sync-status.json',
+    env.APIZZA_SYNC_STATUS_FILE || defaultSyncStatusFile(options.entity),
     root,
   ));
   const syncBoundary = assertSupabaseSyncTableBoundary({ entity: options.entity, targetTable: profile.targetTable });

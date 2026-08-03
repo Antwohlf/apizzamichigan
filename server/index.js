@@ -11,6 +11,7 @@ const { createClient } = require('@supabase/supabase-js')
 const { handleBugReport } = require('../api/_lib/bugReport')
 const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
 const { getClientIp } = require('../api/_lib/request')
+const { applyLifecycleChange, normalizeLifecycleChange } = require('../scripts/lib/lifecycle-mutation.cjs')
 
 const app = express()
 // Note: 5000 is commonly hijacked by AirPlay Receiver on macOS.
@@ -3802,57 +3803,18 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
 app.patch('/api/admin/places/:id/lifecycle', requireAdminAuth, async (req, res) => {
   const id = safeInteger(req.params.id, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
   const entity = req.body?.entity === 'taco' ? 'taco' : 'pizza'
-  const status = String(req.body?.lifecycleStatus || 'active').trim().toLowerCase()
-  const replacementId = req.body?.replacedByPlaceId == null || req.body?.replacedByPlaceId === ''
-    ? null
-    : safeInteger(req.body.replacedByPlaceId, 0, { min: 1, max: Number.MAX_SAFE_INTEGER })
-  const tableName = SOURCE_REVIEW_ENTITY_TABLES[entity]
-  const allowedStatuses = new Set(['active', 'closed', 'replaced', 'demolished'])
-
-  if (!id) return res.status(400).json({ error: 'Invalid place id.' })
-  if (!allowedStatuses.has(status)) return res.status(400).json({ error: 'Invalid lifecycle status.' })
-  if (status === 'replaced' && !replacementId) return res.status(400).json({ error: 'A replacement place is required.' })
-  if (status !== 'replaced' && replacementId) return res.status(400).json({ error: 'A replacement place is only valid for replaced places.' })
-  if (replacementId === id) return res.status(400).json({ error: 'A place cannot replace itself.' })
 
   try {
+    const input = normalizeLifecycleChange({
+      entity,
+      placeId: id,
+      lifecycleStatus: req.body?.lifecycleStatus,
+      replacementId: req.body?.replacedByPlaceId,
+      reason: req.body?.reason,
+    })
     const payload = await withLocalPostgres(async client => {
-      const current = await client.query(`
-        SELECT id, name, lifecycle_status, lifecycle_replaced_by_id
-        FROM ${tableName}
-        WHERE id = $1
-      `, [id])
-      if (!current.rows[0]) {
-        const error = new Error('Place not found.')
-        error.status = 404
-        throw error
-      }
-      if (replacementId) {
-        const replacement = await client.query(`
-          SELECT id, lifecycle_status
-          FROM ${tableName}
-          WHERE id = $1
-        `, [replacementId])
-        if (!replacement.rows[0]) {
-          const error = new Error('Replacement place not found.')
-          error.status = 404
-          throw error
-        }
-        if (replacement.rows[0].lifecycle_status) {
-          const error = new Error('Replacement place must be active or unclassified.')
-          error.status = 409
-          throw error
-        }
-      }
-      const updated = await client.query(`
-        UPDATE ${tableName}
-        SET lifecycle_status = $2,
-            lifecycle_replaced_by_id = $3,
-            updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, name, lifecycle_status, lifecycle_replaced_by_id, updated_at
-      `, [id, status === 'active' ? null : status, status === 'replaced' ? replacementId : null])
-      return { data: updated.rows[0] }
+      const updated = await applyLifecycleChange(client, input, { changedBy: 'admin:portal' })
+      return { data: updated }
     })
     return res.json(payload)
   } catch (error) {
