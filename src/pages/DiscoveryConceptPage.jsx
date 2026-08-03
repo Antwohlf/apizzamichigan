@@ -336,6 +336,7 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
     featureCopy: 'The places I would send a hungry friend first.',
     browseHeading: 'Browse by style',
     browseItems: ['Detroit', 'New York', 'Tavern', 'Neapolitan', 'Sicilian', 'Grandma'],
+    webNote: 'Since 2001 · best viewed with a hungry stomach',
   } : {
     kicker: 'The neighborhood taquería guide',
     heading: 'What should we order?',
@@ -348,6 +349,7 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
     featureCopy: 'Start with a dish, then follow the map to the taquería.',
     browseHeading: 'Browse by taco',
     browseItems: ['Al pastor', 'Carnitas', 'Birria', 'Barbacoa', 'Breakfast', 'Vegetarian'],
+    webNote: 'Family owned · cash welcome · gracias',
   }
   const [contentMode, setContentMode] = useState('map')
   const [query, setQuery] = useState('')
@@ -456,7 +458,7 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
     : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
 
   return (
-    <div className={`discovery-concept discovery-concept--${entityLabel} is-signature-theme ${isPizza ? 'concept-diner' : 'concept-taqueria'}`}>
+    <div className={`discovery-concept discovery-concept--${entityLabel} ${isPizza ? 'concept-diner' : 'concept-taqueria'}`}>
       <header className={`concept-topbar ${isPizza ? 'concept-topbar--diner' : 'concept-topbar--taqueria'}`}>
         <div className="concept-counter-nav" aria-label="Concept navigation">
           <button
@@ -495,15 +497,26 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
       </header>
 
       <section className="concept-destination-hero" aria-labelledby="concept-destination-heading">
+        {!isPizza ? (
+          <div className="concept-papel-banner" aria-hidden="true">
+            {Array.from({ length: 13 }, (_, index) => <span key={index} />)}
+          </div>
+        ) : null}
         <div className="concept-destination-hero__copy">
           <span className="concept-destination-hero__kicker">{destination.kicker}</span>
           <h1 id="concept-destination-heading">{destination.heading}</h1>
           <p>{destination.intro}</p>
+          {!isPizza ? (
+            <p className="concept-handwritten-edit" aria-label="Handwritten note">
+              <span className="concept-handwritten-edit__old">best tacos in town</span>
+              <span className="concept-handwritten-edit__new">our family thinks so!</span>
+            </p>
+          ) : null}
         </div>
         <div className="concept-destination-hero__sign" aria-label={destination.stamp}>
           <span>{isPizza ? 'Now serving' : 'Open table'}</span>
           <strong>{destination.stamp}</strong>
-          <small>{isPizza ? 'Start with the map. Stay for the stories.' : 'Follow the smoke, not the hype.'}</small>
+          <small>{destination.webNote}</small>
         </div>
       </section>
 

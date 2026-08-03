@@ -2084,6 +2084,451 @@
   }
 }
 
+/* Keep the concept identity, but make the first screen a browsing surface.
+   Featured places remain available in the menu/list; they do not need a
+   second dashboard row above the map. */
+.discovery-concept.concept-diner .concept-feature-rail,
+.discovery-concept.concept-taqueria .concept-feature-rail {
+  display: none;
+}
+
+.discovery-concept.concept-diner .concept-destination-hero,
+.discovery-concept.concept-taqueria .concept-destination-hero {
+  height: 148px;
+  min-height: 148px;
+  padding-block: 12px;
+}
+
+.discovery-concept.concept-diner .concept-destination-hero h1,
+.discovery-concept.concept-taqueria .concept-destination-hero h1 {
+  max-width: 760px;
+  margin-block: 2px 0;
+  font-size: clamp(1.75rem, 3vw, 2.65rem);
+  white-space: nowrap;
+}
+
+.discovery-concept.concept-diner .concept-destination-hero p,
+.discovery-concept.concept-taqueria .concept-destination-hero p {
+  max-width: 680px;
+  margin-top: 5px;
+  font-size: 0.78rem;
+}
+
+.discovery-concept.concept-diner .concept-results-panel__header,
+.discovery-concept.concept-taqueria .concept-results-panel__header {
+  padding: 10px 14px;
+}
+
+.discovery-concept.concept-diner .concept-results-summary .stats-panel--compact,
+.discovery-concept.concept-taqueria .concept-results-summary .stats-panel--compact {
+  display: none;
+}
+
+.discovery-concept.concept-diner .concept-results-summary,
+.discovery-concept.concept-taqueria .concept-results-summary {
+  min-height: 88px;
+  padding-block: 12px;
+}
+
+@media (max-width: 600px) {
+  .discovery-concept.concept-diner .concept-destination-hero,
+  .discovery-concept.concept-taqueria .concept-destination-hero {
+    height: auto;
+    min-height: 164px;
+  }
+
+  .discovery-concept.concept-diner .concept-destination-hero h1,
+  .discovery-concept.concept-taqueria .concept-destination-hero h1 {
+    white-space: normal;
+  }
+}
+
+/* Final art direction: intentionally specific, slightly imperfect identities. */
+.concept-diner {
+  --concept-bg: #f4f4f4;
+  --concept-panel: #ffffff;
+  --concept-panel-raised: #eeeeee;
+  --concept-border: #111111;
+  --concept-text: #111111;
+  --concept-muted: #454545;
+  --concept-orange: #d21f35;
+  --concept-red: #c51d31;
+  --concept-green: #111111;
+  --concept-gold: #f1c400;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, rgba(17, 17, 17, 0.08) 25%, transparent 25%, transparent 75%, rgba(17, 17, 17, 0.08) 75%),
+    linear-gradient(45deg, rgba(17, 17, 17, 0.08) 25%, transparent 25%, transparent 75%, rgba(17, 17, 17, 0.08) 75%);
+  background-position: 0 0, 14px 14px;
+  background-size: 28px 28px;
+  font-family: Verdana, Arial, sans-serif;
+}
+
+.concept-diner .concept-topbar {
+  background: #ffffff;
+  border-bottom: 5px solid #111111;
+  box-shadow: 0 5px 0 var(--concept-red);
+}
+
+.concept-diner .concept-brand strong {
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(1.45rem, 2.7vw, 2.35rem);
+  letter-spacing: -0.06em;
+  text-transform: uppercase;
+}
+
+.concept-diner .concept-brand__gradient {
+  background-image: linear-gradient(180deg, #d52136 0 48%, #111111 49% 100%);
+  text-shadow: 2px 2px 0 #ffffff;
+}
+
+.concept-diner .concept-counter-nav,
+.concept-diner .concept-sibling-nav,
+.concept-diner .concept-suggest-link,
+.concept-diner .concept-search,
+.concept-diner .concept-filter-trigger,
+.concept-diner .concept-quick-filter,
+.concept-diner .concept-sort-trigger {
+  border-radius: 0;
+  border-width: 2px;
+  border-color: #111111;
+}
+
+.concept-diner .concept-counter-nav button.is-active,
+.concept-diner .concept-filter-trigger.is-active,
+.concept-diner .concept-quick-filter.is-active,
+.concept-diner .concept-sort-trigger.is-active {
+  background: var(--concept-red);
+  color: #ffffff;
+}
+
+.concept-diner .concept-destination-hero {
+  background: #ffffff;
+  border-bottom: 5px solid #111111;
+  background-image: linear-gradient(90deg, transparent 0 96%, rgba(197, 29, 49, 0.08) 96% 100%);
+}
+
+.concept-diner .concept-destination-hero h1 {
+  color: var(--concept-red);
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(1.8rem, 4vw, 3.3rem);
+  letter-spacing: -0.06em;
+  line-height: 0.95;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 #111111;
+}
+
+.concept-diner .concept-destination-hero__kicker,
+.concept-diner .concept-feature-rail__kicker {
+  color: #111111;
+  font-family: Verdana, Arial, sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.concept-diner .concept-destination-hero__sign {
+  border: 3px solid #111111;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: 7px 7px 0 var(--concept-red);
+  transform: rotate(-1deg);
+}
+
+.concept-diner .concept-destination-hero__sign span {
+  color: var(--concept-red);
+  font-family: "Arial Black", Impact, sans-serif;
+}
+
+.concept-diner .concept-destination-hero__sign strong {
+  color: #111111;
+  font-family: Georgia, "Times New Roman", serif;
+  text-transform: uppercase;
+}
+
+.concept-diner .concept-feature-rail {
+  background: #ffffff;
+  border-top: 3px solid var(--concept-red);
+  border-bottom: 3px solid #111111;
+}
+
+.concept-diner .concept-feature-rail__kicker {
+  color: var(--concept-red);
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: 1.12rem;
+  transform: rotate(-2deg);
+}
+
+.concept-diner .concept-feature-card {
+  border: 2px solid #111111;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: 3px 3px 0 #111111;
+}
+
+.concept-diner .concept-feature-card__score {
+  border-radius: 0;
+  background: var(--concept-red);
+  color: #ffffff;
+}
+
+.concept-diner .concept-browse-rail {
+  background: #111111;
+  border-color: #111111;
+}
+
+.concept-diner .concept-browse-rail strong {
+  color: #ffffff;
+  font-family: "Arial Black", Impact, sans-serif;
+}
+
+.concept-diner .concept-browse-rail button {
+  border-color: #ffffff;
+  border-radius: 0;
+  color: #ffffff;
+  font-family: "Arial Black", Impact, sans-serif;
+  text-transform: uppercase;
+}
+
+.concept-diner .concept-browse-rail button:hover,
+.concept-diner .concept-browse-rail button:focus-visible,
+.concept-diner .concept-browse-rail button.is-active {
+  background: var(--concept-red);
+  border-color: #ffffff;
+}
+
+.concept-diner .concept-result {
+  border-width: 2px;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.concept-diner .concept-result:hover,
+.concept-diner .concept-result:focus-visible,
+.concept-diner .concept-result.is-selected {
+  background: #fff3f4;
+  border-color: var(--concept-red);
+  box-shadow: inset 6px 0 0 var(--concept-red);
+}
+
+.concept-taqueria {
+  --concept-bg: #e8d1a8;
+  --concept-panel: #fff7e7;
+  --concept-panel-raised: #f3dfbd;
+  --concept-border: #5a3a27;
+  --concept-text: #2f2118;
+  --concept-muted: #725943;
+  --concept-orange: #c66b2c;
+  --concept-red: #a92e2a;
+  --concept-green: #286548;
+  --concept-gold: #d79b2d;
+  background-color: var(--concept-bg);
+  background-image:
+    radial-gradient(rgba(93, 56, 34, 0.08) 0.7px, transparent 0.7px),
+    linear-gradient(90deg, rgba(169, 46, 42, 0.04) 1px, transparent 1px);
+  background-size: 10px 10px, 32px 32px;
+  font-family: Arial, sans-serif;
+}
+
+.concept-taqueria .concept-topbar {
+  background: #fff7e7;
+  border-bottom: 4px solid var(--concept-green);
+  box-shadow: 0 4px 0 var(--concept-red);
+}
+
+.concept-taqueria .concept-brand strong {
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: clamp(1.6rem, 3vw, 2.45rem);
+  letter-spacing: -0.05em;
+  transform: rotate(-1deg);
+}
+
+.concept-taqueria .concept-brand__gradient {
+  background-image: linear-gradient(110deg, var(--concept-red), var(--concept-gold) 48%, var(--concept-green));
+}
+
+.concept-taqueria .concept-counter-nav,
+.concept-taqueria .concept-suggest-link,
+.concept-taqueria .concept-search,
+.concept-taqueria .concept-filter-trigger,
+.concept-taqueria .concept-quick-filter,
+.concept-taqueria .concept-sort-trigger {
+  border-radius: 2px;
+  border-width: 2px;
+}
+
+.concept-taqueria .concept-destination-hero {
+  isolation: isolate;
+  background: var(--concept-panel);
+  border-bottom: 2px dashed var(--concept-red);
+}
+
+.concept-taqueria .concept-destination-hero__copy,
+.concept-taqueria .concept-destination-hero__sign {
+  position: relative;
+  z-index: 2;
+}
+
+.concept-taqueria .concept-destination-hero__kicker,
+.concept-taqueria .concept-feature-rail__kicker {
+  color: var(--concept-green);
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.concept-taqueria .concept-destination-hero h1 {
+  color: var(--concept-green);
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  letter-spacing: -0.08em;
+  transform: rotate(-1deg);
+}
+
+.concept-taqueria .concept-destination-hero__sign {
+  border: 2px solid var(--concept-green);
+  border-radius: 2px;
+  background: #fff7e7;
+  box-shadow: 6px 6px 0 var(--concept-red);
+  transform: rotate(1.5deg);
+}
+
+.concept-taqueria .concept-destination-hero__sign span {
+  color: var(--concept-red);
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.concept-taqueria .concept-destination-hero__sign strong {
+  color: var(--concept-green);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.concept-papel-banner {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  display: flex;
+  height: 47px;
+  padding: 0 8px;
+  border-bottom: 2px solid rgba(90, 58, 39, 0.35);
+  overflow: hidden;
+}
+
+.concept-papel-banner span {
+  flex: 1 1 0;
+  min-width: 28px;
+  height: 39px;
+  clip-path: polygon(0 0, 100% 0, 92% 68%, 50% 100%, 8% 68%);
+  background: var(--flag-color, var(--concept-red));
+  opacity: 0.94;
+}
+
+.concept-papel-banner span:nth-child(3n + 1) { --flag-color: #a92e2a; }
+.concept-papel-banner span:nth-child(3n + 2) { --flag-color: #d79b2d; }
+.concept-papel-banner span:nth-child(3n) { --flag-color: #286548; }
+
+.concept-handwritten-edit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 7px !important;
+  color: var(--concept-text) !important;
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: 0.83rem !important;
+  transform: rotate(-1.5deg);
+}
+
+.concept-handwritten-edit__old {
+  color: var(--concept-red);
+  text-decoration: line-through 2px var(--concept-red);
+}
+
+.concept-handwritten-edit__new {
+  color: #222222;
+  font-weight: 800;
+  transform: rotate(2deg);
+}
+
+.concept-taqueria .concept-feature-rail {
+  background: var(--concept-panel-raised);
+  border-bottom: 2px dashed var(--concept-border);
+}
+
+.concept-taqueria .concept-feature-rail__kicker {
+  font-size: 1.18rem;
+}
+
+.concept-taqueria .concept-feature-card {
+  border: 2px solid var(--concept-border);
+  border-radius: 2px;
+  background: var(--concept-panel);
+  box-shadow: 3px 3px 0 rgba(90, 58, 39, 0.28);
+}
+
+.concept-taqueria .concept-feature-card__score {
+  background: var(--concept-green);
+}
+
+.concept-taqueria .concept-browse-rail {
+  background: var(--concept-red);
+  border-color: var(--concept-red);
+}
+
+.concept-taqueria .concept-browse-rail strong {
+  color: #fff7e7;
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.concept-taqueria .concept-browse-rail button {
+  border-color: #fff7e7;
+  border-radius: 2px;
+  color: #fff7e7;
+}
+
+.concept-taqueria .concept-browse-rail button:hover,
+.concept-taqueria .concept-browse-rail button:focus-visible,
+.concept-taqueria .concept-browse-rail button.is-active {
+  background: var(--concept-green);
+  border-color: #fff7e7;
+}
+
+.concept-taqueria .concept-result {
+  border-width: 2px;
+  border-radius: 2px;
+  background: var(--concept-panel);
+}
+
+.concept-taqueria .concept-result:hover,
+.concept-taqueria .concept-result:focus-visible,
+.concept-taqueria .concept-result.is-selected {
+  background: #fff1d8;
+  border-color: var(--concept-green);
+  box-shadow: inset 6px 0 0 var(--concept-green);
+}
+
+@media (max-width: 600px) {
+  .concept-taqueria .concept-papel-banner {
+    height: 38px;
+  }
+
+  .concept-taqueria .concept-papel-banner span {
+    height: 31px;
+  }
+
+  .concept-taqueria .concept-destination-hero__copy {
+    padding-top: 18px;
+  }
+
+  .concept-handwritten-edit {
+    flex-wrap: wrap;
+    gap: 2px 7px;
+  }
+}
+
 @media (max-width: 390px) {
   .concept-brand strong {
     font-size: 1.05rem;
@@ -2439,4 +2884,292 @@
   background: var(--concept-red);
   color: #fffaf0;
   outline: none;
+}
+
+/* These final rules intentionally come after the older concept prototype
+   rules above, so the dedicated identities remain the source of truth. */
+.discovery-concept.concept-diner {
+  --concept-bg: #f4f4f4;
+  --concept-panel: #ffffff;
+  --concept-panel-raised: #eeeeee;
+  --concept-border: #111111;
+  --concept-text: #111111;
+  --concept-muted: #454545;
+  --concept-orange: #d21f35;
+  --concept-red: #c51d31;
+  --concept-green: #111111;
+  --concept-gold: #f1c400;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, rgba(17, 17, 17, 0.08) 25%, transparent 25%, transparent 75%, rgba(17, 17, 17, 0.08) 75%),
+    linear-gradient(45deg, rgba(17, 17, 17, 0.08) 25%, transparent 25%, transparent 75%, rgba(17, 17, 17, 0.08) 75%);
+  background-position: 0 0, 14px 14px;
+  background-size: 28px 28px;
+  font-family: Verdana, Arial, sans-serif;
+}
+
+.discovery-concept.concept-taqueria {
+  --concept-bg: #e8d1a8;
+  --concept-panel: #fff7e7;
+  --concept-panel-raised: #f3dfbd;
+  --concept-border: #5a3a27;
+  --concept-text: #2f2118;
+  --concept-muted: #725943;
+  --concept-orange: #c66b2c;
+  --concept-red: #a92e2a;
+  --concept-green: #286548;
+  --concept-gold: #d79b2d;
+  background-color: #e8d1a8;
+  background-image:
+    radial-gradient(rgba(93, 56, 34, 0.08) 0.7px, transparent 0.7px),
+    linear-gradient(90deg, rgba(169, 46, 42, 0.04) 1px, transparent 1px);
+  background-size: 10px 10px, 32px 32px;
+  font-family: Arial, sans-serif;
+}
+
+.discovery-concept.concept-diner .concept-topbar,
+.discovery-concept.concept-taqueria .concept-topbar {
+  min-height: 72px;
+  height: auto;
+  background: var(--concept-panel);
+  border-bottom: 4px solid var(--concept-border);
+  box-shadow: 0 4px 0 var(--concept-red);
+}
+
+.discovery-concept.concept-diner .concept-brand strong {
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(1.45rem, 2.7vw, 2.2rem);
+  letter-spacing: -0.06em;
+  text-transform: uppercase;
+}
+
+.discovery-concept.concept-diner .concept-brand__gradient {
+  background: none;
+  color: #111111;
+  -webkit-text-fill-color: #111111;
+  text-shadow: 1px 1px 0 #ffffff;
+}
+
+.discovery-concept.concept-diner .concept-brand__gradient > span {
+  color: #d52136;
+  -webkit-text-fill-color: #d52136;
+}
+
+.discovery-concept.concept-taqueria .concept-brand strong {
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: clamp(1.55rem, 3vw, 2.35rem);
+  letter-spacing: -0.05em;
+  transform: rotate(-1deg);
+}
+
+.discovery-concept.concept-taqueria .concept-brand__gradient {
+  background-image: linear-gradient(110deg, #a7322c, #d79b2d 48%, #286548);
+}
+
+.discovery-concept.concept-diner .concept-destination-hero,
+.discovery-concept.concept-taqueria .concept-destination-hero {
+  min-height: 122px;
+  padding-block: 13px;
+  border-bottom: 3px solid var(--concept-border);
+}
+
+.discovery-concept.concept-diner .concept-destination-hero {
+  background: #ffffff;
+  background-image: linear-gradient(90deg, transparent 0 96%, rgba(197, 29, 49, 0.08) 96% 100%);
+}
+
+.discovery-concept.concept-diner .concept-destination-hero {
+  isolation: isolate;
+}
+
+.discovery-concept.concept-diner .concept-destination-hero::before {
+  display: none;
+}
+
+.discovery-concept.concept-diner .concept-topbar::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -12px;
+  left: 0;
+  height: 12px;
+  z-index: 3;
+  background: repeating-conic-gradient(#c51d31 0 25%, #fff8ee 0 50%) 0 / 24px 24px;
+  border-top: 2px solid #111111;
+  border-bottom: 2px solid #111111;
+}
+
+.discovery-concept.concept-taqueria .concept-destination-hero {
+  isolation: isolate;
+  background: #fff7e7;
+}
+
+.discovery-concept.concept-diner .concept-destination-hero h1 {
+  color: #c51d31;
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: clamp(1.75rem, 3.2vw, 2.8rem);
+  letter-spacing: -0.06em;
+  line-height: 0.95;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 #111111;
+}
+
+.discovery-concept.concept-taqueria .concept-destination-hero h1 {
+  color: #286548;
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: clamp(1.9rem, 3.3vw, 2.9rem);
+  letter-spacing: -0.08em;
+}
+
+.discovery-concept.concept-diner .concept-destination-hero__sign,
+.discovery-concept.concept-taqueria .concept-destination-hero__sign {
+  border: 2px solid var(--concept-border);
+  border-radius: 2px;
+  background: var(--concept-panel);
+  box-shadow: 6px 6px 0 var(--concept-red);
+}
+
+.discovery-concept.concept-feature-rail,
+.discovery-concept.concept-diner .concept-feature-rail,
+.discovery-concept.concept-taqueria .concept-feature-rail {
+  min-height: 82px;
+  padding-block: 8px;
+  background: var(--concept-panel);
+  border-bottom: 2px solid var(--concept-border);
+}
+
+.discovery-concept.concept-diner .concept-feature-card,
+.discovery-concept.concept-taqueria .concept-feature-card {
+  min-height: 52px;
+  border-radius: 2px;
+  border-width: 2px;
+  box-shadow: 3px 3px 0 var(--concept-border);
+}
+
+.discovery-concept.concept-diner .concept-feature-card__score {
+  border-radius: 0;
+  background: #c51d31;
+  color: #ffffff;
+}
+
+.discovery-concept.concept-taqueria .concept-feature-card__score {
+  background: #286548;
+}
+
+.discovery-concept.concept-diner .concept-browse-rail,
+.discovery-concept.concept-taqueria .concept-browse-rail {
+  min-height: 40px;
+  padding-block: 4px;
+}
+
+.discovery-concept.concept-diner .concept-browse-rail {
+  background: #111111;
+  border-color: #111111;
+}
+
+.discovery-concept.concept-diner .concept-browse-rail strong,
+.discovery-concept.concept-diner .concept-browse-rail button {
+  color: #ffffff;
+}
+
+.discovery-concept.concept-diner .concept-browse-rail button {
+  min-height: 27px;
+  border-radius: 0;
+  border-color: #ffffff;
+  font-family: "Arial Black", Impact, sans-serif;
+  text-transform: uppercase;
+}
+
+.discovery-concept.concept-taqueria .concept-browse-rail {
+  background: #a92e2a;
+  border-color: #a92e2a;
+}
+
+.discovery-concept.concept-taqueria .concept-browse-rail button {
+  min-height: 27px;
+  border-radius: 2px;
+  border-color: #fff7e7;
+  color: #fff7e7;
+}
+
+.discovery-concept.concept-diner .concept-workspace,
+.discovery-concept.concept-taqueria .concept-workspace {
+  height: calc(100vh - 285px);
+  min-height: 520px;
+}
+
+.discovery-concept.concept-diner .concept-map-region,
+.discovery-concept.concept-taqueria .concept-map-region {
+  min-height: 520px;
+  border-bottom-width: 0;
+}
+
+.discovery-concept.concept-taqueria .concept-papel-banner {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  display: flex;
+  height: 38px;
+  padding: 0 8px;
+  border-bottom: 2px solid rgba(90, 58, 39, 0.35);
+  overflow: hidden;
+}
+
+.discovery-concept.concept-taqueria .concept-papel-banner span {
+  flex: 1 1 0;
+  height: 32px;
+  clip-path: polygon(0 0, 100% 0, 92% 68%, 50% 100%, 8% 68%);
+  background: #a92e2a;
+}
+
+.discovery-concept.concept-taqueria .concept-papel-banner span:nth-child(3n + 1) { background: #a92e2a; }
+.discovery-concept.concept-taqueria .concept-papel-banner span:nth-child(3n + 2) { background: #d79b2d; }
+.discovery-concept.concept-taqueria .concept-papel-banner span:nth-child(3n) { background: #286548; }
+
+.discovery-concept.concept-taqueria .concept-destination-hero__copy,
+.discovery-concept.concept-taqueria .concept-destination-hero__sign {
+  position: relative;
+  z-index: 2;
+}
+
+.discovery-concept.concept-taqueria .concept-destination-hero__copy {
+  padding-top: 20px;
+}
+
+.discovery-concept.concept-taqueria .concept-handwritten-edit {
+  display: flex;
+  gap: 8px;
+  margin-top: 5px !important;
+  color: #222222 !important;
+  font-family: "Comic Sans MS", "Segoe Print", cursive;
+  font-size: 0.78rem !important;
+  transform: rotate(-1deg);
+}
+
+.discovery-concept.concept-taqueria .concept-handwritten-edit__old {
+  color: #a92e2a;
+  text-decoration: line-through 2px #a92e2a;
+}
+
+.discovery-concept.concept-taqueria .concept-handwritten-edit__new {
+  font-weight: 800;
+  transform: rotate(2deg);
+}
+
+@media (max-width: 600px) {
+  .discovery-concept.concept-diner .concept-destination-hero,
+  .discovery-concept.concept-taqueria .concept-destination-hero {
+    min-height: 148px;
+  }
+
+  .discovery-concept.concept-diner .concept-workspace,
+  .discovery-concept.concept-taqueria .concept-workspace {
+    height: auto;
+    min-height: 0;
+  }
+
+  .discovery-concept.concept-diner .concept-map-region,
+  .discovery-concept.concept-taqueria .concept-map-region {
+    min-height: 330px;
+  }
 }

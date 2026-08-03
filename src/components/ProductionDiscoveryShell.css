@@ -584,6 +584,25 @@
   padding: 6px 8px 24px;
 }
 
+.production-discovery__show-more {
+  width: calc(100% - 24px);
+  margin: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--production-border);
+  border-radius: 8px;
+  background: var(--production-panel-raised);
+  color: var(--production-text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.production-discovery__show-more:hover,
+.production-discovery__show-more:focus-visible {
+  border-color: var(--production-orange);
+  outline: none;
+}
+
 .production-discovery__list.is-empty {
   flex: 0 0 auto;
 }

@@ -3,6 +3,7 @@ import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import { getMarkerIcon } from './getMarkerIcon'
+import { clusterStatusForMarkers } from './clusterStatus'
 import { useMapPopup } from './useMapPopup'
 import { usePopup } from '../context/PopupProvider'
 import { renderExpanded, renderPreview } from '../components/map/renderPopup'
@@ -48,13 +49,10 @@ const createClusterIcon = (site, showCounts) => (cluster) => {
   const count = cluster.getChildCount()
   const childMarkers = cluster.getAllChildMarkers()
 
-  // Check if all markers have the same status
-  const statuses = childMarkers.map(m => m.options?.status || 'visited')
-  const uniqueStatuses = [...new Set(statuses)]
-  const clusterStatus = uniqueStatuses.length === 1 ? uniqueStatuses[0] : 'visited'
+  const clusterStatus = clusterStatusForMarkers(childMarkers)
 
   const icons = CLUSTER_ICONS[site] || CLUSTER_ICONS.pizza
-  const icon = icons[clusterStatus] || icons.visited
+  const icon = icons[clusterStatus] || icons.unvisited
   // Always use primary color for badge (red for pizza, orange for taco)
   const badgeColor = site === 'taco' ? '#e67e22' : '#d9382b'
 
@@ -749,7 +747,7 @@ export function PlacesLayer({
         if (lat === null || lng === null) return null
         const markerKey = getMarkerKey(place, idx)
 
-        const status = place.status || 'visited'
+        const status = place.status || 'unvisited'
 
         return (
           <Marker
@@ -852,7 +850,12 @@ export function PlacesLayer({
         forceIndividualMarkers ? markers : (
           <MarkerClusterGroup
             key={`cluster-${site}-${showClusterCounts}`}
-            chunkedLoading
+            // Keep the visible marker set stable while the map moves. Chunked
+            // insertion makes places appear in waves, which is especially
+            // distracting on dense city views.
+            chunkedLoading={false}
+            removeOutsideVisibleBounds={false}
+            animateAddingMarkers={false}
             maxClusterRadius={clusterRadiusForZoom}
             // Keep clusters spatially stable while zooming. The default
             // animation makes dense pizza areas appear to jump apart.
