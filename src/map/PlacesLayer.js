@@ -13,12 +13,7 @@ import { useSelectedPlace } from '../store/selectedPlace'
 import { supabase } from '../supabaseClient'
 import { readSupabase } from '../lib/supabaseRead'
 import { StateAggregateLayer } from './StateMarker'
-import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
-import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
-import pizzaIconGold from '../icons/pizza/marker-pizza-gold.svg'
-import tacoIconColored from '../icons/taco/marker-taco-colored.svg'
-import tacoIconGrey from '../icons/taco/marker-taco-grey.svg'
-import tacoIconGold from '../icons/taco/marker-taco-gold.svg'
+import { markerAssetsFor } from './markerAssets'
 import {
   DEFAULT_MAP_ZOOM,
   FOCUSED_PLACE_ZOOM,
@@ -37,11 +32,6 @@ import {
 import { saveMapReturnState } from './mapReturnState'
 import { entityConfig } from '../config/entityConfig'
 
-const CLUSTER_ICONS = {
-  pizza: { visited: pizzaIconColored, unvisited: pizzaIconGrey, golden: pizzaIconGold },
-  taco: { visited: tacoIconColored, unvisited: tacoIconGrey, golden: tacoIconGold },
-}
-
 const DEFAULT_ZOOM = DEFAULT_MAP_ZOOM
 const MIN_MARKERS_ZOOM = MIN_INDIVIDUAL_MARKERS_ZOOM // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
 
@@ -51,7 +41,7 @@ const createClusterIcon = (site, showCounts) => (cluster) => {
 
   const clusterStatus = clusterStatusForMarkers(childMarkers)
 
-  const icons = CLUSTER_ICONS[site] || CLUSTER_ICONS.pizza
+  const icons = markerAssetsFor(site)
   const icon = icons[clusterStatus] || icons.unvisited
   // Always use primary color for badge (red for pizza, orange for taco)
   const badgeColor = site === 'taco' ? '#e67e22' : '#d9382b'
