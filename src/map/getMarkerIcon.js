@@ -1,29 +1,11 @@
 import L from 'leaflet'
 
-import pizzaVisited from '../icons/pizza/marker-pizza-colored.svg'
-import pizzaUnvisited from '../icons/pizza/marker-pizza-grey.svg'
-import pizzaGolden from '../icons/pizza/marker-pizza-gold.svg'
-import tacoVisited from '../icons/taco/marker-taco-colored.svg'
-import tacoUnvisited from '../icons/taco/marker-taco-grey.svg'
-import tacoGolden from '../icons/taco/marker-taco-gold.svg'
 import { isHistoricalLifecycle } from '../lib/lifecycle'
-
-const iconBySiteStatus = {
-  pizza: {
-    visited: pizzaVisited,
-    unvisited: pizzaUnvisited,
-    golden: pizzaGolden,
-  },
-  taco: {
-    visited: tacoVisited,
-    unvisited: tacoUnvisited,
-    golden: tacoGolden,
-  },
-}
+import { markerAssetFor, markerAssetsFor } from './markerAssets'
 
 export function getMarkerIcon(site, status = 'unvisited', lifecycleStatus = null) {
-  const safeStatus = status && iconBySiteStatus[site] && iconBySiteStatus[site][status] ? status : 'unvisited'
-  const iconUrl = iconBySiteStatus[site][safeStatus]
+  const safeStatus = status && markerAssetsFor(site)[status] ? status : 'unvisited'
+  const iconUrl = markerAssetFor(site, safeStatus)
   const historical = isHistoricalLifecycle(lifecycleStatus)
 
   const options = {

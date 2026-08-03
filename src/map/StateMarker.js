@@ -2,18 +2,15 @@ import React from 'react'
 import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
-import pizzaIconGrey from '../icons/pizza/marker-pizza-grey.svg'
-import pizzaIconColored from '../icons/pizza/marker-pizza-colored.svg'
-import tacoIconGrey from '../icons/taco/marker-taco-grey.svg'
-import tacoIconColored from '../icons/taco/marker-taco-colored.svg'
+import { markerAssetFor } from './markerAssets'
 
 const STATE_ZOOM = 7
 const STATE_FIT_MAX_ZOOM = 10
 
-const ICONS = {
-  pizza: { base: pizzaIconGrey, highlight: pizzaIconColored },
-  taco: { base: tacoIconGrey, highlight: tacoIconColored },
-}
+const markerSetFor = site => ({
+  base: markerAssetFor(site, 'unvisited'),
+  highlight: markerAssetFor(site, 'visited'),
+})
 
 export const statePlaceCoordinates = places => (Array.isArray(places) ? places : [])
   .filter(place => Number.isFinite(place?.lat) && Number.isFinite(place?.lng))
@@ -29,7 +26,7 @@ const BADGE_COLORS = {
  * Supports loading spinner and dimmed states
  */
 function createStateIcon(site, count, showCounts = true, isLoading = false, isDimmed = false, isHighlighted = false) {
-  const iconSet = ICONS[site] || ICONS.pizza
+  const iconSet = markerSetFor(site)
   const icon = isHighlighted ? iconSet.highlight : iconSet.base
   const badgeColor = BADGE_COLORS[site] || BADGE_COLORS.pizza
   const opacity = isDimmed ? 0.5 : 0.9

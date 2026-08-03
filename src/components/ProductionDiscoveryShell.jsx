@@ -11,21 +11,8 @@ import {
   Star,
   X,
 } from 'lucide-react'
+import { placeLocation, placePrice, placeRating } from '../lib/placeDisplay'
 import './ProductionDiscoveryShell.css'
-
-const placePrice = place => place?.price_range || place?.priceRange || place?.price || ''
-
-const placeRating = place => {
-  const rating = Number(place?.rating)
-  return Number.isFinite(rating) && rating > 0 ? rating : null
-}
-
-const placeAddress = place => (
-  [place?.address, place?.city, place?.state]
-    .filter(Boolean)
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .join(' · ')
-)
 
 const sortValue = (place, mode) => {
   if (mode === 'name') return String(place?.name || '')
@@ -63,7 +50,7 @@ const SORT_OPTIONS = [
 function ResultCard({ place, selected, onSelect, iconPath, picksLabel, isPickForPlace }) {
   const rating = placeRating(place)
   const price = placePrice(place)
-  const address = placeAddress(place)
+  const address = placeLocation(place)
   const isPick = isPickForPlace ? isPickForPlace(place) : rating !== null && rating >= 8
 
   return (

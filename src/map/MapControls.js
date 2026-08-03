@@ -1,20 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { MapPin, Search, X } from 'lucide-react'
 import { isHistoricalLifecycle, lifecycleBadgeLabel } from '../lib/lifecycle'
+import { placeLocation, placePrice, placeRating } from '../lib/placeDisplay'
 import './MapControls.css'
-
-const placePrice = place => place?.price_range || place?.priceRange || place?.price || ''
-const placeRating = place => {
-  const rawRating = place?.rating
-  if (rawRating === null || rawRating === undefined || String(rawRating).trim() === '') return null
-  const rating = Number(rawRating)
-  // A zero in imported/public data means "not reviewed", not a score.
-  return Number.isFinite(rating) && rating > 0 ? rating : null
-}
-const placeLocation = place => {
-  const parts = [place?.address, place?.city, place?.state].filter(Boolean)
-  return [...new Set(parts)].join(' · ')
-}
 
 export const placeIdentity = place => {
   const name = normalizeSearchText(place?.name)
