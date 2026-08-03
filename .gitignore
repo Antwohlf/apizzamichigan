@@ -36,6 +36,10 @@ __pycache__/
 /scripts/.supabase-reconcile-checkpoint*.json
 /scripts/.source-pipeline-state.json
 /scripts/.source-pipeline-last-report.json
+/scripts/.taco-supabase-sync-checkpoint*.json
+/scripts/.taco-supabase-sync-status.json
+/scripts/.source-pipeline-taco-state.json
+/scripts/.source-pipeline-taco-last-report.json
 /scripts/.pipeline-alert-status.json
 /scripts/.fsq-venv/
 /scripts/.fsq-portal-init.sql
