@@ -30,6 +30,7 @@
  * @property {{
  *   tileUrl?: string;
  *   attribution?: string;
+ *   maxZoom?: number;
  *   primaryView?: {
  *     center: [number, number];
  *     zoom: number;

@@ -1,6 +1,7 @@
 // src/themes/pizzaTheme.js
 import { ThemeKeys } from './siteTheme'
 import { US_STATE_CODES } from '../data/usStateCodes'
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_MAX_ZOOM, MAP_TILE_URL } from '../map/tileProvider'
 
 /** @type {import('./siteTheme').SiteTheme} */
 export const pizzaTheme = {
@@ -29,8 +30,9 @@ export const pizzaTheme = {
     popupAnchor: [0, -32],
   },
   map: {
-    tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+    tileUrl: MAP_TILE_URL,
+    attribution: MAP_TILE_ATTRIBUTION,
+    maxZoom: MAP_TILE_MAX_ZOOM,
     primaryView: {
       center: [42.7, -79.8],
       zoom: 5,
