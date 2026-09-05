@@ -14,9 +14,13 @@ describe('theme map loading priorities', () => {
     expect(theme.map.primaryView.zoom).toBeGreaterThan(0)
   })
 
-  test('keeps the map treatment aligned with each brand mode', () => {
-    expect(pizzaTheme.map.tileUrl).toContain('/dark_all/')
-    expect(tacoTheme.map.tileUrl).toContain('/light_all/')
+  test('uses the working keyless map provider for both brand modes', () => {
+    expect(pizzaTheme.map.tileUrl).toBe('https://tile.openstreetmap.org/{z}/{x}/{y}.png')
+    expect(tacoTheme.map.tileUrl).toBe(pizzaTheme.map.tileUrl)
+    expect(pizzaTheme.map.attribution).toContain('OpenStreetMap')
+    expect(tacoTheme.map.attribution).toBe(pizzaTheme.map.attribution)
+    expect(pizzaTheme.map.maxZoom).toBe(19)
+    expect(tacoTheme.map.maxZoom).toBe(19)
     expect(tacoTheme.titleRotation).toEqual(['#b92d27', '#8c6848', '#176a45'])
   })
 })

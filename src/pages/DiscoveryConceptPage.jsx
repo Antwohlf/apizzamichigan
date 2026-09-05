@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_MAX_ZOOM, MAP_TILE_URL } from '../map/tileProvider'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -453,10 +454,6 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
 
   const featuredPlaces = places.filter(place => place.isPick).slice(0, 3)
 
-  const mapTileUrl = isPizza
-    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-
   return (
     <div className={`discovery-concept discovery-concept--${entityLabel} ${isPizza ? 'concept-diner' : 'concept-taqueria'}`}>
       <header className={`concept-topbar ${isPizza ? 'concept-topbar--diner' : 'concept-topbar--taqueria'}`}>
@@ -705,8 +702,9 @@ export default function DiscoveryConceptPage({ entity = 'pizza' }) {
             className="concept-map"
           >
             <TileLayer
-              url={mapTileUrl}
-              attribution="&copy; OpenStreetMap &copy; CARTO"
+              url={MAP_TILE_URL}
+              attribution={MAP_TILE_ATTRIBUTION}
+              maxZoom={MAP_TILE_MAX_ZOOM}
             />
             <ViewportController onMove={handleViewportMove} />
             <SelectionController place={selectedPlace} />
