@@ -1,6 +1,7 @@
 // src/themes/tacoTheme.js
 import { ThemeKeys } from './siteTheme'
 import { US_STATE_CODES } from '../data/usStateCodes'
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_MAX_ZOOM, MAP_TILE_URL } from '../map/tileProvider'
 
 /** @type {import('./siteTheme').SiteTheme} */
 export const tacoTheme = {
@@ -31,8 +32,9 @@ export const tacoTheme = {
     popupAnchor: [0, -24],
   },
   map: {
-    tileUrl: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+    tileUrl: MAP_TILE_URL,
+    attribution: MAP_TILE_ATTRIBUTION,
+    maxZoom: MAP_TILE_MAX_ZOOM,
     primaryView: {
       center: [44.3148, -85.6024],
       zoom: 6,

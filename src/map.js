@@ -7,6 +7,7 @@ import { PlacesLayer } from './map/PlacesLayer'
 import { PopupProvider } from './context/PopupProvider'
 import { filterPublicAggregates } from './map/publicScope'
 import { consumeMapReturnState } from './map/mapReturnState'
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_MAX_ZOOM, MAP_TILE_URL } from './map/tileProvider'
 
 const GLOBAL_VIEW = { center: [20, 0], zoom: 2 }
 
@@ -57,8 +58,9 @@ const Map = ({
   searchFocusKey = '',
   onViewportChange,
 }) => {
-  const tileUrl = theme?.map?.tileUrl || 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-  const attribution = theme?.map?.attribution || '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+  const tileUrl = theme?.map?.tileUrl || MAP_TILE_URL
+  const attribution = theme?.map?.attribution || MAP_TILE_ATTRIBUTION
+  const tileMaxZoom = theme?.map?.maxZoom || MAP_TILE_MAX_ZOOM
   const primaryView = theme?.map?.primaryView || { center: [44.3148, -85.6024], zoom: 6 }
   const returnState = React.useMemo(
     () => consumeMapReturnState(undefined, typeof window === 'undefined' ? null : window.location.pathname),
@@ -81,7 +83,7 @@ const Map = ({
       zoom={initialView.zoom}
       style={{ height: '100%', width: '100%', position: 'relative' }}
     >
-      <TileLayer attribution={attribution} url={tileUrl} />
+      <TileLayer attribution={attribution} maxZoom={tileMaxZoom} url={tileUrl} />
       <ViewportReporter onViewportChange={onViewportChange} />
       <PopupProviderBridge>
         <PlacesLayer
