@@ -2,6 +2,7 @@ require('dotenv').config()
 
 const express = require('express')
 const cookieParser = require('cookie-parser')
+const { createHash } = require('crypto')
 const { existsSync, readdirSync, readFileSync, statSync } = require('fs')
 const { join, resolve } = require('path')
 const { execFile } = require('child_process')
@@ -12,6 +13,17 @@ const { handleBugReport } = require('../api/_lib/bugReport')
 const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
 const { getClientIp } = require('../api/_lib/request')
 const { applyLifecycleChange, normalizeLifecycleChange } = require('../scripts/lib/lifecycle-mutation.cjs')
+const {
+  DEFAULT_SESSION_TTL_MS,
+  createAdminSessionValue,
+  isAdminAuthConfigured,
+  validateAdminSessionValue,
+} = require('../shared/admin-session-boundary.cjs')
+const {
+  presentPipelineStatus,
+  readPipelineStatusSnapshot,
+  resolveStatusSelection,
+} = require('../shared/pipeline-status-boundary.cjs')
 
 const app = express()
 // Note: 5000 is commonly hijacked by AirPlay Receiver on macOS.
@@ -31,6 +43,7 @@ const SOURCE_REVIEW_QUEUE_CSV = process.env.SOURCE_REVIEW_QUEUE_CSV || 'reports/
 const SOURCE_POLICY = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/source-policy.json'), 'utf8'))
 const SOURCE_PIPELINE = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/source-pipeline.json'), 'utf8'))
 const ENTITY_PROFILES = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/entity-profiles.json'), 'utf8'))
+const PIPELINE_BOUNDARY = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/pipeline-boundary.json'), 'utf8'))
 const SOURCE_FRESHNESS_CASE = Object.entries(SOURCE_POLICY.sources || {})
   .map(([source, config]) => `WHEN '${source.replaceAll("'", "''")}' THEN ${Number(config.freshness_days) || 365}`)
   .join(' ')
@@ -68,7 +81,11 @@ function latestOsmInputIds(entity) {
 }
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
-const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD || 'invalid-admin-session-secret'
+const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD || null
+const ADMIN_AUTH_CONFIGURED = isAdminAuthConfigured({
+  password: ADMIN_PASSWORD,
+  sessionSecret: ADMIN_SESSION_SECRET,
+})
 const SUPABASE_URL =
   process.env.SUPABASE_URL ||
   process.env.REACT_APP_SUPABASE_URL ||
@@ -86,18 +103,30 @@ if (SUPABASE_URL && SERVICE_ROLE_KEY) {
   console.warn('[admin] Supabase service client not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.')
 }
 
-app.use(cookieParser(ADMIN_SESSION_SECRET))
+app.use(cookieParser(ADMIN_SESSION_SECRET || undefined))
 app.use(express.json({ limit: '12mb' }))
 app.set('trust proxy', true)
 
-function requireAdminAuth(req, res, next) {
-  if (req.signedCookies?.[COOKIE_NAME] !== '1') {
+function requireSignedAdminSession(req, res, next) {
+  if (!ADMIN_AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Admin authentication not configured' })
+  }
+  const session = validateAdminSessionValue(req.signedCookies?.[COOKIE_NAME])
+  if (!session.ok) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
+  return next()
+}
+
+function requireSupabaseServiceClient(req, res, next) {
   if (!serviceClient) {
     return res.status(500).json({ error: 'Supabase service role not configured' })
   }
   return next()
+}
+
+function requireAdminAuth(req, res, next) {
+  return requireSignedAdminSession(req, res, () => requireSupabaseServiceClient(req, res, next))
 }
 
 const getPlaceTable = (entity = 'pizza') =>
@@ -1771,8 +1800,8 @@ app.post('/api/bug-report', async (req, res) => {
 })
 
 app.post('/api/admin/login', (req, res) => {
-  if (!ADMIN_PASSWORD) {
-    return res.status(500).json({ error: 'Admin password not configured' })
+  if (!ADMIN_AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Admin authentication not configured' })
   }
 
   const { password } = req.body || {}
@@ -1780,31 +1809,24 @@ app.post('/api/admin/login', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 
-  res.cookie(COOKIE_NAME, '1', {
+  res.cookie(COOKIE_NAME, createAdminSessionValue(), {
     signed: true,
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: DEFAULT_SESSION_TTL_MS,
   })
   return res.json({ authorized: true })
 })
 
 app.get('/api/admin/check', (req, res) => {
-  const authorized = req.signedCookies?.[COOKIE_NAME] === '1'
+  const authorized = ADMIN_AUTH_CONFIGURED
+    && validateAdminSessionValue(req.signedCookies?.[COOKIE_NAME]).ok
   if (!authorized) return res.status(401).json({ authorized: false })
   return res.json({ authorized: true })
 })
 
-app.post('/api/admin/submitPlace', async (req, res) => {
-  if (req.signedCookies?.[COOKIE_NAME] !== '1') {
-    return res.status(401).json({ error: 'Unauthorized' })
-  }
-
-  if (!serviceClient) {
-    return res.status(500).json({ error: 'Supabase service role not configured' })
-  }
-
+app.post('/api/admin/submitPlace', requireAdminAuth, async (req, res) => {
   const {
     entity,
     name,
@@ -2485,85 +2507,95 @@ app.get('/api/admin/supabase-sync-readiness', requireAdminAuth, async (req, res)
   }
 })
 
-app.get('/api/admin/pipeline-status', requireAdminAuth, (req, res) => {
-  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
-  const statusPath = process.env.PIPELINE_STATUS_PATH || resolve(__dirname, '..', 'scripts/.pipeline-alert-status.json')
-  const maxAgeMinutes = Number.parseInt(process.env.PIPELINE_STATUS_MAX_AGE_MINUTES || '360', 10)
-  const now = Date.now()
-
-  if (entity === 'taco') {
-    return res.json({
-      data: {
-        available: false,
-        entity,
-        state: 'not_configured',
-        label: 'Taco pipeline not configured',
-        detail: 'Pipeline health is currently configured for the pizza dataset only.',
-        checkedAt: null,
-      },
-    })
-  }
-
-  if (!existsSync(statusPath)) {
-    return res.json({
-      data: {
-        available: false,
-        entity,
-        state: 'stale',
-        label: 'No recent pipeline check',
-        detail: 'The iMac has not published a recent read-only pipeline health report.',
-        checkedAt: null,
-      },
-    })
+app.get('/api/admin/pipeline-status', requireSignedAdminSession, (req, res) => {
+  res.set('Cache-Control', 'no-store')
+  const entity = String(req.query?.entity || '').trim().toLowerCase()
+  if (!Object.hasOwn(PIPELINE_BOUNDARY.status.targets || {}, entity)) {
+    return res.status(400).json({ error: 'Pipeline status entity must be pizza or taco' })
   }
 
   try {
-    const report = JSON.parse(readFileSync(statusPath, 'utf8'))
-    const checkedAt = report.checkedAt || report.generatedAt || null
-    const checkedAtMs = checkedAt ? Date.parse(checkedAt) : NaN
-    const ageMinutes = Number.isFinite(checkedAtMs) ? Math.max(0, Math.round((now - checkedAtMs) / 60000)) : null
-    const stale = ageMinutes == null || ageMinutes > maxAgeMinutes
-    const state = stale ? 'stale' : String(report.state || 'FAIL').toLowerCase()
-    const label = stale
-      ? 'Pipeline check is out of date'
-      : state === 'ok' ? 'Pipeline healthy'
-        : state === 'warn' ? 'Pipeline needs attention'
-          : 'Pipeline needs repair'
-    const detail = stale
-      ? `Last checked ${ageMinutes == null ? 'an unknown time ago' : `${ageMinutes} minutes ago`}.`
-      : state === 'ok'
-        ? 'The latest read-only check found no active issues.'
-        : `${(report.alerts || []).length} issue${(report.alerts || []).length === 1 ? '' : 's'} and ${(report.warnings || []).length} warning${(report.warnings || []).length === 1 ? '' : 's'} need attention.`
+    const selection = resolveStatusSelection(
+      PIPELINE_BOUNDARY,
+      entity,
+      process.env,
+      resolve(__dirname, '..'),
+    )
+    if (!selection.enabled) {
+      return res.json({
+        data: {
+          available: false,
+          entity,
+          state: 'disabled',
+          label: 'Pipeline status disabled',
+          detail: selection.reason === 'external_apply_disabled'
+            ? 'External apply remains disabled; an apply-lane status cannot be authoritative.'
+            : `Pipeline status has not been enabled for ${entity}.`,
+          checkedAt: null,
+        },
+      })
+    }
 
-    return res.json({
-      data: {
-        available: true,
-        entity,
-        state,
-        label,
-        detail,
-        checkedAt,
-        ageMinutes,
-        alerts: Array.isArray(report.alerts) ? report.alerts.slice(0, 10) : [],
-        warnings: Array.isArray(report.warnings) ? report.warnings.slice(0, 10) : [],
-        actions: Array.isArray(report.actions) ? report.actions.slice(0, 10) : [],
-        queue: report.queue || null,
-        classifier: report.classifier || null,
-        freshness: Array.isArray(report.freshness) ? report.freshness : null,
-        sourcePipeline: report.sourcePipeline || null,
-        sourceActivation: report.sourceActivation || null,
-        publication: report.publication || null,
-      },
+    const targetConfig = PIPELINE_BOUNDARY.status.targets[entity]
+    const contractBytes = readFileSync(resolve(__dirname, '..', targetConfig.contract.file))
+    const contract = JSON.parse(contractBytes.toString('utf8'))
+    if (
+      contract.name !== targetConfig.contract.name
+      || contract.version !== targetConfig.contract.version
+      || contract.profile !== targetConfig.profile
+      || contract.entity !== entity
+    ) {
+      throw new Error('Selected pipeline target contract does not match the app registry')
+    }
+    const targetContract = {
+      name: contract.name,
+      version: contract.version,
+      digest: `sha256:${createHash('sha256').update(contractBytes).digest('hex')}`,
+    }
+    const snapshot = readPipelineStatusSnapshot(selection.path, {
+      maxBytes: PIPELINE_BOUNDARY.status.maxBytes,
     })
+    if (snapshot.state === 'missing') {
+      return res.json({
+        data: {
+          available: false,
+          entity,
+          state: 'missing',
+          label: 'No recent pipeline check',
+          detail: `The selected ${selection.lane} lane has not published a ${entity} status snapshot.`,
+          checkedAt: null,
+        },
+      })
+    }
+
+    let document
+    try {
+      document = JSON.parse(snapshot.text)
+    } catch {
+      throw new Error('Pipeline status snapshot is not valid JSON')
+    }
+    const configuredMaxAge = Number.parseInt(process.env.PIPELINE_STATUS_MAX_AGE_MINUTES || '', 10)
+    const result = presentPipelineStatus(
+      document,
+      { ...selection, targetContract },
+      {
+        maxAgeMinutes: Number.isInteger(configuredMaxAge) && configuredMaxAge > 0
+          ? configuredMaxAge
+          : PIPELINE_BOUNDARY.status.maxAgeMinutes,
+        futureToleranceMinutes: PIPELINE_BOUNDARY.status.futureToleranceMinutes,
+      },
+    )
+    if (!result.ok) console.warn('[admin] Pipeline status contract rejected:', result.errors.join('; '))
+    return res.json({ data: result.data })
   } catch (error) {
-    console.error('[admin] Pipeline status error', error)
+    console.error('[admin] Pipeline status error', error?.message || error)
     return res.json({
       data: {
         available: false,
         entity,
-        state: 'unavailable',
+        state: 'invalid',
         label: 'Pipeline status unavailable',
-        detail: 'The latest health report could not be read. No pipeline work was started.',
+        detail: 'The latest pipeline snapshot could not be safely read. No pipeline work was started.',
         checkedAt: null,
       },
     })

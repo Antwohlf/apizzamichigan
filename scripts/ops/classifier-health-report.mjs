@@ -17,9 +17,13 @@ import {
   estimateClassificationBacklog,
   summarizeClassificationBacklog,
 } from '../lib/classification-backlog.mjs'
+import { enrichmentEntity } from '../lib/enrichment-entity.mjs'
 
 const argv = process.argv.slice(2)
 const args = new Set(argv)
+const entityArgIndex = argv.indexOf('--entity')
+if (entityArgIndex >= 0 && !argv[entityArgIndex + 1]) throw new Error('--entity requires pizza or taco')
+const ENTITY_PROFILE = enrichmentEntity(entityArgIndex >= 0 ? argv[entityArgIndex + 1] : process.env.APIZZA_SYNC_ENTITY || 'pizza')
 
 const SERVICE_LABEL = process.env.CLASSIFIER_SERVICE_LABEL || 'com.apizzamichigan.classifier'
 const WORKER_ID = process.env.CLASSIFIER_WORKER_ID || 'launchd-classify'
@@ -176,7 +180,7 @@ function remoteTunnelControlReport() {
   }
 }
 
-function queueReport(root) {
+function queueReport(root, entity) {
   const dbPath = process.env.QUEUE_DB_PATH || join(root, 'scripts/.job-queue.db')
   if (!existsSync(dbPath)) return { ok: false, dbPath, error: 'queue DB not found' }
 
@@ -191,7 +195,8 @@ function queueReport(root) {
         COUNT(*) FILTER (WHERE job_type='classify' AND status='completed') as completed,
         COUNT(*) FILTER (WHERE job_type='classify' AND status='failed') as failed
       FROM jobs
-    `).get()
+      WHERE place_type = ?
+    `).get(entity)
 
     const recent = db.prepare(`
       SELECT
@@ -206,7 +211,8 @@ function queueReport(root) {
             AND completed_at >= datetime('now', '-' || ? || ' hours')
         ) as failed
       FROM jobs
-    `).get(WINDOW_HOURS, WINDOW_HOURS)
+      WHERE place_type = ?
+    `).get(WINDOW_HOURS, WINDOW_HOURS, entity)
 
     const processingJobs = db.prepare(`
       SELECT
@@ -220,10 +226,11 @@ function queueReport(root) {
         last_error
       FROM jobs
       WHERE job_type='classify'
+        AND place_type = ?
         AND status='processing'
       ORDER BY started_at
       LIMIT ?
-    `).all(MAX_ROWS)
+    `).all(entity, MAX_ROWS)
 
     const staleProcessingJobs = db.prepare(`
       SELECT
@@ -237,11 +244,12 @@ function queueReport(root) {
         last_error
       FROM jobs
       WHERE job_type='classify'
+        AND place_type = ?
         AND status='processing'
         AND started_at < datetime('now', '-' || ? || ' minutes')
       ORDER BY started_at
       LIMIT ?
-    `).all(STALE_MINUTES, MAX_ROWS)
+    `).all(entity, STALE_MINUTES, MAX_ROWS)
 
     const worker = db.prepare(`
       SELECT
@@ -285,11 +293,12 @@ function queueReport(root) {
       SELECT id, osm_id, completed_at, last_error
       FROM jobs
       WHERE job_type='classify'
+        AND place_type = ?
         AND status='completed'
         AND completed_at IS NOT NULL
       ORDER BY completed_at DESC
       LIMIT ?
-    `).all(MAX_ROWS)
+    `).all(entity, MAX_ROWS)
 
     return {
       ok: true,
@@ -311,10 +320,14 @@ function queueReport(root) {
   }
 }
 
-function operationalRegions(root) {
+function operationalRegions(root, entity) {
   try {
-    const config = JSON.parse(readFileSync(join(root, 'config/source-pipeline.json'), 'utf8'))
-    return Array.isArray(config.operational_regions) ? config.operational_regions : []
+    if (entity === 'pizza') {
+      const config = JSON.parse(readFileSync(join(root, 'config/source-pipeline.json'), 'utf8'))
+      return Array.isArray(config.operational_regions) ? config.operational_regions : []
+    }
+    const profiles = JSON.parse(readFileSync(join(root, 'config/entity-profiles.json'), 'utf8'))
+    return Array.isArray(profiles.profiles?.[entity]?.regions) ? profiles.profiles[entity].regions : []
   } catch {
     return []
   }
@@ -329,9 +342,9 @@ function parseJobData(value) {
   }
 }
 
-function classificationBacklogReport(root, rows) {
+function classificationBacklogReport(root, rows, entity) {
   const dbPath = process.env.QUEUE_DB_PATH || join(root, 'scripts/.job-queue.db')
-  const regions = operationalRegions(root)
+  const regions = operationalRegions(root, entity)
   const base = {
     ok: false,
     regions,
@@ -356,15 +369,17 @@ function classificationBacklogReport(root, rows) {
       SELECT osm_id, status, data
       FROM jobs
       WHERE job_type = 'classify'
-    `).all().map(job => [job.osm_id, job]))
+        AND place_type = ?
+    `).all(entity).map(job => [job.osm_id, job]))
 
     const recentCompleted = db.prepare(`
       SELECT COUNT(*) as count
       FROM jobs
       WHERE job_type = 'classify'
+        AND place_type = ?
         AND status = 'completed'
         AND completed_at >= datetime('now', '-' || ? || ' hours')
-    `).get(WINDOW_HOURS).count
+    `).get(entity, WINDOW_HOURS).count
 
     const counts = { ...base }
     for (const row of rows) {
@@ -402,7 +417,7 @@ function classificationBacklogReport(root, rows) {
   }
 }
 
-async function postgresReport(root) {
+async function postgresReport(root, profile) {
   const client = new pg.Client({
     host: process.env.PGHOST || 'localhost',
     port: process.env.PGPORT ? Number.parseInt(process.env.PGPORT, 10) : 5432,
@@ -421,21 +436,21 @@ async function postgresReport(root) {
         COUNT(*) FILTER (WHERE style IS NULL OR price_range IS NULL)::int as incomplete_classification,
         COUNT(*) FILTER (WHERE last_enriched_at >= now() - ($1::text || ' hours')::interval)::int as enriched_in_window,
         MAX(last_enriched_at) as last_enriched_at
-      FROM pizza_places
+      FROM ${profile.table}
     `, [String(WINDOW_HOURS)])
     const recent = await client.query(`
       SELECT id, name, state, google_place_id, style, price_range, style_confidence, last_enriched_at
-      FROM pizza_places
+      FROM ${profile.table}
       WHERE last_enriched_at IS NOT NULL
       ORDER BY last_enriched_at DESC
       LIMIT $1
     `, [MAX_ROWS])
 
-    const regions = operationalRegions(root)
+    const regions = operationalRegions(root, profile.entity)
     const candidates = regions.length
       ? await client.query(`
           SELECT google_place_id
-          FROM pizza_places
+          FROM ${profile.table}
           WHERE state = ANY($1::text[])
             AND NULLIF(BTRIM(google_place_id), '') IS NOT NULL
             AND (
@@ -444,20 +459,20 @@ async function postgresReport(root) {
               OR EXISTS (
                 SELECT 1
                 FROM place_sources ps
-                WHERE ps.entity_type = 'pizza'
-                  AND ps.place_id = pizza_places.id
+                WHERE ps.entity_type = $2
+                  AND ps.place_id = ${profile.table}.id
                   AND ps.match_confidence >= 0.9
               )
             )
             AND (style IS NULL OR price_range IS NULL)
-        `, [regions])
+        `, [regions, profile.entity])
       : { rows: [] }
 
     return {
       ok: true,
       summary: summary.rows[0],
       recent: recent.rows,
-      classificationBacklog: classificationBacklogReport(root, candidates.rows)
+      classificationBacklog: classificationBacklogReport(root, candidates.rows, profile.entity)
     }
   } catch (error) {
     return { ok: false, error: errorMessage(error) }
@@ -571,17 +586,31 @@ async function main() {
   const tunnelLaunchd = remoteTunnelControlReport()
   const processes = processReport()
   const tunnel = tunnelReport()
-  const queue = queueReport(root)
-  const [postgres, ollama] = await Promise.all([postgresReport(root), ollamaReport()])
+  const queue = queueReport(root, ENTITY_PROFILE.entity)
+  const [postgres, ollama] = await Promise.all([postgresReport(root, ENTITY_PROFILE), ollamaReport()])
   const health = classifyHealth({ git, launchd, tunnelLaunchd, processes, queue, postgres, ollama, tunnel })
 
-  const payload = { generatedAt, root, health, git, launchd, tunnelLaunchd, processes, tunnel, queue, postgres, ollama }
+  const payload = {
+    generatedAt,
+    root,
+    entity: ENTITY_PROFILE.entity,
+    canonicalTable: ENTITY_PROFILE.table,
+    health,
+    git,
+    launchd,
+    tunnelLaunchd,
+    processes,
+    tunnel,
+    queue,
+    postgres,
+    ollama,
+  }
   if (args.has('--json')) {
     console.log(JSON.stringify(payload, null, 2))
     return
   }
 
-  console.log(`# Classifier health: ${health.state}`)
+  console.log(`# ${ENTITY_PROFILE.entity} classifier health: ${health.state}`)
   console.log('')
   console.log(`Generated: ${generatedAt}`)
   console.log(`Repo: \`${root}\``)

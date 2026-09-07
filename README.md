@@ -23,11 +23,14 @@ That repository owns reusable execution, adapter, state, artifact, and receipt
 mechanics. This repository retains APizza/Taco business policy, canonical
 schema, human review, and final publication authority.
 
-The projects now have separate repositories, but the runtime boundary is still
-being implemented and has not reached production cutover. The external runtime
-currently supports a read-only APizza FSQ shadow and cannot write product data.
-See [the pipeline boundary](docs/PIPELINE_BOUNDARY.md) for the intended
-ownership and no-dual-writer rules.
+The projects have separate repositories and this application now publishes
+versioned, entity-specific target inventories plus a read-only status contract.
+Those contracts are deliberately inert: the external runtime currently
+supports a read-only APizza FSQ shadow and cannot write product data. Production
+source, enrichment, review, and publication jobs therefore remain on the legacy
+application path until each workload completes a no-dual-writer cutover. See
+[the pipeline boundary](docs/PIPELINE_BOUNDARY.md) for the implemented boundary,
+remaining coupling, and activation rules.
 
 ## Local development
 

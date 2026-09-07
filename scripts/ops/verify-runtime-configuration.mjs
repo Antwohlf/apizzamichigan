@@ -26,6 +26,15 @@ const REQUIRED_SCRIPTS = [
   'scripts/enrichment/slowlane/menu-parse-worker.mjs',
   'scripts/ops/process-reviewed-new-batch.mjs',
   'scripts/ops/create-local-backup.mjs',
+  'scripts/ops/verify-pipeline-boundary-contract.mjs',
+];
+const REQUIRED_BOUNDARY_FILES = [
+  'config/pipeline-boundary.json',
+  'contracts/pipeline-status.v1.schema.json',
+  'contracts/pipeline-targets/apizza-pipeline-write-contract.v1.json',
+  'contracts/pipeline-targets/taco-pipeline-write-contract.v1.json',
+  'shared/admin-session-boundary.cjs',
+  'shared/pipeline-status-boundary.cjs',
 ];
 
 function assert(condition, message) {
@@ -45,6 +54,9 @@ function main() {
 
   for (const path of REQUIRED_SCRIPTS) {
     assert(existsSync(join(ROOT, path)), `required runtime entrypoint is missing: ${path}`);
+  }
+  for (const path of REQUIRED_BOUNDARY_FILES) {
+    assert(existsSync(join(ROOT, path)), `required pipeline boundary file is missing: ${path}`);
   }
 
   const templates = readdirSync(LAUNCHD_DIR)
@@ -102,14 +114,25 @@ function main() {
   if (hasEnvWildcard) {
     assert(ignoreLines.includes('!.env.example') || ignoreLines.includes('!/.env.example'), '.gitignore must permit the blank .env.example template');
   }
-  for (const ignored of ['scripts/.job-queue.db', 'scripts/.fsq-portal-init.sql']) {
+  for (const ignored of ['scripts/.job-queue.db', 'scripts/.fsq-portal-init.sql', 'scripts/.pipeline-status/']) {
     assert(gitignore.split('\n').some(line => line.trim() === ignored || line.trim() === `/${ignored}`), `.gitignore must protect ${ignored}`);
+  }
+
+  const envExample = read('.env.example');
+  for (const variable of [
+    'PIPELINE_STATUS_ROOT=',
+    'PIPELINE_STATUS_PIZZA_LANE=legacy',
+    'PIPELINE_STATUS_TACO_LANE=disabled',
+    'PIPELINE_DEPLOYMENT_ID=',
+  ]) {
+    assert(envExample.split('\n').includes(variable), `.env.example is missing safe pipeline setting: ${variable}`);
   }
 
   console.log('# Runtime Configuration Verification');
   console.log('');
   console.log(`launchd_templates=${templates.length}`);
   console.log(`required_entrypoints=${REQUIRED_SCRIPTS.length}`);
+  console.log(`required_boundary_files=${REQUIRED_BOUNDARY_FILES.length}`);
   console.log('secret_values_checked=none_read_or_printed');
   console.log('status=ok');
 }

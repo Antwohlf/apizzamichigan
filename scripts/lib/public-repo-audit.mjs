@@ -61,6 +61,8 @@ const credentialAssignmentPatterns = [
 const passwordBearingPostgresUri = /postgres(?:ql)?:\/\/[^\s:/@]+:[^\s/@]+@/i
 const signedUrlPattern = /(?:x-amz-signature|x-goog-signature|signature|sig)=[A-Za-z0-9%_-]{12,}/i
 const privateKeyPattern = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/
+const pipelineStatusSchemaMarker = /"name"\s*:\s*"map-data-pipeline\.status"/
+const pipelineStatusPurposeMarker = /"purpose"\s*:\s*"operations-display-only"/
 
 const releaseOnlyTextPatterns = [
   [new RegExp(['/(?:', 'Users|home', ')/[A-Za-z0-9._-]+/'].join(''), 'i'), 'contains an absolute home-directory path'],
@@ -108,6 +110,7 @@ export function pathViolations(path, { release = false } = {}) {
   if (!grandfatheredRuntimePath && /^scripts\/\..*-progress\.json(?:\..*)?$/.test(path)) violations.push('runtime progress file')
   if (!grandfatheredRuntimePath && /^scripts\/\.address-enrichment-.*\.json$/.test(path)) violations.push('address-enrichment result')
   if (/^scripts\/.*-metadata-review\.json$/.test(path)) violations.push('metadata review result')
+  if (/^scripts\/\.pipeline-status(?:\/|$)/.test(path)) violations.push('pipeline status runtime snapshot')
   if (/(?:^|\/)\.env(?:\..*)?$/.test(path) && path !== '.env.example') violations.push('environment file')
   if (/\.(?:db|db-shm|db-wal|sqlite|sqlite3|sqlite-shm|sqlite-wal|log|parquet|ndjson)$/i.test(path)) {
     violations.push('runtime, database, log, or source-data extension')
@@ -139,6 +142,9 @@ export function textViolations(path, text, { release = false } = {}) {
   if (passwordBearingPostgresUri.test(text)) violations.push('contains a password-bearing PostgreSQL URI')
   if (signedUrlPattern.test(text)) violations.push('contains a signed URL')
   if (privateKeyPattern.test(text)) violations.push('contains a private key')
+  if (pipelineStatusSchemaMarker.test(text) && pipelineStatusPurposeMarker.test(text)) {
+    violations.push('contains a pipeline status runtime snapshot')
+  }
 
   const topologyGrandfathered = !release && (
     legacyPrivateTopologyPaths.has(path)

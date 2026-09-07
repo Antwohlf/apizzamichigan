@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "externalPipeline": {
+    "repository": "Antwohlf/map-data-aggregation-enhancement-pipeline",
+    "writeEnabled": false,
+    "effectAllowlist": [],
+    "operationAllowlist": []
+  },
+  "status": {
+    "schema": {
+      "name": "map-data-pipeline.status",
+      "version": 1,
+      "file": "contracts/pipeline-status.v1.schema.json"
+    },
+    "maxBytes": 131072,
+    "maxAgeMinutes": 360,
+    "futureToleranceMinutes": 5,
+    "root": {
+      "defaultPath": "scripts/.pipeline-status",
+      "envPathVariable": "PIPELINE_STATUS_ROOT"
+    },
+    "allowedProducerRepositories": [
+      "Antwohlf/apizzamichigan",
+      "Antwohlf/map-data-aggregation-enhancement-pipeline"
+    ],
+    "targets": {
+      "pizza": {
+        "profile": "apizzamichigan",
+        "contract": {
+          "name": "apizza-pipeline-write-contract",
+          "version": 1,
+          "file": "contracts/pipeline-targets/apizza-pipeline-write-contract.v1.json"
+        },
+        "laneEnvVariable": "PIPELINE_STATUS_PIZZA_LANE",
+        "defaultLane": "legacy",
+        "lanes": {
+          "legacy": {
+            "relativePath": "pizza/legacy.json",
+            "producerKind": "legacy-app",
+            "producerRepository": "Antwohlf/apizzamichigan"
+          },
+          "shadow": {
+            "relativePath": "pizza/shadow.json",
+            "producerKind": "external-pipeline",
+            "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
+          },
+          "apply": {
+            "relativePath": "pizza/apply.json",
+            "producerKind": "external-pipeline",
+            "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
+          }
+        }
+      },
+      "taco": {
+        "profile": "tacoboutmichigan",
+        "contract": {
+          "name": "taco-pipeline-write-contract",
+          "version": 1,
+          "file": "contracts/pipeline-targets/taco-pipeline-write-contract.v1.json"
+        },
+        "laneEnvVariable": "PIPELINE_STATUS_TACO_LANE",
+        "defaultLane": "disabled",
+        "lanes": {
+          "legacy": {
+            "relativePath": "taco/legacy.json",
+            "producerKind": "legacy-app",
+            "producerRepository": "Antwohlf/apizzamichigan"
+          },
+          "shadow": {
+            "relativePath": "taco/shadow.json",
+            "producerKind": "external-pipeline",
+            "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
+          },
+          "apply": {
+            "relativePath": "taco/apply.json",
+            "producerKind": "external-pipeline",
+            "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
+          }
+        }
+      }
+    }
+  }
+}

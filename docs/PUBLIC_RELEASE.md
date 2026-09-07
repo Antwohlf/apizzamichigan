@@ -15,6 +15,10 @@ to publish.
 - The public project overview, security policy, contribution rules, data
   boundary, environment template, and current-tree audit are present.
 - The existing modified development checkout is preserved separately.
+- The app/pipeline interface is explicit: entity-specific target inventories
+  are inert, external write allowlists are empty, and administrator status is a
+  bounded display-only contract. This is a code boundary, not a production
+  cutover.
 
 ## Remaining gates
 
@@ -28,6 +32,11 @@ to publish.
   personal-review, and OSM-derived record files.
 - Copy concrete iMac runbooks and service definitions to private host storage,
   verify them against the live host, then sanitize their checked-in examples.
+- Reconcile the live Taco authority and every active legacy writer before
+  selecting any external status or apply lane.
+- Stop every legacy queue consumer, back up the SQLite queue, and complete its
+  entity-identity schema migration offline; ordinary worker startup must never
+  rewrite the live queue under old binaries.
 - Make Supabase grants and row-level security reproducible from migrations and
   verify the public client with `anon` integration tests.
 - Remove or server-route the legacy browser-side administrator writes.
