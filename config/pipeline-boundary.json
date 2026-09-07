@@ -35,16 +35,25 @@
         "defaultLane": "legacy",
         "lanes": {
           "legacy": {
+            "registration": {
+              "state": "registered"
+            },
             "relativePath": "pizza/legacy.json",
             "producerKind": "legacy-app",
             "producerRepository": "Antwohlf/apizzamichigan"
           },
           "shadow": {
+            "registration": {
+              "state": "unregistered"
+            },
             "relativePath": "pizza/shadow.json",
             "producerKind": "external-pipeline",
             "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
           },
           "apply": {
+            "registration": {
+              "state": "unregistered"
+            },
             "relativePath": "pizza/apply.json",
             "producerKind": "external-pipeline",
             "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
@@ -62,16 +71,25 @@
         "defaultLane": "disabled",
         "lanes": {
           "legacy": {
+            "registration": {
+              "state": "unregistered"
+            },
             "relativePath": "taco/legacy.json",
             "producerKind": "legacy-app",
             "producerRepository": "Antwohlf/apizzamichigan"
           },
           "shadow": {
+            "registration": {
+              "state": "unregistered"
+            },
             "relativePath": "taco/shadow.json",
             "producerKind": "external-pipeline",
             "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"
           },
           "apply": {
+            "registration": {
+              "state": "unregistered"
+            },
             "relativePath": "taco/apply.json",
             "producerKind": "external-pipeline",
             "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline"

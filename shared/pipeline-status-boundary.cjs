@@ -37,6 +37,7 @@ const CLASSIFIER_STATES = new Set(['ok', 'warn', 'fail', 'unknown'])
 const BACKLOG_STATES = new Set(['queued', 'partial_retry_pending', 'manual_review', 'unfed', 'clear', 'unknown'])
 const ACTIVATION_STATES = new Set(['ready', 'disabled', 'incomplete', 'unknown'])
 const EXECUTION_STATES = new Set(['scheduler', 'manual', 'not-implemented'])
+const SUPPORTED_LEGACY_STATUS_IDENTITIES = new Set(['pizza:apizzamichigan:legacy'])
 const SHA256 = /^sha256:[a-f0-9]{64}$/
 const SOURCE_ID = /^[a-z0-9][a-z0-9._-]*$/
 const PARTITION = /^[A-Za-z0-9][A-Za-z0-9._:/,-]*$/
@@ -519,12 +520,29 @@ function resolveStatusSelection(boundary, entity, env = process.env, repositoryR
   const lane = String(env[target.laneEnvVariable] || target.defaultLane || '').trim().toLowerCase()
   if (lane === 'disabled') return { enabled: false, entity, profile: target.profile, lane }
   if (!LANES.has(lane) || !Object.hasOwn(target.lanes || {}, lane)) throw new Error(`Unsupported pipeline status lane for ${entity}`)
+  const laneConfig = target.lanes[lane]
+  if (!isPlainObject(laneConfig.registration)
+    || Object.keys(laneConfig.registration).length !== 1
+    || !['registered', 'unregistered'].includes(laneConfig.registration.state)) {
+    throw new Error(`Invalid pipeline status registration for ${entity}/${lane}`)
+  }
   if (lane === 'apply' && boundary.externalPipeline?.writeEnabled !== true) {
     return { enabled: false, entity, profile: target.profile, lane, reason: 'external_apply_disabled' }
   }
+  const statusIdentity = `${entity}:${target.profile}:${lane}`
+  if (lane === 'legacy'
+    && laneConfig.registration.state === 'registered'
+    && !SUPPORTED_LEGACY_STATUS_IDENTITIES.has(statusIdentity)) {
+    throw new Error(`Legacy pipeline status registration is unsupported for ${entity}/${target.profile}`)
+  }
+  if (lane !== 'legacy' && laneConfig.registration.state === 'registered') {
+    throw new Error(`External pipeline status registration is unsupported without exact runtime bindings: ${entity}/${lane}`)
+  }
+  if (laneConfig.registration.state !== 'registered') {
+    return { enabled: false, entity, profile: target.profile, lane, reason: 'pipeline_lane_unregistered' }
+  }
   const rootValue = env[boundary.status.root.envPathVariable] || boundary.status.root.defaultPath
   const statusRoot = isAbsolute(rootValue) ? resolve(rootValue) : resolve(repositoryRoot, rootValue)
-  const laneConfig = target.lanes[lane]
   const path = resolve(statusRoot, laneConfig.relativePath)
   if (!path.startsWith(`${statusRoot}${sep}`)) throw new Error('Pipeline status path escapes the configured status root')
   return {

@@ -102,8 +102,13 @@ are complete.
 
 This repository now exposes the application side of the boundary: inert,
 entity-specific target inventories and a read-only, entity/lane-specific status
-contract. Pizza legacy status is the safe default. Taco status is disabled by
-default pending a live host inventory. No external apply profile is activated.
+contract. Pizza legacy status is the only registered lane and remains its safe
+default. Every Taco lane is unregistered, and Taco status defaults to disabled
+pending an entity-safe collector and a live host inventory. Both external
+shadow lanes and both external apply lanes are explicitly unregistered;
+environment selection alone cannot make a status snapshot authoritative. No
+external apply profile is activated. This boundary release also rejects any
+attempt to register Taco legacy through configuration alone.
 
 ## Local verification
 
