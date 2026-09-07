@@ -26,6 +26,7 @@ const statusSchema = readJson(boundary.status.schema.file)
 const canonical = readJson('config/canonical-contract.json')
 const profiles = readJson('config/entity-profiles.json')
 const server = read('server/index.js')
+const statusBoundary = read('shared/pipeline-status-boundary.cjs')
 const writer = read('scripts/ops/write-pipeline-status.mjs')
 
 assert(boundary.version === 1, 'pipeline boundary version must be 1')
@@ -41,6 +42,7 @@ const expected = {
     rpc: 'apply_pizza_places_sync_batch',
     role: 'map_pipeline_apizza_writer',
     defaultLane: 'legacy',
+    registeredLane: 'legacy',
   },
   taco: {
     name: 'taco-pipeline-write-contract',
@@ -49,6 +51,7 @@ const expected = {
     rpc: 'apply_taco_places_sync_batch',
     role: 'map_pipeline_taco_writer',
     defaultLane: 'disabled',
+    registeredLane: null,
   },
 }
 const paths = new Set()
@@ -105,6 +108,11 @@ for (const [entity, expectation] of Object.entries(expected)) {
     assert(!paths.has(laneConfig.relativePath), `status path is shared across identities: ${laneConfig.relativePath}`)
     assert(laneConfig.relativePath.startsWith(`${entity}/`), `status path is not entity-scoped: ${entity}/${lane}`)
     assert(laneConfig.relativePath.endsWith(`/${lane}.json`), `status path is not lane-scoped: ${entity}/${lane}`)
+    assert(laneConfig.registration && Object.keys(laneConfig.registration).length === 1, `status registration must be explicit and exact: ${entity}/${lane}`)
+    assert(
+      laneConfig.registration.state === (lane === expectation.registeredLane ? 'registered' : 'unregistered'),
+      `status lane has unsafe registration state: ${entity}/${lane}`,
+    )
     paths.add(laneConfig.relativePath)
   }
 }
@@ -124,6 +132,9 @@ assert(!/app\.get\('\/api\/admin\/pipeline-status', requireAdminAuth,/.test(serv
 assert(server.includes("res.set('Cache-Control', 'no-store')"), 'pipeline status must disable response caching')
 assert(server.includes("return res.status(400).json({ error: 'Pipeline status entity must be pizza or taco' })"), 'pipeline status must reject unknown entities')
 assert(!server.includes('process.env.PIPELINE_STATUS_PATH'), 'server must not fall back to the shared legacy status path')
+assert(statusBoundary.includes("reason: 'pipeline_lane_unregistered'"), 'status resolver must fail closed for unregistered lanes')
+assert(statusBoundary.includes('unsupported without exact runtime bindings'), 'external status registration must require a future exact-binding implementation')
+assert(statusBoundary.includes("SUPPORTED_LEGACY_STATUS_IDENTITIES = new Set(['pizza:apizzamichigan:legacy'])"), 'legacy status registration must be code-bound to the entity-safe APizza collector')
 assert(writer.includes("entity !== 'pizza'"), 'legacy status writer must reject entity-unsafe Taco collection')
 assert(!writer.includes('process.exitCode = 0'), 'legacy status writer must not hide collector failure')
 assert(writer.includes('validatePipelineStatusDocument'), 'legacy status writer must validate before publish')

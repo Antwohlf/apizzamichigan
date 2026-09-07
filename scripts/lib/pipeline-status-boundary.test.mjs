@@ -67,46 +67,6 @@ function validPizza(overrides = {}) {
   return { ...document, ...overrides }
 }
 
-function validExternal(entity, lane = 'shadow') {
-  const selected = expectation(entity, lane)
-  const timestamp = '2026-09-07T11:58:00.000Z'
-  const digest = `sha256:${'d'.repeat(64)}`
-  return {
-    schema: { name: 'map-data-pipeline.status', version: 1 },
-    purpose: 'operations-display-only',
-    lane,
-    bindings: {
-      targetContract: selected.targetContract,
-      definitionDigest: digest,
-      profileDigest: digest,
-      catalogDigest: digest,
-      hostPolicyDigest: digest,
-      deploymentIdentity: `${entity}-shadow-fixture`,
-    },
-    profile: selected.profile,
-    entity,
-    partition: 'MI',
-    observedAt: timestamp,
-    publishedAt: timestamp,
-    producer: {
-      kind: 'external-pipeline',
-      repository: 'Antwohlf/map-data-aggregation-enhancement-pipeline',
-      component: 'status-sink',
-      version: '1',
-      commit: 'c'.repeat(40),
-    },
-    run: {
-      id: `${entity}-shadow-run-1`,
-      mode: lane === 'shadow' ? 'preview' : 'apply',
-      state: 'succeeded',
-      startedAt: '2026-09-07T11:57:00.000Z',
-      finishedAt: timestamp,
-    },
-    health: { state: 'ok', issues: [] },
-    ui: {},
-  }
-}
-
 test('legacy APizza status validates and presents only bounded compatibility fields', () => {
   const document = validPizza()
   const result = presentPipelineStatus(document, expectation(), { nowMs: NOW, maxAgeMinutes: 360 })
@@ -171,19 +131,17 @@ test('presents a running observation without claiming the pipeline is healthy', 
 })
 
 test('rejects swapped Pizza/Taco expectations and unknown entities', () => {
-  assert.equal(validatePipelineStatusDocument(validPizza(), expectation('taco', 'shadow'), { nowMs: NOW }).ok, false)
+  assert.equal(validatePipelineStatusDocument(validPizza(), expectation('taco', 'legacy'), { nowMs: NOW }).ok, false)
   assert.throws(() => resolveStatusSelection(boundary, 'burger', {}, ROOT), /Unsupported/)
 })
 
-test('accepts distinct external shadow vectors for Pizza and Taco', () => {
+test('keeps every external shadow lane unavailable until exact runtime bindings are supported', () => {
   for (const entity of ['pizza', 'taco']) {
     const selected = expectation(entity, 'shadow')
-    const document = validExternal(entity)
-    assert.equal(validatePipelineStatusDocument(document, selected, { nowMs: NOW }).ok, true)
-    const presented = presentPipelineStatus(document, selected, { nowMs: NOW })
-    assert.equal(presented.ok, true)
-    assert.equal(presented.data.entity, entity)
-    assert.equal(presented.data.authorityLabel, 'Shadow only — non-authoritative')
+    assert.equal(selected.enabled, false)
+    assert.equal(selected.entity, entity)
+    assert.equal(selected.reason, 'pipeline_lane_unregistered')
+    assert.equal(Object.hasOwn(selected, 'path'), false)
   }
 })
 
@@ -194,12 +152,45 @@ test('selects fixed entity-and-lane paths and never promotes apply from status c
   const tacoShadow = resolveStatusSelection(boundary, 'taco', { PIPELINE_STATUS_TACO_LANE: 'shadow' }, ROOT)
   const pizzaApply = resolveStatusSelection(boundary, 'pizza', { PIPELINE_STATUS_PIZZA_LANE: 'apply' }, ROOT)
   assert.match(pizzaLegacy.path, /pizza\/legacy\.json$/)
-  assert.match(pizzaShadow.path, /pizza\/shadow\.json$/)
+  assert.equal(pizzaShadow.enabled, false)
+  assert.equal(pizzaShadow.reason, 'pipeline_lane_unregistered')
   assert.equal(tacoDefault.enabled, false)
-  assert.match(tacoShadow.path, /taco\/shadow\.json$/)
-  assert.notEqual(pizzaShadow.path, tacoShadow.path)
+  assert.equal(tacoShadow.enabled, false)
+  assert.equal(tacoShadow.reason, 'pipeline_lane_unregistered')
   assert.equal(pizzaApply.enabled, false)
   assert.equal(pizzaApply.reason, 'external_apply_disabled')
+})
+
+test('fails closed if an external lane is marked registered before exact binding support exists', () => {
+  const mutated = structuredClone(boundary)
+  mutated.status.targets.pizza.lanes.shadow.registration.state = 'registered'
+  assert.throws(
+    () => resolveStatusSelection(mutated, 'pizza', { PIPELINE_STATUS_PIZZA_LANE: 'shadow' }, ROOT),
+    /unsupported without exact runtime bindings/,
+  )
+})
+
+test('keeps the entity-unsafe Taco legacy collector unregistered', () => {
+  const selected = expectation('taco', 'legacy')
+  assert.equal(selected.enabled, false)
+  assert.equal(selected.reason, 'pipeline_lane_unregistered')
+  assert.equal(Object.hasOwn(selected, 'path'), false)
+
+  const forgedRegistration = structuredClone(boundary)
+  forgedRegistration.status.targets.taco.lanes.legacy.registration.state = 'registered'
+  assert.throws(
+    () => resolveStatusSelection(forgedRegistration, 'taco', { PIPELINE_STATUS_TACO_LANE: 'legacy' }, ROOT),
+    /Legacy pipeline status registration is unsupported/,
+  )
+})
+
+test('rejects missing, malformed, or expanded lane registration objects', () => {
+  for (const registration of [undefined, null, {}, { state: 'maybe' }, { state: 'registered', extra: true }]) {
+    const mutated = structuredClone(boundary)
+    if (registration === undefined) delete mutated.status.targets.pizza.lanes.legacy.registration
+    else mutated.status.targets.pizza.lanes.legacy.registration = registration
+    assert.throws(() => resolveStatusSelection(mutated, 'pizza', {}, ROOT), /Invalid pipeline status registration/)
+  }
 })
 
 test('caps JSON structure before nested content can reach the presenter', () => {

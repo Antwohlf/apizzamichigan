@@ -9,6 +9,8 @@ const { createAdminSessionValue } = require('../../shared/admin-session-boundary
 const passwordEnv = ['ADMIN', 'PORTAL', 'PASSWORD'].join('_')
 const sessionEnv = ['ADMIN', 'SESSION', 'SECRET'].join('_')
 const serviceRoleEnv = ['SUPABASE', 'SERVICE', 'ROLE', 'KEY'].join('_')
+const pizzaLaneEnv = ['PIPELINE', 'STATUS', 'PIZZA', 'LANE'].join('_')
+const tacoLaneEnv = ['PIPELINE', 'STATUS', 'TACO', 'LANE'].join('_')
 const testPassword = 'test-admin-password-value'
 const testSigningValue = 'test-admin-signing-value-with-entropy'
 
@@ -22,6 +24,8 @@ test('status needs a real expiring session but not a Supabase service client', a
     password: process.env[passwordEnv],
     session: process.env[sessionEnv],
     service: process.env[serviceRoleEnv],
+    pizzaLane: process.env[pizzaLaneEnv],
+    tacoLane: process.env[tacoLaneEnv],
   }
   process.env[passwordEnv] = testPassword
   process.env[sessionEnv] = testSigningValue
@@ -39,6 +43,8 @@ test('status needs a real expiring session but not a Supabase service client', a
       [passwordEnv, previous.password],
       [sessionEnv, previous.session],
       [serviceRoleEnv, previous.service],
+      [pizzaLaneEnv, previous.pizzaLane],
+      [tacoLaneEnv, previous.tacoLane],
     ]) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
@@ -60,6 +66,24 @@ test('status needs a real expiring session but not a Supabase service client', a
   assert.equal(statusResponse.status, 200)
   assert.match(statusResponse.headers.get('cache-control') || '', /no-store/)
   assert.equal((await statusResponse.json()).data.state, 'missing')
+
+  process.env[pizzaLaneEnv] = 'shadow'
+  const pizzaShadowResponse = await fetch(`${origin}/api/admin/pipeline-status?entity=pizza`, { headers })
+  const pizzaShadow = await pizzaShadowResponse.json()
+  assert.equal(pizzaShadow.data.state, 'disabled')
+  assert.equal(pizzaShadow.data.detail, 'This pipeline lane has not been registered with the application.')
+
+  process.env[tacoLaneEnv] = 'legacy'
+  const tacoLegacyResponse = await fetch(`${origin}/api/admin/pipeline-status?entity=taco`, { headers })
+  const tacoLegacy = await tacoLegacyResponse.json()
+  assert.equal(tacoLegacy.data.state, 'disabled')
+  assert.equal(tacoLegacy.data.detail, 'This pipeline lane has not been registered with the application.')
+
+  process.env[pizzaLaneEnv] = 'apply'
+  const pizzaApplyResponse = await fetch(`${origin}/api/admin/pipeline-status?entity=pizza`, { headers })
+  const pizzaApply = await pizzaApplyResponse.json()
+  assert.equal(pizzaApply.data.state, 'disabled')
+  assert.equal(pizzaApply.data.detail, 'External apply remains disabled; an apply-lane status cannot be authoritative.')
 
   const supabaseResponse = await fetch(`${origin}/api/admin/reviews?entity=pizza`, { headers })
   assert.equal(supabaseResponse.status, 500)

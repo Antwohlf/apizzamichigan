@@ -63,13 +63,19 @@ to versioned, digest-pinned contracts:
 4. Immutable run and publication receipts used for reconciliation.
 
 The implemented status boundary uses fixed entity-and-lane paths under a
-host-selected root. Pizza defaults to its legacy lane. Taco defaults to
-disabled because its live deployment authority has not been reconciled with
-the checked-in configuration. Shadow and apply status are separate lanes;
-selecting or displaying an apply-lane document cannot enable writes. The
-administrator endpoint requires a valid, server-expiring session, rejects
-unknown identities and schema fields, and does not require a database service
-credential merely to read the local snapshot.
+host-selected root. Pizza defaults to its registered legacy lane. Every Taco
+lane is unregistered because no entity-safe Taco status collector or external
+runtime has been verified. Taco therefore defaults to disabled. This boundary
+release code-binds legacy registration to the Pizza/APizza identity, so a Taco
+configuration edit cannot activate the unsafe legacy collector. Every external
+shadow and apply lane is also explicitly unregistered and cannot be selected,
+even through an environment override. Registering one will require a future
+contract change that verifies exact profile, catalog, host-policy, deployment, and target bindings rather
+than accepting syntactically valid digests. Selecting or displaying an
+apply-lane document cannot enable writes. The administrator endpoint requires
+a valid, server-expiring session, rejects unknown identities and schema fields,
+and does not require a database service credential merely to read the local
+snapshot.
 
 The two target inventories describe the existing legacy Pizza and Taco mirror
 capabilities so integration work can be checked against the application-owned
@@ -98,6 +104,8 @@ feeds shared queues and has the widest identity surface.
 - Repository ownership and reusable scaffolding.
 - App-owned Pizza and Taco target identities and field inventories.
 - Entity- and lane-isolated observational status files and admin presentation.
+- Explicit fail-closed registration state for every status lane; only the
+  Pizza legacy status collector is registered today.
 - Entity-scoped queue claims, reviewed-new table selection, and guarded
   publication argument routing. Fresh queues use Pizza/Taco-scoped uniqueness;
   an existing legacy queue is intentionally not rewritten during ordinary
