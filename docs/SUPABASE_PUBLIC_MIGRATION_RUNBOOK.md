@@ -51,17 +51,17 @@ It should return one function row with `security_definer = true`,
 lifecycle columns, and a zero-row probe of `{"updated_count": 0}`. This probe
 does not modify any place rows.
 
-On the iMac, run the read-only check:
+From the private application checkout, run the read-only check. Set `APP_ROOT`
+to that checkout without committing its value:
 
 ```bash
-cd /srv/apizzamichigan
-ENABLE_LIFECYCLE_SYNC=1 /usr/local/bin/node scripts/ops/supabase-sync-readiness-report.mjs --batch 20 --sample 3
+cd "$APP_ROOT"
+ENABLE_LIFECYCLE_SYNC=1 node scripts/ops/supabase-sync-readiness-report.mjs --batch 20 --sample 3
 ```
 
-The explicit environment prefix matters: an interactive SSH shell does not
-inherit the `ENABLE_LIFECYCLE_SYNC=1` value from the launchd service. The
-command is read-only; it only makes the check evaluate the same lifecycle
-contract as the scheduled publisher.
+The explicit environment prefix matters: an interactive shell might not inherit
+the value used by a scheduled publisher. The command is read-only; it only
+makes the check evaluate the same lifecycle contract as the publisher.
 
 The expected lifecycle section is:
 
