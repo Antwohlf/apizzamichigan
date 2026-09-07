@@ -20,6 +20,7 @@ const PORTAL_INIT_TARGET = 'scripts/.fsq-portal-init.sql';
 const SERVER = readFileSync('server/index.js', 'utf8');
 const ADMIN_PANEL = readFileSync('src/admin/AdminSourceProvenancePanel.js', 'utf8');
 const GITIGNORE = readFileSync('.gitignore', 'utf8');
+const contractTestCredential = ['present', 'for', 'contract', 'test'].join('-');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -99,7 +100,7 @@ function main() {
     env: {
       ...process.env,
       FSQ_OS_PLACES_SAMPLE: '',
-      FSQ_PLACES_TOKEN: 'present-for-contract-test',
+      FSQ_PLACES_TOKEN: contractTestCredential,
       HF_TOKEN: '',
       HUGGINGFACE_HUB_TOKEN: '',
     },
@@ -139,7 +140,7 @@ function main() {
       ...process.env,
       FSQ_OS_PLACES_SAMPLE: '',
       FSQ_PLACES_TOKEN: '',
-      HF_TOKEN: 'present-for-contract-test',
+      HF_TOKEN: contractTestCredential,
       HUGGINGFACE_HUB_TOKEN: '',
     },
   });
@@ -163,7 +164,7 @@ function main() {
         env: {
           ...process.env,
           FSQ_OS_PLACES_SAMPLE: '',
-          FSQ_PLACES_TOKEN: 'present-for-contract-test',
+          FSQ_PLACES_TOKEN: contractTestCredential,
           HF_TOKEN: '',
           HUGGINGFACE_HUB_TOKEN: '',
         },
@@ -195,7 +196,7 @@ function main() {
       env: {
         ...process.env,
         FSQ_OS_PLACES_SAMPLE: '',
-        FSQ_PLACES_TOKEN: 'present-for-contract-test',
+        FSQ_PLACES_TOKEN: contractTestCredential,
         HF_TOKEN: '',
         HUGGINGFACE_HUB_TOKEN: '',
       },

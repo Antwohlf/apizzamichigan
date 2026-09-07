@@ -1,176 +1,103 @@
-# Data Pipeline
+# Product data flow
 
-APizzaMichigan maintains public data in Supabase and enriches it locally on the
-Michigan iMac before controlled sync-back.
+APizzaMichigan and TacoBoutMichigan publish reviewed place data from canonical
+PostgreSQL tables to narrowly exposed Supabase tables and views. This repository
+owns the product schema, editorial policy, human decisions, and guarded
+publication interface.
 
-## Import Path
+Reusable acquisition and processing infrastructure is moving to the separate
+[Map Data Aggregation and Enhancement Pipeline](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline).
+See [PIPELINE_BOUNDARY.md](PIPELINE_BOUNDARY.md) for the exact ownership and
+cutover rules.
 
-OpenStreetMap imports populate Supabase using the root-level import scripts:
+## Desired flow
 
-- `scripts/import-osm-pizza.mjs`
-- `scripts/import-osm-tacos.mjs`
-- region/global helpers such as `scripts/import-europe.mjs` and `scripts/import-pizzerias-by-name.mjs`
-
-Coverage details live in `docs/world-coverage.md`.
-
-## Local Enrichment Path
-
-The current local-first pipeline is:
-
-1. Seed or refresh local Postgres from Supabase with `scripts/enrichment/sync-from-supabase.mjs`.
-2. Use SQLite `scripts/.job-queue.db` for queue state and worker heartbeats.
-3. Enrich local Postgres through active agents:
-   - OSM deep extraction: `scripts/enrichment/agents/osm-extractor.mjs`
-   - website scraping: `scripts/enrichment/agents/web-scraper.mjs`
-   - classification: `scripts/enrichment/agents/llm-classifier.mjs`
-4. Sync approved local enrichment fields back to Supabase with `scripts/sync-local-to-supabase.mjs`.
-
-In apply mode, the scheduled source runner also performs a bounded contact
-promotion step after source work. It fills blank `website_url` and `phone`
-values from fresh, high-confidence `place_sources` evidence, capped by
-`config/source-pipeline.json` -> `limits.contact_promotions_per_run`
-(currently 50). This remains fill-if-blank only and never changes identity,
-editorial, classifier, or Supabase data.
-
-Current production rollout is classifier-first with guarded automated Supabase
-sync. The iMac launchd source feeder refreshes the configured operational
-regions (currently Michigan and New York), records source evidence, and
-promotes only approved blank contact fields. Website scraping is separately
-managed by its launchd worker, while menu parsing remains paused, so these
-workers cannot create an unbounded second writer. California and Texas are
-cataloged as future source-pipeline regions but are not active by default.
-
-Before an operator starts or retries a regional OSM run, use the runner's
-read-only plan mode to see the next tiles, retry cooldowns, and remaining work:
-
-```bash
-node scripts/ops/export-osm-tiles.mjs \
-  --bbox 40.4,-79.8,45.1,-71.7 \
-  --step 0.25 \
-  --output reports/osm/ny-pizza.json \
-  --manifest reports/osm/ny-pizza.json.manifest.json \
-  --max-tiles 8 \
-  --plan
+```text
+source adapters
+  -> source/profile normalization
+  -> canonical matching
+  -> durable review evidence
+  -> human or policy decision
+  -> proposed canonical patch
+  -> app-owned guarded writer
+  -> canonical Postgres
+  -> app-owned guarded publisher
+  -> public Supabase projection
+  -> website
 ```
 
-Plan mode does not create output files, update manifests, call Overpass, or
-write any database. A normal run uses the same arguments without `--plan`.
+Outside sources provide evidence and proposals. They do not directly rewrite
+personal ratings, notes, photos, visits, identity, or lifecycle history.
 
-The authenticated admin home exposes a regional basic-field coverage view for
-active operational places. It reports missing address, website, phone,
-style, and price values without pretending that every gap is safe to fill
-automatically: contact blanks can use accepted evidence, while identity and
-editorial fields remain review- or classifier-owned.
+## Product-owned contracts
 
-The public map does not fetch review-photo rows while loading an entire region.
-Photo metadata and storage URLs are requested only after a person opens a place
-popup; search results may still preload a small bounded thumbnail set. This
-keeps normal map browsing from turning a regional place load into a large
-database and storage read.
+- `config/entity-profiles.json` maps APizza and Taco to their canonical tables,
+  taxonomy, and source-policy configuration.
+- `config/canonical-contract.json` defines the existing application field and
+  publication boundary. It will be split into versioned input/output contracts
+  as each external-pipeline slice is introduced.
+- `scripts/lib/supabase-sync-profiles.mjs` maps product entities to guarded
+  publication RPCs.
+- SQL under `scripts/enrichment/` owns the canonical/public schema and RPC
+  definitions.
+- `place_sources` and `source_review_queue` are protected operational/review
+  state; they are not public sync targets.
 
-## Supabase Sync Scope
+The checked-in code supports both Pizza and Taco publication profiles. That
+capability is not proof that either corresponding scheduled service is loaded
+on a host. Deployment state must come from a redacted live inventory, never
+from repository documentation.
 
-The sync runner accepts an entity profile:
+## Legacy application pipeline
 
-```bash
-node scripts/sync-local-to-supabase.mjs --entity pizza --dry-run
-node scripts/sync-local-to-supabase.mjs --entity taco --dry-run
+Until cutover, the app repository contains the legacy implementations for:
+
+- OpenStreetMap and other source acquisition;
+- local SQLite job queues and worker heartbeats;
+- website, menu, and classifier enrichment;
+- source-review reports and decision workflows;
+- guarded local-to-Supabase publication.
+
+These entrypoints remain temporary authorities. New reusable behavior belongs
+in the external pipeline repository; do not build a second app-local framework.
+
+## Safety rules
+
+1. Discovery and enrichment are not publication authority.
+2. Real source data must have approved terms, field, retention, privacy, and
+   redistribution policy before processing.
+3. APizza, Taco, and BuildHere.city use distinct profile policies and state
+   namespaces, even when an adapter is shared.
+4. Apply mode requires a versioned app-owned target contract and an exact
+   profile/target binding.
+5. Stop the legacy owner and capture all planner, acquisition, delivery, queue,
+   and referenced-artifact state before enabling a replacement writer.
+6. Publication moves last and retains health, QA, readiness, dry-run,
+   protected-field, and post-verification gates.
+
+## Current extraction status
+
+The external repository contains general contracts and executors plus a
+read-only APizza FSQ shadow path. It cannot download a real FSQ release or write
+canonical, review, or public product data. APizza/Taco production remains on
+the legacy application path until source-by-source parity and rollback gates
+are complete.
+
+## Local verification
+
+These commands are read-only unless a separately documented command includes
+an explicit apply flag:
+
+```sh
+npm run verify:release
+npm run test:ops
+node scripts/ops/source-pipeline-readiness-report.mjs
+node scripts/ops/supabase-sync-readiness-report.mjs --entity pizza --batch 25 --sample 3
+node scripts/ops/supabase-sync-readiness-report.mjs --entity taco --batch 25 --sample 3
 ```
 
-The profile registry in `scripts/lib/supabase-sync-profiles.mjs` is the single
-source of truth for the publication boundary:
-
-| Entity | Public table | Bulk RPC | Publication |
-| --- | --- | --- | --- |
-| pizza | `pizza_places` | `apply_pizza_places_sync_batch` | enabled |
-| taco | `taco_places` | `apply_taco_places_sync_batch` | enabled after `supabase-taco-publication-migration.sql` |
-
-Taco uses the same local-first source and classifier architecture as pizza.
-Its bounded scheduler is `config/source-pipeline-taco.json`; install
-`com.apizzamichigan.taco-source-pipeline.plist.template` only after reviewing
-the first dry run. Public taco publication is guarded by
-`scripts/enrichment/supabase-taco-publication-migration.sql`; the taco sync
-launchd template must remain stopped until that migration has been applied and
-the taco readiness report shows the bulk RPC as available.
-
-The low-level sync policy resolves an entity-specific table from that registry
-and rejects an entity/table mismatch before selecting or writing rows. Pizza is
-the only enabled publication profile today. Taco remains read-only planning
-until its public schema and guarded bulk RPC are explicitly enabled.
-Provenance and review tables such as `place_sources` and
-`source_review_queue` remain local operator state and are never public sync
-targets.
-
-### Public Search Performance
-
-The public map keeps its existing substring search across names, addresses,
-styles, brands, and operators. Apply
-`scripts/enrichment/supabase-production-migration.sql` in the Supabase SQL
-editor after the table columns are present. This enables the guarded
-publication path without building indexes. Apply
-`scripts/enrichment/supabase-search-index-migration.sql` separately when the
-instance can absorb the one-time index build; search remains functional before
-that optional performance step.
-
-The normal automated path is the guarded recent-classification window:
-
-```bash
-node scripts/ops/guarded-supabase-sync.mjs
-```
-
-For reviewed/manual batches, use exact ID scope so unrelated recent
-classifier/scraper changes are not swept into the same operation:
-
-```bash
-node scripts/ops/supabase-sync-readiness-report.mjs --ids 123,456
-node scripts/ops/guarded-supabase-sync.mjs --ids 123,456
-node scripts/ops/guarded-supabase-sync.mjs --ids 123,456 --apply
-```
-
-The ID-scoped guarded runner still performs health, QA, readiness, dry-run, and
-post-check gates. It disables checkpoint mode for that run because the selected
-IDs are the complete sync scope.
-
-## Classifier Runtime
-
-The classifier runs locally against Ollama:
-
-- default model: `llama3.2:latest`
-- override: `OLLAMA_MODEL`
-- conservative output cap: `OLLAMA_NUM_PREDICT=80`
-- conservative timeout: `OLLAMA_TIMEOUT_MS=240000`
-
-It writes style, price range, confidence, and `last_enriched_at` to local
-Postgres. Supabase is updated by the guarded launchd sync service only after
-health, QA, readiness, dry-run, and protected-field gates pass.
-
-## Source Policy
-
-Data source and trust rules live in `docs/DATA_SOURCES.md`.
-
-Important operating rule:
-
-> Google Maps is an outbound navigation destination, not an ingestion source.
-
-## Operations
-
-Canonical iMac runbook:
-
-- `docs/IMAC_PIPELINE_RUNBOOK.md`
-
-Useful reports:
-
-```bash
-node scripts/ops/classifier-health-report.mjs
-node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25
-node scripts/ops/home-status-report.mjs
-node scripts/ops/classifier-batch-report.mjs --max-jobs 25 --timeout-ms 240000 --num-predict 80 --temperature 0
-node scripts/ops/stale-worker-cleanup.mjs
-```
-
-## Archived Legacy Path
-
-The older `scripts/enrichment/orchestrator.mjs`, watchdog, and
-`scripts/enrichment/workers/*` pipeline generation has been archived under
-`scripts/enrichment/archive/`. It used a different model and is not the current
-operational path.
+Real hostnames, filesystem paths, schedules, installed service definitions, logs,
+credentials, and runtime snapshots must live outside the public repository.
+The existing host-specific runbooks and launchd templates are retained only
+until they can be reconciled with a live inventory and copied to private host
+storage; they block the repository visibility change in the meantime.

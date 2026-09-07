@@ -95,8 +95,13 @@ function main() {
   assert(retryFeeder.includes('<integer>300</integer>'), 'classifier retry feeder should run every five minutes');
 
   const gitignore = read('.gitignore');
-  assert(gitignore.split('\n').some(line => line.trim() === '.env'), '.gitignore must protect .env');
-  assert(gitignore.split('\n').some(line => line.trim().startsWith('.env.') || line.trim() === '.env.*'), '.gitignore must protect local env variants');
+  const ignoreLines = gitignore.split('\n').map(line => line.trim());
+  const hasEnvWildcard = ignoreLines.includes('.env*') || ignoreLines.includes('/.env*');
+  assert(hasEnvWildcard || ignoreLines.includes('.env'), '.gitignore must protect .env');
+  assert(hasEnvWildcard || ignoreLines.some(line => line.startsWith('.env.') || line === '.env.*'), '.gitignore must protect local env variants');
+  if (hasEnvWildcard) {
+    assert(ignoreLines.includes('!.env.example') || ignoreLines.includes('!/.env.example'), '.gitignore must permit the blank .env.example template');
+  }
   for (const ignored of ['scripts/.job-queue.db', 'scripts/.fsq-portal-init.sql']) {
     assert(gitignore.split('\n').some(line => line.trim() === ignored || line.trim() === `/${ignored}`), `.gitignore must protect ${ignored}`);
   }

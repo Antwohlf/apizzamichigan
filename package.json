@@ -51,6 +51,8 @@
     "local:orchestrator-demo": "node scripts/ops/local-llm-orchestrator-demo.mjs",
     "verify:backup-contract": "node scripts/ops/verify-backup-contract.mjs",
     "verify:sync-contract": "node scripts/ops/verify-supabase-sync-policy.mjs && node scripts/ops/verify-bulk-sync-contract.mjs",
+    "audit:public": "node scripts/ops/public-repo-audit.mjs",
+    "audit:public:release": "node scripts/ops/public-repo-audit.mjs --release",
     "test:ops": "node --test scripts/lib/*.test.mjs scripts/ops/*.test.mjs",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "test": "react-scripts test",
