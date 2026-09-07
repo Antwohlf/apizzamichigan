@@ -1,99 +1,87 @@
-# APizzaMichigan & TacoBoutMichigan
+# APizzaMichigan and TacoBoutMichigan
 
-Dual-brand React app that surfaces Michigan pizza and taco recommendations on top of a shared map + directory experience. APizzaMichigan remains the default route while TacoBoutMichigan reuses the layout with distinct theming, copy, and data.
+[APizzaMichigan](https://www.apizzamichigan.com) is a personal map and
+directory for tracking pizza places, reviews, and recommendations. The same
+application powers [TacoBoutMichigan](https://www.apizzamichigan.com/tacos)
+with separate data, filters, classification policy, and visual design.
 
-## Quick Start
+## What is here
 
-```bash
-npm install
+- Interactive pizza and taco maps with search and filters.
+- Place details, personal ratings and notes, lifecycle status, and photos.
+- Public place suggestions and an authenticated editorial review portal.
+- Product-owned PostgreSQL/Supabase schemas, migrations, read views, and
+  guarded publication contracts.
+- Legacy source and enrichment jobs that remain authoritative only while the
+  external pipeline migration is in progress.
+
+## Data pipeline boundary
+
+Reusable data-pipeline infrastructure lives in the public
+[Map Data Aggregation and Enhancement Pipeline](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline).
+That repository owns reusable execution, adapter, state, artifact, and receipt
+mechanics. This repository retains APizza/Taco business policy, canonical
+schema, human review, and final publication authority.
+
+The projects now have separate repositories, but the runtime boundary is still
+being implemented and has not reached production cutover. The external runtime
+currently supports a read-only APizza FSQ shadow and cannot write product data.
+See [the pipeline boundary](docs/PIPELINE_BOUNDARY.md) for the intended
+ownership and no-dual-writer rules.
+
+## Local development
+
+Use Node.js 22 or newer:
+
+```sh
+npm ci
 npm start
 ```
 
-The dev server lives at http://localhost:3000.
+The development server runs at `http://localhost:3000`:
 
-- `http://localhost:3000/` → APizzaMichigan (original experience)
-- `http://localhost:3000/tacos` → TacoBoutMichigan (alt theme)
+- `/` — APizzaMichigan
+- `/tacos` — TacoBoutMichigan
+- `/admin/reviews` — authenticated editorial review portal
 
-Each page footer includes a “Check out …” call-to-action that hops between the twins.
+To run the local admin API in a second terminal:
 
-## Admin Review Portal
-
-The public app and authenticated admin API run as two local processes. Start
-the API in one terminal and the React app in another:
-
-```bash
-# terminal 1
-ADMIN_PORTAL_PASSWORD=your-password \
-SUPABASE_URL=... \
-SUPABASE_SERVICE_ROLE_KEY=... \
+```sh
+cp .env.example .env
+chmod 600 .env
+# Fill only the server-side values needed for local administration.
 npm run start:server
-
-# terminal 2
-npm start
 ```
 
-Then open http://localhost:3000/admin/reviews. The API listens on port `5050`
-and the React development server proxies `/api/*` requests to it. The admin
-portal uses the service role only on the server; never put that key in a
-`REACT_APP_*` variable or commit it.
+Only public or publishable credentials belong in browser-exposed variables.
+Supabase secret/service-role keys, database passwords, administrator secrets,
+and provider secrets are server- or host-only. Frontend-only development may
+instead copy the public section of [.env.example](.env.example) to `.env.local`.
+See [the security policy](SECURITY.md).
 
-The portal is organized around five workflows:
+## Verification
 
-- **Home**: see the next review tasks.
-- **Photos**: manage review photos, including HEIC uploads.
-- **Suggestions**: approve or reject visitor submissions.
-- **Data review**: resolve source matches and new-place candidates one at a time.
-- **System**: inspect imports, provenance, lifecycle, and pipeline diagnostics.
-
-## Theme System
-
-Themes live in `src/themes/` and provide palette, copy, icon, and map tile settings. Use `ThemeKeys.PIZZA` or `ThemeKeys.TACO` when wiring components. The `ThemeProvider` drops CSS variables and metadata for the active theme; new surfaces should read theme tokens instead of hard-coding pizza colors.
-
-Key files:
-- `src/themes/pizzaTheme.js`
-- `src/themes/tacoTheme.js`
-- `src/themes/ThemeProvider.js`
-
-## Data Sources
-
-Supabase tables remain unchanged for pizza (`pizza_places`, `frozen_pizzas`). Taco views look for parallel tables (`taco_places`, `frozen_tacos`). While those are provisioned, Taco routes fall back to local sample data located in `src/data/`.
-
-Filters pull style/type options from:
-- `src/data/pizzaStyles.js`
-- `src/data/tacoTypes.js`
-- `src/data/latinMarkets.placeholder.js` (temporary static list rendered on the Taco route while we stand up Supabase data)
-
-## Admin Submit Portal
-
-Authenticated submissions live at `/admin/submit`. To enable the secure flow locally:
-
-```bash
-# in one terminal
-ADMIN_PORTAL_PASSWORD=your-password \
-SUPABASE_URL=... \
-SUPABASE_SERVICE_ROLE_KEY=... \
-npm run start:server
-
-# in another terminal
-npm start
+```sh
+npm run verify:release
+npm run test:ops
+npm run typecheck
+npm run lint -- --quiet
+CI=true npm test -- --watchAll=false --runInBand
+npm run audit:public
 ```
 
-The server route sets an `admin_auth` HttpOnly cookie after validating `ADMIN_PORTAL_PASSWORD`. Use the submit form to geocode addresses (Mapbox token required when `VITE_GEOCODER=mapbox`) and post to the appropriate Supabase table with the service role key. The public anon key never sees write access.
+The normal application build uses the committed aggregate dashboard snapshot
+and does not query the production database. Refresh that snapshot deliberately
+with `npm run build:refresh-stats`.
 
-## Testing
+## Data and licensing
 
-```bash
-npm test
-```
+Do not add production extracts, provider downloads, review exports, photos,
+logs, queue databases, checkpoints, or host deployment files. The private
+repository still contains a small set of legacy record-level data files whose
+removal or explicit licensing is a gate before public visibility. New tests
+must use fabricated fixtures. See [DATA-LICENSE.md](DATA-LICENSE.md) and
+[the public-release checklist](docs/PUBLIC_RELEASE.md).
 
-The suite includes smoke coverage that ensures both routes render with the expected CTA labels and Supabase queries per brand.
-
-## Deployment
-
-`npm run build` continues to emit the CRA production bundle. No pizza assets or copy were altered; Taco assets and favicons live alongside them in `public/` for easy hosting.
-
-The normal build is intentionally offline: it uses the committed
-`public/data/dashboard-stats.json` snapshot and does not scan Supabase. When
-the dashboard snapshot should be refreshed, run `npm run build:refresh-stats`
-explicitly. This keeps local QA and routine deploys from issuing a full-table
-read against the production database.
+A software license for this application repository has not yet been selected.
+The separate pipeline repository is Apache-2.0 licensed.

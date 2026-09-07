@@ -15,11 +15,17 @@ __pycache__/
 
 # misc
 .DS_Store
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*
+!.env.example
+/.playwright-cli/
+/.vscode/
+/assets/
+/output/
+/.status_safeguards.md
+/conversation.md
+*.bak
+*.sqlite-shm
+*.sqlite-wal
 
 # enrichment pipeline local artifacts
 /.osm-id-cache.json
@@ -29,7 +35,9 @@ __pycache__/
 /scripts/.job-queue.db.writer-lock/
 /scripts/.job-queue.db-shm
 /scripts/.job-queue.db-wal
-/scripts/.*-progress.json
+/scripts/.*-progress.json*
+/scripts/.address-enrichment-*.json
+/scripts/*-metadata-review.json
 /scripts/.status_hourly.json
 /scripts/.supabase-sync-checkpoint*.json
 /scripts/.supabase-sync-status.json
