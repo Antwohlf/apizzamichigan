@@ -1,0 +1,128 @@
+{
+  "contractSchemaVersion": 1,
+  "name": "taco-pipeline-write-contract",
+  "version": 1,
+  "ownerRepository": "Antwohlf/apizzamichigan",
+  "profile": "tacoboutmichigan",
+  "entity": "taco",
+  "partition": "configured-regions",
+  "logicalResourceUri": "app-contract://tacoboutmichigan/taco/public-mirror",
+  "effectClass": "legacy-public-mirror-capability",
+  "authority": "application-owned-output-boundary",
+  "deployment": {
+    "externalApplyEnabled": false,
+    "verifiedOnProduction": false,
+    "reason": "The checked-in Taco publisher migration has not been reconciled with the live host. This contract does not assert that it is deployed, and external apply remains disabled."
+  },
+  "localCanonical": {
+    "database": "pizza_enrichment",
+    "schema": "public",
+    "table": "taco_places",
+    "primaryKey": {
+      "column": "id",
+      "type": "bigint"
+    }
+  },
+  "publicMirror": {
+    "service": "supabase",
+    "schema": "public",
+    "table": "taco_places",
+    "primaryKey": {
+      "column": "id",
+      "type": "bigint"
+    }
+  },
+  "externalAuthorization": {
+    "enabled": false,
+    "requiredPrincipal": "map_pipeline_taco_writer",
+    "allowedEffects": [],
+    "allowedOperations": [],
+    "activationRequires": [
+      "live Taco authority inventory",
+      "entity-scoped idempotent RPC",
+      "database writer-generation fence",
+      "narrow role provisioning",
+      "shadow reconciliation",
+      "legacy writer revocation",
+      "restore rehearsal"
+    ]
+  },
+  "legacyCapability": {
+    "deploymentState": "unverified-and-contradictory",
+    "id": "update-existing-public-mirror-v1",
+    "kind": "update-existing",
+    "transport": "postgres-rpc",
+    "rpc": {
+      "schema": "public",
+      "name": "apply_taco_places_sync_batch",
+      "argument": "p_rows",
+      "currentExecuteRole": "service_role",
+      "securityDefiner": true,
+      "maxBatchRows": 500
+    },
+    "requiredFields": [
+      "id"
+    ],
+    "allowedPatchFields": [
+      "updated_at",
+      "enrichment_status",
+      "last_enriched_at",
+      "enrichment_agent",
+      "enrichment_run_id",
+      "address_source",
+      "scrape_method",
+      "scrape_notes",
+      "website_url",
+      "menu_url",
+      "phone",
+      "email",
+      "instagram_url",
+      "facebook_url",
+      "twitter_url",
+      "whatsapp",
+      "hours",
+      "delivery",
+      "takeaway",
+      "drive_through",
+      "outdoor_seating",
+      "indoor_seating",
+      "wheelchair",
+      "brand",
+      "brand_wikidata",
+      "operator",
+      "operator_wikidata",
+      "osm_tags",
+      "osm_last_fetched_at",
+      "osm_fetch_status",
+      "osm_fetch_error",
+      "style",
+      "price",
+      "price_range",
+      "style_confidence",
+      "lifecycle_status",
+      "lifecycle_replaced_by_id"
+    ],
+    "protectedFields": [
+      "id",
+      "name",
+      "lat",
+      "lng",
+      "address",
+      "state",
+      "google_place_id",
+      "status",
+      "notes",
+      "rating",
+      "photos"
+    ],
+    "unknownFieldPolicy": "reject-before-transport",
+    "receipt": {
+      "field": "updated_count",
+      "mustEqualSubmittedRows": true
+    }
+  },
+  "protectedLocalRelations": [
+    "public.place_sources",
+    "public.source_review_queue"
+  ]
+}

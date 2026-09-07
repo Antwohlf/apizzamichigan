@@ -139,18 +139,22 @@ export default function AdminSystemPanel({ entity }) {
       setLoading(true)
       setError('')
       try {
-        const [provenanceResponse, summaryResponse, syncResponse, pipelineResponse] = await Promise.all([
+        const pipelineRequest = fetch(`/api/admin/pipeline-status?entity=${entity}`, { credentials: 'include' })
+          .then(async response => response.ok ? response.json() : {})
+          .catch(() => ({}))
+        pipelineRequest.then(result => {
+          if (!cancelled) setPipelineStatus(result?.data || null)
+        })
+        const [provenanceResponse, summaryResponse, syncResponse] = await Promise.all([
           fetch(`/api/admin/source-provenance?entity=${entity}`, { credentials: 'include' }),
           fetch(`/api/admin/source-review-summary?entity=${entity}`, { credentials: 'include' }),
           fetch(`/api/admin/supabase-sync-readiness?entity=${entity}`, { credentials: 'include' }),
-          fetch(`/api/admin/pipeline-status?entity=${entity}`, { credentials: 'include' }),
         ])
         if (!provenanceResponse.ok) throw new Error(await provenanceResponse.text() || 'Source status is unavailable.')
-        const [provenancePayload, summaryPayload, syncPayload, pipelinePayload] = await Promise.all([
+        const [provenancePayload, summaryPayload, syncPayload] = await Promise.all([
           provenanceResponse.json(),
           summaryResponse.json(),
           syncResponse.ok ? syncResponse.json() : Promise.resolve({}),
-          pipelineResponse.ok ? pipelineResponse.json() : Promise.resolve({}),
         ])
         if (!cancelled) {
           setPayload(provenancePayload?.data || null)
@@ -158,7 +162,6 @@ export default function AdminSystemPanel({ entity }) {
           setLifecycle(summaryPayload?.data?.lifecycle || null)
           setBasicFieldCoverage(summaryPayload?.data?.basicFieldCoverage || null)
           setSyncReadiness(syncPayload?.data || null)
-          setPipelineStatus(pipelinePayload?.data || null)
         }
       } catch (err) {
         if (!cancelled) setError(err?.message || 'System details could not be loaded.')
@@ -325,7 +328,7 @@ export default function AdminSystemPanel({ entity }) {
       {error ? <div className="admin-alert admin-alert--error" role="alert">{error}</div> : null}
       {message ? <div className="admin-alert admin-alert--success" role="status">{message}</div> : null}
 
-      {!loading && payload ? (
+      {!loading && (payload || pipelineStatus) ? (
         <>
           <section className="admin-system-status" aria-labelledby="sync-status-heading">
             <div>
@@ -365,7 +368,10 @@ export default function AdminSystemPanel({ entity }) {
               <span>{pipelineStatus?.label || 'No recent check'}</span>
             </summary>
             <div className="admin-system-section__body">
-              <p className="admin-system-copy">This is a read-only snapshot from the iMac. It does not start workers or publish changes.</p>
+              <p className="admin-system-copy">
+                <strong>{pipelineStatus?.authorityLabel || 'Configured pipeline observation'}</strong>.
+                {' '}This read-only snapshot does not start workers, authorize apply, or publish changes.
+              </p>
               <p className="admin-system-copy">{pipelineStatus?.detail || 'No pipeline health report is available yet.'}</p>
               {pipelineStatus?.checkedAt ? <p className="admin-system-status__meta">Checked {formatDate(pipelineStatus.checkedAt)}.</p> : null}
               {sourceFeederLabel(pipelineStatus) ? (
@@ -834,7 +840,7 @@ export default function AdminSystemPanel({ entity }) {
               <div className="admin-alert" style={{ marginTop: 14 }}>
                 Source evidence remains local. Raw setup commands and adapter operations stay in project scripts and documentation.
               </div>
-              {payload.fsqSample?.missing?.length ? (
+              {payload?.fsqSample?.missing?.length ? (
                 <div className="admin-alert admin-alert--warning" style={{ marginTop: 10 }}>
                   Foursquare sample setup still needs attention: {payload.fsqSample.missing.join('; ')}
                 </div>

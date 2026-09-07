@@ -33,9 +33,16 @@ personal ratings, notes, photos, visits, identity, or lifecycle history.
 
 - `config/entity-profiles.json` maps APizza and Taco to their canonical tables,
   taxonomy, and source-policy configuration.
+- `config/pipeline-boundary.json` is the fail-closed registry for external write
+  enablement and for entity/lane-specific status selection.
 - `config/canonical-contract.json` defines the existing application field and
   publication boundary. It will be split into versioned input/output contracts
   as each external-pipeline slice is introduced.
+- `contracts/pipeline-targets/*.json` are separate Pizza and Taco inventories of
+  the current legacy mirror capability. They are not executable external-write
+  authorization: external apply, effects, and operations are all disabled.
+- `contracts/pipeline-status.v1.schema.json` defines the bounded,
+  operations-display-only snapshot accepted by the administrator interface.
 - `scripts/lib/supabase-sync-profiles.mjs` maps product entities to guarded
   publication RPCs.
 - SQL under `scripts/enrichment/` owns the canonical/public schema and RPC
@@ -61,6 +68,16 @@ Until cutover, the app repository contains the legacy implementations for:
 These entrypoints remain temporary authorities. New reusable behavior belongs
 in the external pipeline repository; do not build a second app-local framework.
 
+The compatibility work also closes known cross-entity leaks in that temporary
+path: new queue schemas use entity-scoped identity, workers can claim one
+entity, reviewed-new processing resolves the exact canonical table and forwards
+the entity through scrape, QA, readiness, RPC, and guarded publication gates,
+and Taco payload fields match the Taco RPC rather than inheriting Pizza-only
+fields. An existing legacy SQLite queue is deliberately left unchanged for
+rolling-code compatibility; moving it to entity-scoped uniqueness requires an
+offline, backed-up migration after every old worker is stopped. These fixes
+make migration safer; they do not move execution out of this repository.
+
 ## Safety rules
 
 1. Discovery and enrichment are not publication authority.
@@ -82,6 +99,11 @@ read-only APizza FSQ shadow path. It cannot download a real FSQ release or write
 canonical, review, or public product data. APizza/Taco production remains on
 the legacy application path until source-by-source parity and rollback gates
 are complete.
+
+This repository now exposes the application side of the boundary: inert,
+entity-specific target inventories and a read-only, entity/lane-specific status
+contract. Pizza legacy status is the safe default. Taco status is disabled by
+default pending a live host inventory. No external apply profile is activated.
 
 ## Local verification
 

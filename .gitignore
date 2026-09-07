@@ -49,6 +49,7 @@ __pycache__/
 /scripts/.source-pipeline-taco-state.json
 /scripts/.source-pipeline-taco-last-report.json
 /scripts/.pipeline-alert-status.json
+/scripts/.pipeline-status/
 /scripts/.fsq-venv/
 /scripts/.fsq-portal-init.sql
 /data/source-samples/.hf-fsq-cache/

@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Antwohlf/apizzamichigan/blob/main/contracts/pipeline-status.v1.schema.json",
+  "title": "Application pipeline status snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "purpose",
+    "lane",
+    "bindings",
+    "profile",
+    "entity",
+    "partition",
+    "observedAt",
+    "publishedAt",
+    "producer",
+    "run",
+    "health",
+    "ui"
+  ],
+  "properties": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "map-data-pipeline.status" },
+        "version": { "const": 1 }
+      }
+    },
+    "purpose": { "const": "operations-display-only" },
+    "lane": { "enum": ["legacy", "shadow", "apply"] },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetContract",
+        "definitionDigest",
+        "profileDigest",
+        "catalogDigest",
+        "hostPolicyDigest",
+        "deploymentIdentity"
+      ],
+      "properties": {
+        "targetContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "digest"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "version": { "const": 1 },
+            "digest": { "$ref": "#/$defs/sha256Digest" }
+          }
+        },
+        "definitionDigest": { "$ref": "#/$defs/optionalSha256Digest" },
+        "profileDigest": { "$ref": "#/$defs/optionalSha256Digest" },
+        "catalogDigest": { "$ref": "#/$defs/optionalSha256Digest" },
+        "hostPolicyDigest": { "$ref": "#/$defs/optionalSha256Digest" },
+        "deploymentIdentity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        }
+      }
+    },
+    "profile": { "enum": ["apizzamichigan", "tacoboutmichigan"] },
+    "entity": { "enum": ["pizza", "taco"] },
+    "partition": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/,-]*$"
+    },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "repository", "component", "version", "commit"],
+      "properties": {
+        "kind": { "enum": ["legacy-app", "external-pipeline"] },
+        "repository": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "component": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "commit": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{40}|unavailable)$"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "mode", "state"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "mode": { "enum": ["observe", "preview", "apply"] },
+        "state": { "enum": ["running", "succeeded", "failed"] },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "issues"],
+      "properties": {
+        "state": { "enum": ["ok", "warn", "fail"] },
+        "issues": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "code", "count"],
+            "properties": {
+              "severity": { "enum": ["error", "warning"] },
+              "code": {
+                "enum": [
+                  "pipeline.operational-failure",
+                  "pipeline.operational-warning",
+                  "source.feeder-unavailable",
+                  "source.stale",
+                  "classifier.unavailable",
+                  "publication.unavailable"
+                ]
+              },
+              "count": { "type": "integer", "minimum": 1, "maximum": 1000000000 }
+            }
+          }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sourceFeeder": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state"],
+          "properties": {
+            "state": {
+              "enum": ["running", "idle", "stopped", "missing", "not_found", "unsupported", "unavailable", "unknown"]
+            }
+          }
+        },
+        "classifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state"],
+          "properties": {
+            "state": { "enum": ["ok", "warn", "fail", "unknown"] },
+            "backlog": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["candidates", "retryablePartial", "exhaustedPartial", "state"],
+              "properties": {
+                "candidates": { "$ref": "#/$defs/nonNegativeNumber" },
+                "retryablePartial": { "$ref": "#/$defs/nonNegativeNumber" },
+                "exhaustedPartial": { "$ref": "#/$defs/nonNegativeNumber" },
+                "state": {
+                  "enum": ["queued", "partial_retry_pending", "manual_review", "unfed", "clear", "unknown"]
+                },
+                "estimatedHours": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/nonNegativeNumber" },
+                    { "type": "null" }
+                  ]
+                },
+                "estimatedDays": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/nonNegativeNumber" },
+                    { "type": "null" }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "freshness": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "freshRatioPercent", "staleRows", "eligibleRows"],
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "freshRatioPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+              "staleRows": { "$ref": "#/$defs/nonNegativeNumber" },
+              "eligibleRows": { "$ref": "#/$defs/nonNegativeNumber" }
+            }
+          }
+        },
+        "sourceActivation": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "status", "execution", "lastSuccess"],
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "status": { "enum": ["ready", "disabled", "incomplete", "unknown"] },
+              "execution": { "enum": ["scheduler", "manual", "not-implemented"] },
+              "lastSuccess": {
+                "anyOf": [
+                  { "type": "string", "format": "date-time" },
+                  { "type": "null" }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "optionalSha256Digest": {
+      "anyOf": [
+        { "$ref": "#/$defs/sha256Digest" },
+        { "type": "null" }
+      ]
+    },
+    "nonNegativeNumber": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000000
+    }
+  }
+}

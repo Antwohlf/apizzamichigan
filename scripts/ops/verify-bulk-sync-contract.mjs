@@ -9,7 +9,9 @@ import {
   OVERWRITE_COLS,
   QA_DEFAULT_COLS,
   SUPABASE_BULK_SYNC_RPC,
+  syncColumnsForEntity,
 } from '../lib/supabase-sync-policy.mjs';
+import { supabaseSyncProfile } from '../lib/supabase-sync-profiles.mjs';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -19,6 +21,8 @@ const migrationPath = resolve(process.cwd(), 'scripts/enrichment/supabase-produc
 const migration = readFileSync(migrationPath, 'utf8');
 const repairMigrationPath = resolve(process.cwd(), 'scripts/enrichment/supabase-bulk-sync-rpc-migration.sql');
 const repairMigration = readFileSync(repairMigrationPath, 'utf8');
+const tacoMigration = readFileSync(resolve(process.cwd(), 'scripts/enrichment/supabase-taco-publication-migration.sql'), 'utf8');
+const guardedSyncBoundary = readFileSync(resolve(process.cwd(), 'scripts/lib/guarded-sync-entity-boundary.mjs'), 'utf8');
 const verificationSql = readFileSync(resolve(process.cwd(), 'scripts/enrichment/verify-supabase-bulk-sync-rpc.sql'), 'utf8');
 const searchMigrationPath = resolve(process.cwd(), 'scripts/enrichment/supabase-search-index-migration.sql');
 const searchMigration = readFileSync(searchMigrationPath, 'utf8');
@@ -65,6 +69,25 @@ for (const column of contractColumns) {
   const updated = new RegExp(`\\b${column}\\s*=\\s*CASE`, 'i').test(migration);
   assert(updated, `Bulk RPC update is missing sync column: ${column}.`);
 }
+const tacoProfile = supabaseSyncProfile('taco');
+assert(tacoMigration.includes(`CREATE OR REPLACE FUNCTION public.${tacoProfile.bulkRpc}(p_rows jsonb)`), 'Taco migration must define its entity-specific bulk RPC.');
+assert(/REVOKE ALL ON FUNCTION public\.apply_taco_places_sync_batch\(jsonb\) FROM PUBLIC/i.test(tacoMigration), 'Taco bulk RPC must not be public.');
+const tacoRecordShape = tacoMigration.match(/jsonb_to_record\(source\.item\) AS parsed\(([\s\S]*?)\n    \)\n  \)\n  UPDATE/)?.[1] || '';
+assert(tacoRecordShape, 'Taco bulk RPC record shape must be discoverable for contract checks.');
+const tacoContractColumns = [...new Set([
+  ...syncColumnsForEntity(OVERWRITE_COLS, 'taco'),
+  ...syncColumnsForEntity(CANONICAL_MIRROR_COLS, 'taco'),
+  ...syncColumnsForEntity(QA_DEFAULT_COLS, 'taco'),
+  'lifecycle_status',
+  'lifecycle_replaced_by_id',
+])];
+for (const column of tacoContractColumns) {
+  assert(new RegExp(`\\b${column}\\s+[a-z]+(?:\\s+jsonb)?\\b`, 'i').test(tacoRecordShape), `Taco RPC record shape is missing sync column: ${column}.`);
+  assert(new RegExp(`\\b${column}\\s*=\\s*CASE`, 'i').test(tacoMigration), `Taco RPC update is missing sync column: ${column}.`);
+}
+for (const excluded of ['created_at', 'menu_data', 'menu_parse_confidence', 'menu_parse_notes', 'menu_last_parsed_at', 'qa_status', 'qa_schema_version']) {
+  assert(!new RegExp(`\\b${excluded}\\s+[a-z]+`, 'i').test(tacoRecordShape), `Taco RPC must not parse excluded field: ${excluded}.`);
+}
 assert(/CREATE EXTENSION IF NOT EXISTS pg_trgm/i.test(searchMigration), 'Search migration must enable pg_trgm.');
 assert(/idx_taco_places_search_price/i.test(searchMigration), 'Taco search index definitions must remain covered by the search migration.');
 assert(/idx_pizza_places_search_name_trgm/i.test(searchMigration), 'Pizza search index definitions must remain covered by the search migration.');
@@ -80,7 +103,7 @@ assert(statusReport.includes("status: 'BLOCKED'"), 'Sync status report must expo
 assert(readinessReport.includes("sync.value.bulkRpc?.state === 'ready'"), 'Project readiness must require a ready bulk RPC.');
 assert(statusReport.includes("(requireBulkRpc || bulkRpc?.configured) && bulkRpc.state !== 'ready'"), 'Sync status must block when required bulk RPC is unavailable.');
 assert(statusReport.includes("arg === '--require-bulk-rpc'"), 'Sync status must support an explicit bulk RPC requirement.');
-assert(guardedSync.includes("'--require-bulk-rpc'"), 'Guarded sync must pass the explicit bulk RPC requirement.');
+assert(guardedSyncBoundary.includes("'--require-bulk-rpc'"), 'Guarded sync must pass the explicit bulk RPC requirement.');
 assert(guardedSync.includes('bulk RPC gate failed'), 'Guarded sync must fail before writes when bulk RPC is not ready.');
 assert(guardedSync.includes("step('Bulk RPC Gate')"), 'Guarded sync must report the bulk RPC gate explicitly.');
 const noWorkExit = guardedSync.indexOf('No rows to update; stopping cleanly');

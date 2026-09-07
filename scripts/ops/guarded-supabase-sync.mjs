@@ -9,6 +9,12 @@
 
 import { execFileSync } from 'child_process';
 import { supabaseSyncProfile } from '../lib/supabase-sync-profiles.mjs';
+import {
+  bulkRpcStatusArgs,
+  classificationQaArgs,
+  classifierHealthArgs,
+  syncReadinessArgs,
+} from '../lib/guarded-sync-entity-boundary.mjs';
 
 const NODE = process.execPath;
 
@@ -153,17 +159,6 @@ function syncArgs(options, { dryRun = false } = {}) {
   return args;
 }
 
-function qaArgs(options) {
-  return [
-    'scripts/ops/classification-qa-report.mjs',
-    ...(options.ids.length
-      ? ['--ids', options.ids.join(',')]
-      : ['--hours', String(options.hours), '--limit', '500']),
-    '--sample', String(options.sample),
-    '--json',
-  ];
-}
-
 function qaHardIssueIsRepairable(qa) {
   const repairable = qa.flags?.styleWithoutConfidence?.length || 0;
   return repairable > 0 && Object.entries(qa.flags || {}).every(([name, rows]) => {
@@ -177,8 +172,8 @@ function qaHardIssueIsRepairable(qa) {
 }
 
 function runQaWithRepair(options) {
-  let qa = run(NODE, qaArgs(options), { json: true });
-  for (let attempt = 0; attempt < 3 && qa.state === 'FAIL' && !options.ids.length && qaHardIssueIsRepairable(qa); attempt++) {
+  let qa = run(NODE, classificationQaArgs(options), { json: true });
+  for (let attempt = 0; attempt < 3 && options.entity === 'pizza' && qa.state === 'FAIL' && !options.ids.length && qaHardIssueIsRepairable(qa); attempt++) {
     console.log(`QA found ${qa.flags.styleWithoutConfidence.length} missing-confidence rows during concurrent processing; repairing and retrying.`);
     const repair = run(NODE, [
       'scripts/ops/repair-missing-classification-confidence.mjs',
@@ -188,7 +183,7 @@ function runQaWithRepair(options) {
       '--json',
     ], { json: true });
     console.log(`confidence repair: updated=${repair.rows_updated}`);
-    qa = run(NODE, qaArgs(options), { json: true });
+    qa = run(NODE, classificationQaArgs(options), { json: true });
   }
   return qa;
 }
@@ -196,14 +191,7 @@ function runQaWithRepair(options) {
 function verifyBulkRpc(options) {
   if (!options.bulkRpc) return null;
 
-  const report = run(NODE, [
-    'scripts/ops/supabase-sync-status-report.mjs',
-    '--hours', String(options.hours),
-    '--batch', '1',
-    '--sample', '1',
-    '--require-bulk-rpc',
-    '--json',
-  ], { json: true });
+  const report = run(NODE, bulkRpcStatusArgs(options), { json: true });
   const capability = report.bulkRpc || {};
   console.log(`bulk_rpc=${capability.state || 'unknown'}, available=${capability.available ?? 'unknown'}`);
   if (capability.state !== 'ready') {
@@ -228,7 +216,7 @@ async function main() {
   if (options.lifecycleOnly) console.log('Scope: lifecycle-only; no classifier or enrichment fields are eligible');
 
   step('Health Gate');
-  const health = run(NODE, ['scripts/ops/classifier-health-report.mjs', '--json'], { json: true });
+  const health = run(NODE, classifierHealthArgs(options.entity), { json: true });
   console.log(`state=${health.health.state}, completed_last_window=${health.queue?.recent?.completed ?? 'n/a'}, failed_last_window=${health.queue?.recent?.failed ?? 'n/a'}`);
   // Sync consumes already-classified local rows and never calls Ollama. A
   // transient inference/tunnel probe failure must not strand an otherwise
@@ -258,18 +246,7 @@ async function main() {
   }
 
   step('Readiness Gate');
-  const readiness = run(NODE, [
-    'scripts/ops/supabase-sync-readiness-report.mjs',
-    '--batch', String(options.batch),
-    '--sample', String(options.sample),
-    '--json',
-    ...(options.lifecycleOnly ? ['--lifecycle-only'] : []),
-    ...(options.ids.length
-      ? ['--ids', options.ids.join(',')]
-      : options.reconcile
-        ? ['--reconcile', '--checkpoint', options.checkpoint]
-      : ['--changed-since-hours', String(options.hours), '--only-classified', '--checkpoint', options.checkpoint]),
-  ], { json: true });
+  const readiness = run(NODE, syncReadinessArgs(options), { json: true });
   console.log(`state=${readiness.state}, would_update=${readiness.totals.wouldUpdate}, missing=${readiness.totals.missingSupabaseRows}, canonical_mirror_writes=${readiness.totals.canonicalMirrorWrites}`);
   const allowsReviewedNewInserts = options.insertMissingReviewedNew;
   const missingRowsOnlyWarning = readiness.state === 'WARN'
@@ -312,7 +289,7 @@ async function main() {
   console.log(writeOutput);
 
   step('Post Health Gate');
-  const postHealth = run(NODE, ['scripts/ops/classifier-health-report.mjs', '--json'], { json: true });
+  const postHealth = run(NODE, classifierHealthArgs(options.entity), { json: true });
   console.log(`state=${postHealth.health.state}, completed_last_window=${postHealth.queue?.recent?.completed ?? 'n/a'}, failed_last_window=${postHealth.queue?.recent?.failed ?? 'n/a'}`);
   if (postHealth.health.issues?.length) {
     throw new Error(`post health gate failed: ${JSON.stringify(postHealth.health.issues)}`);

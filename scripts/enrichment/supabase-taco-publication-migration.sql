@@ -64,7 +64,7 @@ BEGIN
     SELECT item AS patch, parsed.*
     FROM jsonb_array_elements(p_rows) AS source(item)
     CROSS JOIN LATERAL jsonb_to_record(source.item) AS parsed(
-      id bigint, created_at timestamptz, updated_at timestamptz,
+      id bigint, updated_at timestamptz,
       enrichment_status text, last_enriched_at timestamptz,
       enrichment_agent text, enrichment_run_id integer, address_source text,
       scrape_method text, scrape_notes text,

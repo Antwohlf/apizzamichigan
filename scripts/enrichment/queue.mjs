@@ -66,7 +66,7 @@ export class JobQueue {
         created_at TEXT DEFAULT (datetime('now')),
         started_at TEXT,
         completed_at TEXT,
-        UNIQUE(job_type, osm_id)
+        UNIQUE(job_type, place_type, osm_id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_jobs_pending ON jobs(job_type, status, priority DESC, created_at)
@@ -157,7 +157,7 @@ export class JobQueue {
     const stmt = this.db.prepare(`
       INSERT INTO jobs (job_type, osm_id, place_type, priority, data)
       VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(job_type, osm_id) DO NOTHING
+      ON CONFLICT DO NOTHING
     `)
 
     const calculatedPriority = priority ?? calculatePriority(data?.state)
@@ -173,7 +173,7 @@ export class JobQueue {
     const stmt = this.db.prepare(`
       INSERT INTO jobs (job_type, osm_id, place_type, priority, data)
       VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(job_type, osm_id) DO NOTHING
+      ON CONFLICT DO NOTHING
     `)
 
     const insertMany = this.db.transaction((jobs) => {
@@ -192,7 +192,9 @@ export class JobQueue {
   /**
    * Atomically claim the next available job
    */
-  claim(jobType, workerId) {
+  claim(jobType, workerId, { placeType = null } = {}) {
+    const placeTypeFilter = placeType ? 'AND place_type = ?' : ''
+    const claimParams = placeType ? [workerId, jobType, placeType] : [workerId, jobType]
     // Select and claim in one SQLite write statement. A read-then-update
     // transaction can retain a stale WAL snapshot while another worker
     // commits, producing SQLITE_BUSY_SNAPSHOT even with BEGIN IMMEDIATE.
@@ -207,6 +209,7 @@ export class JobQueue {
         SELECT id
         FROM jobs
         WHERE job_type = ?
+          ${placeTypeFilter}
           AND status = 'pending'
           AND attempts < max_attempts
         ORDER BY
@@ -216,7 +219,7 @@ export class JobQueue {
         LIMIT 1
       )
       RETURNING id, osm_id, place_type, data, attempts
-    `).get(workerId, jobType))
+    `).get(...claimParams))
 
     if (!job) return null
 
@@ -398,10 +401,15 @@ export class JobQueue {
   /**
    * Recover orphaned jobs (from crashed workers)
    */
-  recoverOrphaned(timeoutMinutes = 10, { failJobTypes = ['menu_parse'], requireDetachedWorker = false, jobTypes = null } = {}) {
+  recoverOrphaned(timeoutMinutes = 10, {
+    failJobTypes = ['menu_parse'],
+    requireDetachedWorker = false,
+    jobTypes = null,
+    placeTypes = null,
+  } = {}) {
     const recover = this.db.transaction(() => {
       const orphaned = this.db.prepare(`
-        SELECT jobs.id, jobs.job_type, jobs.worker_id,
+        SELECT jobs.id, jobs.job_type, jobs.place_type, jobs.worker_id,
                workers.status AS worker_status, workers.current_job_id AS worker_current_job_id
         FROM jobs
         LEFT JOIN workers ON workers.worker_id = jobs.worker_id
@@ -412,9 +420,12 @@ export class JobQueue {
       const scoped = Array.isArray(jobTypes) && jobTypes.length
         ? orphaned.filter(job => jobTypes.includes(job.job_type))
         : orphaned
-      const candidates = requireDetachedWorker
-        ? scoped.filter(job => job.worker_status !== 'working' || Number(job.worker_current_job_id) !== Number(job.id))
+      const entityScoped = Array.isArray(placeTypes) && placeTypes.length
+        ? scoped.filter(job => placeTypes.includes(job.place_type))
         : scoped
+      const candidates = requireDetachedWorker
+        ? entityScoped.filter(job => job.worker_status !== 'working' || Number(job.worker_current_job_id) !== Number(job.id))
+        : entityScoped
 
       if (!candidates.length) return 0
 
