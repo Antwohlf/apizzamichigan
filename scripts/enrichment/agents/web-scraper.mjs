@@ -19,6 +19,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import 'dotenv/config'
 import { normalizeWebsiteUrl } from '../../lib/website-url.mjs'
+import { enqueueClassificationHandoff } from '../../lib/classification-handoff.mjs'
+import { enrichmentEntity } from '../../lib/enrichment-entity.mjs'
 
 const CONCURRENT_FETCHES = 5
 
@@ -84,10 +86,15 @@ function logCantScrape(entry) {
 class WebScraper {
   lastRequeueAt = 0
 
+  queueEntityClause() {
+    return this.placeType ? { sql: ' AND place_type = ?', params: [this.placeType] } : { sql: '', params: [] }
+  }
+
   cleanupUnclaimablePending() {
     // If a scrape job is "pending" but attempts are exhausted, it will never be claimable.
     // Flip to failed so the queue doesn't look stuck.
     try {
+      const scope = this.queueEntityClause()
       return this.queue.db
         .prepare(
           `
@@ -96,9 +103,10 @@ class WebScraper {
           WHERE job_type='scrape'
             AND status='pending'
             AND attempts >= max_attempts
+            ${scope.sql}
           `
         )
-        .run().changes
+        .run(...scope.params).changes
     } catch {
       return 0
     }
@@ -111,9 +119,10 @@ class WebScraper {
     if (now - this.lastRequeueAt < REQUEUE_INTERVAL_MS) return { requeued: 0, cleaned: 0 }
 
     // Don't keep requeueing if we already have a healthy buffer.
+    const scope = this.queueEntityClause()
     const pending = this.queue.db
-      .prepare("SELECT COUNT(*) n FROM jobs WHERE job_type='scrape' AND status='pending'")
-      .get().n
+      .prepare(`SELECT COUNT(*) n FROM jobs WHERE job_type='scrape' AND status='pending'${scope.sql}`)
+      .get(...scope.params).n
 
     const cleaned = this.cleanupUnclaimablePending()
 
@@ -130,6 +139,7 @@ class WebScraper {
         WHERE job_type='scrape'
           AND status='failed'
           AND last_error IS NOT NULL
+          ${scope.sql}
 
           -- include transient-ish
           AND (
@@ -153,7 +163,7 @@ class WebScraper {
         LIMIT ?
         `
       )
-      .all(REQUEUE_BATCH)
+      .all(...scope.params, REQUEUE_BATCH)
 
     if (!candidates.length) {
       this.lastRequeueAt = now
@@ -186,9 +196,10 @@ class WebScraper {
     return { requeued: candidates.length, cleaned }
   }
 
-  constructor(workerId, { maxJobs = 0 } = {}) {
+  constructor(workerId, { maxJobs = 0, placeType = null } = {}) {
     this.workerId = workerId
     this.maxJobs = maxJobs
+    this.placeType = placeType
     this.queue = getQueue()
     this.pgClient = null
     this.running = false
@@ -455,7 +466,7 @@ class WebScraper {
    */
   async processJob(job) {
     // Get the website URL (and some metadata) from the database
-    const table = job.placeType === 'pizza' ? 'pizza_places' : 'taco_places'
+    const table = enrichmentEntity(job.placeType).table
     const result = await this.pgClient.query(`
       SELECT website_url, state, style, price_range, menu_data
       FROM ${table}
@@ -505,10 +516,9 @@ class WebScraper {
         // Update database with cached data
         await this.updateDb(job.osmId, job.placeType, cached.extracted_data)
 
-        // Handoff: scraped -> classify (pizza-only for now)
-        if (job.placeType === 'pizza' && (style == null && priceRange == null)) {
-          this.queue.addJob('classify', job.osmId, job.placeType, { state })
-        }
+        // Handoff: both product entities share the classifier worker, while
+        // their queue identity and canonical table remain entity-scoped.
+        enqueueClassificationHandoff(this.queue, job, { state, style, priceRange })
 
         // Slowlane: enqueue menu parsing (pizza-only) if we don't already have menu_data and slowlane isn't paused
         if (job.placeType === 'pizza' && menuData == null && !this.queue.isPaused('menu_parse')) {
@@ -534,10 +544,8 @@ class WebScraper {
         if (extracted) {
           await this.updateDb(job.osmId, job.placeType, extracted)
 
-          // Handoff: scraped -> classify (pizza-only for now)
-          if (job.placeType === 'pizza' && (style == null && priceRange == null)) {
-            this.queue.addJob('classify', job.osmId, job.placeType, { state })
-          }
+          // Handoff to the entity-aware classifier.
+          enqueueClassificationHandoff(this.queue, job, { state, style, priceRange })
 
           // Slowlane: enqueue menu parsing (pizza-only) if we don't already have menu_data and slowlane isn't paused
           if (job.placeType === 'pizza' && menuData == null && !this.queue.isPaused('menu_parse')) {
@@ -560,6 +568,7 @@ class WebScraper {
             const extracted = this.extractFromHtml(browserResult.html, browserResult.finalUrl)
             await this.saveToCache(url, browserResult.finalUrl, browserResult.statusCode, extracted)
             await this.updateDb(job.osmId, job.placeType, extracted, 'browser')
+            enqueueClassificationHandoff(this.queue, job, { state, style, priceRange })
             this.queue.complete(job.id, { ...extracted, scrape_method: 'browser' })
             this.stats.completed++
             return
@@ -609,7 +618,7 @@ class WebScraper {
   async updateDb(osmId, placeType, data, scrapeMethod = 'fetch') {
     if (!data) return
 
-    const table = placeType === 'pizza' ? 'pizza_places' : 'taco_places'
+    const table = enrichmentEntity(placeType).table
 
     await this.pgClient.query(`
       UPDATE ${table}
@@ -689,7 +698,11 @@ class WebScraper {
       while (this.running) {
         try {
           if (Date.now() - lastOrphanRecoveryAt >= 60000) {
-            const recovered = this.queue.recoverOrphaned(10, { requireDetachedWorker: true, jobTypes: ['scrape'] })
+            const recovered = this.queue.recoverOrphaned(10, {
+              requireDetachedWorker: true,
+              jobTypes: ['scrape'],
+              placeTypes: this.placeType ? [this.placeType] : null,
+            })
             if (recovered > 0) console.log(`[${this.workerId}] Recovered ${recovered} detached stale scrape job(s)`)
             lastOrphanRecoveryAt = Date.now()
           }
@@ -697,7 +710,7 @@ class WebScraper {
           // Periodically requeue failed jobs before claiming (so it runs even when processing)
           this.maybeRequeueFailedBatch()
 
-          const job = this.queue.claim('scrape', this.workerId)
+          const job = this.queue.claim('scrape', this.workerId, { placeType: this.placeType })
 
           if (job) {
             this.currentJob = job
@@ -766,6 +779,7 @@ Usage:
 Options:
   --worker-id <id>   Worker id to register in the SQLite queue.
   --max-jobs <n>     Stop after processing n scrape jobs. Defaults to SCRAPE_MAX_JOBS or unlimited.
+  --place-type <name> Restrict claims and queue maintenance to pizza or taco.
   -h, --help         Show this help text without starting a worker.
 
 Environment:
@@ -780,8 +794,12 @@ const workerIdIdx = args.indexOf('--worker-id')
 const workerId = workerIdIdx >= 0 ? args[workerIdIdx + 1] : `scraper-${Date.now()}`
 const maxJobsIdx = args.indexOf('--max-jobs')
 const maxJobs = maxJobsIdx >= 0 ? parseInt(args[maxJobsIdx + 1], 10) : parseInt(process.env.SCRAPE_MAX_JOBS || '0', 10)
+const placeTypeIdx = args.indexOf('--place-type')
+const placeType = placeTypeIdx >= 0 ? String(args[placeTypeIdx + 1] || '').trim().toLowerCase() : null
+if (placeType !== null && !['pizza', 'taco'].includes(placeType)) throw new Error('Invalid --place-type; use pizza or taco')
 
 const scraper = new WebScraper(workerId, {
-  maxJobs: Number.isFinite(maxJobs) && maxJobs > 0 ? maxJobs : 0
+  maxJobs: Number.isFinite(maxJobs) && maxJobs > 0 ? maxJobs : 0,
+  placeType,
 })
 scraper.run().catch(console.error)

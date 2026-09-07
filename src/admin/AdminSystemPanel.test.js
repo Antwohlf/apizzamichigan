@@ -274,6 +274,30 @@ describe('AdminSystemPanel lifecycle actions', () => {
     expect(screen.getByText(/even when the job queue is empty/i)).toBeInTheDocument()
   })
 
+  test('shows pipeline status even when service-client-backed source status fails', async () => {
+    window.location.hash = '#pipeline-status'
+    fetchMock.mockImplementation(url => {
+      if (url.includes('/pipeline-status')) {
+        return Promise.resolve(jsonResponse({
+          available: true,
+          state: 'ok',
+          label: 'Pipeline boundary is readable',
+          authorityLabel: 'Legacy runtime observation',
+        }))
+      }
+      if (url.includes('/source-provenance')) {
+        return Promise.resolve({ ok: false, text: async () => 'Supabase service role not configured' })
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(<AdminSystemPanel entity="pizza" />)
+
+    expect(await screen.findByText('Pipeline boundary is readable')).toBeInTheDocument()
+    expect(screen.getByText(/Legacy runtime observation/i)).toBeInTheDocument()
+    expect(screen.getByText(/Supabase service role not configured/i)).toBeInTheDocument()
+  })
+
   test('shows source freshness from the pipeline snapshot', async () => {
     window.location.hash = '#pipeline-status'
     fetchMock.mockImplementation((url, options = {}) => {
