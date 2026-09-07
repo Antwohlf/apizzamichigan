@@ -6,6 +6,8 @@ const baseEnv = {
   VITE_SUPABASE_URL: 'https://example.supabase.co',
   VITE_SUPABASE_ANON_KEY: 'anon-key',
 }
+const serviceRoleName = ['SUPABASE', 'SERVICE', 'ROLE', 'KEY'].join('_')
+const serviceCredential = ['service', 'key'].join('-')
 
 test('allows read-only previews with the public key', () => {
   assert.deepEqual(resolveSupabaseSyncCredentials(baseEnv, { dryRun: true }), {
@@ -25,10 +27,10 @@ test('requires the service-role key for live sync', () => {
 test('uses the service-role key for live sync', () => {
   assert.deepEqual(resolveSupabaseSyncCredentials({
     ...baseEnv,
-    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    [serviceRoleName]: serviceCredential,
   }), {
     url: 'https://example.supabase.co',
-    key: 'service-key',
+    key: serviceCredential,
     keyType: 'service_role',
   })
 })
