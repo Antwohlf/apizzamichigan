@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from 'fs';
 import { basename, join, resolve } from 'path';
 import pg from 'pg';
 import Database from 'better-sqlite3';
+import { guardedPublishArgs, reviewedNewTarget } from '../lib/reviewed-new-entity-boundary.mjs';
 
 const NODE = process.execPath;
 const FOREGROUND_SCRAPE_LIMIT = Number.parseInt(process.env.REVIEW_BATCH_FOREGROUND_SCRAPE_LIMIT || '25', 10);
@@ -161,9 +162,9 @@ function preflightArgs(args, ids, { apply = false } = {}) {
   return out;
 }
 
-async function fetchPlaces(placeIds) {
+async function fetchPlaces(placeIds, entity) {
   if (!placeIds.length) return [];
-  const table = 'pizza_places';
+  const table = reviewedNewTarget(entity).canonicalTable;
   const client = new pg.Client(dbConfig());
   await client.connect();
   try {
@@ -185,7 +186,7 @@ function queueDb() {
   return new Database(dbPath, { readonly: true, fileMustExist: true });
 }
 
-function classifyStatuses(osmIds) {
+function classifyStatuses(osmIds, entity) {
   if (!osmIds.length) return [];
   const db = queueDb();
   try {
@@ -193,9 +194,10 @@ function classifyStatuses(osmIds) {
       SELECT id, osm_id, status, worker_id, attempts, started_at, completed_at, last_error
       FROM jobs
       WHERE job_type='classify'
+        AND place_type = ?
         AND osm_id IN (${osmIds.map(() => '?').join(',')})
       ORDER BY osm_id, id
-    `).all(...osmIds);
+    `).all(entity, ...osmIds);
   } finally {
     db.close();
   }
@@ -205,12 +207,12 @@ function hasClassificationFields(place) {
   return Boolean(place.style || place.price_range || place.style_confidence);
 }
 
-async function waitForClassify(placeIds, timeoutMs) {
+async function waitForClassify(placeIds, entity, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const places = await fetchPlaces(placeIds);
+    const places = await fetchPlaces(placeIds, entity);
     const osmIds = places.map(row => row.google_place_id).filter(Boolean);
-    const statuses = classifyStatuses(osmIds);
+    const statuses = classifyStatuses(osmIds, entity);
     const completed = new Set(statuses.filter(row => row.status === 'completed').map(row => row.osm_id));
     const placesReady = places.every(place => (
       place.google_place_id
@@ -219,8 +221,8 @@ async function waitForClassify(placeIds, timeoutMs) {
     if (places.length && placesReady) return { places, statuses };
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
-  const places = await fetchPlaces(placeIds);
-  const statuses = classifyStatuses(places.map(row => row.google_place_id).filter(Boolean));
+  const places = await fetchPlaces(placeIds, entity);
+  const statuses = classifyStatuses(places.map(row => row.google_place_id).filter(Boolean), entity);
   throw new Error(`Timed out waiting for classify jobs: ${JSON.stringify(statuses)}`);
 }
 
@@ -311,6 +313,7 @@ async function main() {
       'scripts/enrichment/agents/web-scraper.mjs',
       '--worker-id', `scraper-reviewed-new-${Date.now()}`,
       '--max-jobs', String(placeIds.length),
+      '--place-type', args.entity,
     ], { timeout: Math.max(120000, placeIds.length * 60000) }));
   }
 
@@ -318,7 +321,7 @@ async function main() {
     console.log('No scrape jobs were handed off; skipping classify wait.');
   } else if (args.waitClassify) {
     printStep('Wait Classify');
-    const { places } = await waitForClassify(placeIds, args.classifierTimeoutMs);
+    const { places } = await waitForClassify(placeIds, args.entity, args.classifierTimeoutMs);
     for (const place of places) {
       console.log(`${place.id} ${place.name} ${place.style || ''} ${place.price_range || ''} ${place.style_confidence || ''}`);
     }
@@ -326,14 +329,7 @@ async function main() {
 
   if (args.publish) {
     printStep('Guarded Publish');
-    console.log(runNode([
-      'scripts/ops/guarded-supabase-sync.mjs',
-      '--ids', placeIds.join(','),
-      '--batch', String(placeIds.length),
-      '--max-batches', '1',
-      '--insert-missing-reviewed-new',
-      '--apply',
-    ], { timeout: 240000 }));
+    console.log(runNode(guardedPublishArgs(args.entity, placeIds), { timeout: 240000 }));
   }
 }
 

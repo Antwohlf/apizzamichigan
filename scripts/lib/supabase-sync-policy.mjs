@@ -109,6 +109,7 @@ export const LOCAL_SYNC_COLS = [
 
 export const ENTITY_EXCLUDED_SYNC_COLS = Object.freeze({
   taco: Object.freeze([
+    'created_at',
     'menu_data', 'menu_parse_confidence', 'menu_parse_notes', 'menu_last_parsed_at',
     'qa_status', 'qa_schema_version',
   ]),
@@ -294,8 +295,9 @@ export function buildSupabasePayload(local, current, {
   }
 
   if (!lifecycleOnly) {
-    if (current.qa_status == null) payload.qa_status = 'unreviewed';
-    if (current.qa_schema_version == null) payload.qa_schema_version = 1;
+    const qaColumns = new Set(syncColumnsForEntity(QA_DEFAULT_COLS, entity));
+    if (qaColumns.has('qa_status') && current.qa_status == null) payload.qa_status = 'unreviewed';
+    if (qaColumns.has('qa_schema_version') && current.qa_schema_version == null) payload.qa_schema_version = 1;
   }
 
   if (Object.keys(payload).length <= 1) return null;
@@ -341,10 +343,11 @@ export function buildSupabaseInsertPayload(local, { nowIso = new Date().toISOStr
     if (value !== null && value !== undefined) payload[col] = value;
   }
 
-  if (payload.qa_status == null) payload.qa_status = 'unreviewed';
-  if (payload.qa_schema_version == null) payload.qa_schema_version = 1;
+  const qaColumns = new Set(syncColumnsForEntity(QA_DEFAULT_COLS, entity));
+  if (qaColumns.has('qa_status') && payload.qa_status == null) payload.qa_status = 'unreviewed';
+  if (qaColumns.has('qa_schema_version') && payload.qa_schema_version == null) payload.qa_schema_version = 1;
   if (!('updated_at' in payload)) payload.updated_at = nowIso;
-  if (!('created_at' in payload)) payload.created_at = nowIso;
+  if (syncColumnsForEntity(['created_at'], entity).length && !('created_at' in payload)) payload.created_at = nowIso;
 
   return payload;
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 
 import { pathViolations, textViolations } from './public-repo-audit.mjs'
@@ -11,7 +13,27 @@ test('rejects generated data and local runtime paths', () => {
   assert.ok(pathViolations('output/browser.png').length)
   assert.ok(pathViolations('reports/source-review/export.json').length)
   assert.ok(pathViolations('scripts/queue.sqlite-wal').length)
+  assert.ok(pathViolations('scripts/.pipeline-status/pizza/legacy.json').length)
   assert.deepEqual(pathViolations('data/source-samples/fixtures/fsq-os-places-pizza-fixture.json'), [])
+})
+
+test('rejects pipeline status snapshots at default and custom host paths', () => {
+  const snapshot = JSON.stringify({
+    schema: { name: 'map-data-pipeline.status', version: 1 },
+    purpose: 'operations-display-only',
+    bindings: { deploymentIdentity: 'private-host-runtime' },
+  })
+  assert.ok(pathViolations('scripts/.pipeline-status/taco/shadow.json').length)
+  assert.ok(textViolations('runtime/pizza/legacy.json', snapshot).length)
+  assert.ok(textViolations('runtime/pizza/legacy.json', snapshot, { release: true }).length)
+  assert.deepEqual(
+    textViolations('config/pipeline-boundary.json', readFileSync(resolve('config/pipeline-boundary.json'), 'utf8')),
+    [],
+  )
+  assert.deepEqual(
+    textViolations('contracts/pipeline-status.v1.schema.json', readFileSync(resolve('contracts/pipeline-status.v1.schema.json'), 'utf8')),
+    [],
+  )
 })
 
 test('permits the blank environment template and rejects real environment files', () => {
