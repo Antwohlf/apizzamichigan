@@ -2530,6 +2530,8 @@ app.get('/api/admin/pipeline-status', requireSignedAdminSession, (req, res) => {
           label: 'Pipeline status disabled',
           detail: selection.reason === 'external_apply_disabled'
             ? 'External apply remains disabled; an apply-lane status cannot be authoritative.'
+            : selection.reason === 'pipeline_lane_unregistered'
+              ? 'This pipeline lane has not been registered with the application.'
             : `Pipeline status has not been enabled for ${entity}.`,
           checkedAt: null,
         },
