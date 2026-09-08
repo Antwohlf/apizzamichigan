@@ -10,17 +10,12 @@ export function reviewedNewTarget(entity) {
 }
 
 export function guardedPublishArgs(entity, placeIds) {
-  reviewedNewTarget(entity)
+  const selectedEntity = String(entity || '').trim().toLowerCase()
+  reviewedNewTarget(selectedEntity)
   if (!Array.isArray(placeIds) || !placeIds.length || placeIds.some(id => !Number.isInteger(Number(id)) || Number(id) <= 0)) {
     throw new Error('Guarded publish requires positive place IDs')
   }
-  return [
-    'scripts/ops/guarded-supabase-sync.mjs',
-    '--entity', entity,
-    '--ids', placeIds.join(','),
-    '--batch', String(placeIds.length),
-    '--max-batches', '1',
-    '--insert-missing-reviewed-new',
-    '--apply',
-  ]
+  const workspace = '$' + '{FOOD_PIPELINE_WORKSPACE:?Set FOOD_PIPELINE_WORKSPACE to the private external runtime workspace}'
+  const command = `cd "${workspace}" && node scripts/ops/guarded-supabase-sync.mjs --entity ${selectedEntity} --ids ${placeIds.join(',')} --batch ${placeIds.length} --max-batches 1 --insert-missing-reviewed-new --apply`
+  throw new Error(`Guarded publication is externally owned; run on the pipeline host: ${command}`)
 }

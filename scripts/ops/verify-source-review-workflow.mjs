@@ -7,10 +7,10 @@
  * review decisions stay conservative.
  */
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 
 const SERVER = readFileSync('server/index.js', 'utf8');
-const SYNC = readFileSync('scripts/sync-local-to-supabase.mjs', 'utf8');
+const FOOD_RUNTIME_BOUNDARY = JSON.parse(readFileSync('config/food-runtime-boundary.json', 'utf8'));
 const ADMIN = [
   readFileSync('src/admin/AdminSourceProvenancePanel.js', 'utf8'),
   readFileSync('src/admin/sourceReviewTriage.js', 'utf8'),
@@ -78,11 +78,18 @@ function main() {
     'filters.push(`id = ANY($${values.length}::bigint[])`)',
   ], 'server review workflow');
 
-  includesAll(SYNC, [
-    'insertMissingReviewedNew',
-    "match_method = 'reviewed_new_import'",
-    'reviewedNewImportedIds.has(Number(local.id))',
-  ], 'reviewed-new Supabase sync guard');
+  assert(FOOD_RUNTIME_BOUNDARY.runtimeRepository === 'https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline', 'food publisher must name the external runtime repository');
+  assert(FOOD_RUNTIME_BOUNDARY.runtimePackage === 'packages/food-runtime', 'food publisher must name the external runtime package');
+  assert(Array.isArray(FOOD_RUNTIME_BOUNDARY.scheduledJobsOwnedBySite) && FOOD_RUNTIME_BOUNDARY.scheduledJobsOwnedBySite.length === 0, 'site must not own scheduled food jobs');
+  assert(!existsSync('scripts/sync-local-to-supabase.mjs'), 'migrated Supabase publisher must not remain in the app checkout');
+  includesAll(ADMIN, [
+    'FOOD_PIPELINE_WORKSPACE',
+    'private external runtime workspace',
+    'node scripts/sync-local-to-supabase.mjs --entity ${selectedEntity}',
+    '--insert-missing-reviewed-new',
+    'dryRun:',
+    'apply:',
+  ], 'external reviewed-new publication handoff');
 
   includesAll(AUTO_LINK, [
     "srq.review_kind = 'ambiguous'",
