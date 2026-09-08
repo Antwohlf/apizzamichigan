@@ -7,15 +7,12 @@ The current iMac operating guide lives in:
 This file remains as a short pointer because older notes and commands reference
 `scripts/enrichment/SETUP.md`.
 
-Canonical active pipeline code:
+Active workers are in `packages/food-runtime` of the separate
+[pipeline repository](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline).
+Use that repository's production entrypoint and private workspace. Do not start
+workers, a coordinator, or a publication job from this website checkout.
 
-- `scripts/enrichment/agents/llm-classifier.mjs`
-- `scripts/enrichment/agents/coordinator.mjs`
-- `scripts/enrichment/agents/osm-extractor.mjs`
-- `scripts/enrichment/agents/web-scraper.mjs`
-- `scripts/enrichment/queue.mjs`
-- `scripts/sync-local-to-supabase.mjs`
-- `scripts/ops/home-status-report.mjs`
-- `scripts/ops/stale-worker-cleanup.mjs`
-
-Archived legacy pipeline code is under `scripts/enrichment/archive/`.
+The former coordinator, its keepalive, and the manual classifier batch launcher
+are retired; the external runtime's individually supervised jobs replace them.
+Remaining files here are application-owned schemas/policy and historical manual
+tools being retired. Archived code is not a supported execution path.

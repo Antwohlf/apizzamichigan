@@ -40,6 +40,10 @@ function main() {
   for (const contract of ['admin-session-boundary.cjs', 'pipeline-status-boundary.cjs', 'food-runtime-publication-status.cjs']) assert(server.includes(contract), `server must use ${contract}`);
   const publication = read('shared/food-runtime-publication-status.cjs');
   assert(publication.includes('readFoodRuntimePublicationStatus') && publication.includes('foodRuntimePublicationStatusResponse'), 'publication status module must expose read-only status helpers');
+  const legacyKeepalive = read('scripts/enrichment/keepalive.mjs');
+  assert(legacyKeepalive.includes('packages/food-runtime')
+    && !legacyKeepalive.includes('node:child_process')
+    && !legacyKeepalive.includes('spawn('), 'legacy keepalive must fail closed and point to the external runtime');
 
   const templates = readdirSync(LAUNCHD_DIR).filter(name => name.endsWith('.plist.template')).sort();
   assert(templates.every(name => name === 'com.apizzamichigan.pipeline-health.plist.template'), `pipeline launchd templates remain: ${templates.filter(name => name !== 'com.apizzamichigan.pipeline-health.plist.template').join(', ')}`);
