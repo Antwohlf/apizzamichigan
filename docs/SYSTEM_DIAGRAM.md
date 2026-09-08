@@ -1,5 +1,10 @@
 # APizzaMichigan: How the System Works
 
+> The scheduled compatibility runtime now lives in the external pipeline
+> repository under `packages/food-runtime`. App-local script paths shown below
+> describe retained compatibility interfaces and should not be used to install
+> production services from this checkout.
+
 This is the plain-language view of the project. It shows where information comes
 from, how it gets checked, and what eventually appears on the public map.
 
@@ -63,7 +68,7 @@ path.
 
 ```mermaid
 graph TD
-    OP["MacBook Operator<br/>Tailscale SSH"] --> IMAC["Michigan iMac<br/>example-host"]
+    OP["MacBook Operator<br/>Tailscale SSH"] --> IMAC["Michigan iMac<br/>external food-runtime checkout"]
 
     subgraph "iMac Process Control"
         LAUNCHD["launchd<br/>com.apizzamichigan.classifier"]
@@ -157,8 +162,8 @@ graph TD
 | status report | `scripts/ops/home-status-report.mjs` |
 | stale worker cleanup | `scripts/ops/stale-worker-cleanup.mjs` |
 | bounded classifier report | `scripts/ops/classifier-batch-report.mjs` |
-| classifier | `scripts/enrichment/agents/llm-classifier.mjs` |
-| queue | `scripts/enrichment/queue.mjs` |
-| guarded sync | `scripts/ops/auto-guarded-supabase-sync.mjs` |
-| direct sync engine | `scripts/sync-local-to-supabase.mjs` |
+| classifier | external `packages/food-runtime/scripts/enrichment/agents/llm-classifier.mjs` |
+| queue | external `packages/food-runtime/scripts/enrichment/queue.mjs` |
+| guarded sync | external `packages/food-runtime/scripts/ops/auto-guarded-supabase-sync.mjs` |
+| direct sync engine | external `packages/food-runtime/scripts/sync-local-to-supabase.mjs` |
 | archived legacy pipeline | `scripts/enrichment/archive/` |

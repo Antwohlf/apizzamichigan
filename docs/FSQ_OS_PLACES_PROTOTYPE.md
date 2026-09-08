@@ -1,5 +1,10 @@
 # Foursquare OS Places Prototype
 
+> This app-local workflow is retained for compatibility and historical
+> verification. Current production-compatible FSQ processing is owned by
+> `packages/food-runtime` in the external pipeline repository; the generalized
+> FSQ shadow remains read-only.
+
 This is the next broad source evaluation after the OSM provenance backfill.
 
 Goal:

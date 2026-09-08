@@ -96,11 +96,14 @@ because the address is unchanged.
 
 ## Current implementation boundary
 
-`config/entity-profiles.json` is the reuse boundary. It identifies what varies
-by entity. The canonical contract remains shared; source pipelines may be
-enabled per entity as their adapters and schemas become production-ready.
-Each profile declares this explicitly through `source_pipeline.enabled` and,
-when enabled, the path to its pipeline configuration. Pizza is operationally
-active today. Taco has a canonical table and public/admin surface, but its
-`source_pipeline.enabled` flag is deliberately false until it has its own
-validated policy and runbook.
+`config/entity-profiles.json` remains the app-owned product boundary. It
+identifies the canonical tables, taxonomies, and source policies that vary by
+entity. Scheduled execution is owned by `packages/food-runtime` in the external
+pipeline repository, where Pizza and Taco have separate profiles, source
+configuration, checkpoints, and output identity. Shared workers retain the
+entity on every queue job. This extracted compatibility runtime preserves the
+legacy processing model; reusable replacement adapters still require their own
+profile-specific parity and cutover evidence.
+
+The app-local pipeline copies remain only where administrator behavior or
+release verification depends on them. They are not a second production owner.

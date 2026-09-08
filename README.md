@@ -12,8 +12,8 @@ with separate data, filters, classification policy, and visual design.
 - Public place suggestions and an authenticated editorial review portal.
 - Product-owned PostgreSQL/Supabase schemas, migrations, read views, and
   guarded publication contracts.
-- Legacy source and enrichment jobs that remain authoritative only while the
-  external pipeline migration is in progress.
+- Product-owned pipeline contracts and temporary compatibility files still
+  used by the administrator server and release verification.
 
 ## Data pipeline boundary
 
@@ -23,14 +23,20 @@ That repository owns reusable execution, adapter, state, artifact, and receipt
 mechanics. This repository retains APizza/Taco business policy, canonical
 schema, human review, and final publication authority.
 
-The projects have separate repositories and this application now publishes
-versioned, entity-specific target inventories plus a read-only status contract.
-Those contracts are deliberately inert: the external runtime currently
-supports a read-only APizza FSQ shadow and cannot write product data. Production
-source, enrichment, review, and publication jobs therefore remain on the legacy
-application path until each workload completes a no-dual-writer cutover. See
-[the pipeline boundary](docs/PIPELINE_BOUNDARY.md) for the implemented boundary,
-remaining coupling, and activation rules.
+The scheduled Pizza/Taco compatibility jobs now run from
+`packages/food-runtime` in the external repository. That package preserves the
+existing database and review behavior while the reusable executor is adopted
+incrementally. This runtime relocation does not grant write authority to the
+generalized shadow executor: external apply remains disabled there, and the
+application still owns every database write contract and publication decision.
+
+This repository retains a bounded set of compatibility scripts because the
+administrator server still executes the local sync-readiness report and exposes
+an app-local FSQ report command, the administrator UI still presents legacy
+operator commands, and release verification imports shared product-policy
+helpers. Those copies are not the production scheduler owner. See [the pipeline
+boundary](docs/PIPELINE_BOUNDARY.md) for the exact ownership, remaining
+coupling, and activation rules.
 
 ## Local development
 

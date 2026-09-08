@@ -1,5 +1,10 @@
 # Enrichment Pipeline Safeguards
 
+> Production runtime commands now belong to `packages/food-runtime` in the
+> external pipeline repository. App-checkout commands below are retained as
+> compatibility and rollback references; do not use them to install or start
+> scheduled production jobs.
+
 The APizzaMichigan iMac pipeline is moving to a production-safe model:
 Tailscale SSH for operator access, launchd for service supervision, and guarded
 Supabase writes.
