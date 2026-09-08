@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
 import pg from 'pg';
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
 const options = parseArgs(process.argv.slice(2));
+
+if (options.apply) {
+  const workspace = '$' + '{FOOD_PIPELINE_WORKSPACE:?Set FOOD_PIPELINE_WORKSPACE to the private external runtime workspace}';
+  const jsonFlag = options.json ? ' --json' : '';
+  console.error([
+    'Reviewed-new publication is externally owned. Run on the pipeline host:',
+    `cd "${workspace}" && node scripts/ops/reconcile-reviewed-new-supabase.mjs --limit ${options.limit} --apply${jsonFlag}`,
+  ].join(' '));
+  process.exit(1);
+}
 
 function parseArgs(argv) {
   const options = { limit: 25, apply: false, json: false };
@@ -17,7 +26,7 @@ function parseArgs(argv) {
     else if (/^\d+$/.test(arg)) options.limit = Number(arg);
     else if (arg === '--help') {
       console.log('Usage: node scripts/ops/reconcile-reviewed-new-supabase.mjs [--limit n] [--apply] [--json]');
-      console.log('Default mode is read-only. --apply is required to insert missing reviewed-new rows.');
+      console.log('Default mode is read-only. App-checkout --apply fails closed and points to the external pipeline runtime.');
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -70,21 +79,11 @@ const result = {
   missing_count: missingIds.length,
   selected_count: missing.length,
   missing_ids: missing,
-  mode: options.apply ? 'apply' : 'dry-run',
+  mode: 'dry-run',
 };
 if (options.json) console.log(JSON.stringify(result));
 else {
   console.log(`reviewed-new Supabase reconciliation: ${ids.length} classified candidates, ${missingIds.length} missing`);
   if (missing.length) console.log(`missing ids: ${missing.join(',')}`);
 }
-if (!missing.length || !options.apply) process.exit(0);
-
-console.log(`reviewed-new Supabase reconciliation: inserting ${missing.length} rows`);
-execFileSync(process.execPath, [
-  'scripts/ops/guarded-supabase-sync.mjs',
-  '--ids', missing.join(','),
-  '--batch', String(missing.length),
-  '--max-batches', '1',
-  '--insert-missing-reviewed-new',
-  '--apply',
-], { stdio: 'inherit', timeout: 1200000 });
+process.exit(0);
