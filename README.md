@@ -30,11 +30,11 @@ incrementally. This runtime relocation does not grant write authority to the
 generalized shadow executor: external apply remains disabled there, and the
 application still owns every database write contract and publication decision.
 
-This repository retains a bounded set of compatibility scripts because the
-administrator server still executes the local sync-readiness report and exposes
-an app-local FSQ report command, the administrator UI still presents legacy
-operator commands, and release verification imports shared product-policy
-helpers. Those copies are not the production scheduler owner. See [the pipeline
+The administrator server reads external publication-status files; it does not
+execute pipeline workers or publication commands. Operator handoffs explicitly
+target the private external runtime workspace. Some historical manual tools and
+shared product-policy helpers remain during cleanup, but they are not the
+production scheduler owner. See [the pipeline
 boundary](docs/PIPELINE_BOUNDARY.md) for the exact ownership, remaining
 coupling, and activation rules.
 
