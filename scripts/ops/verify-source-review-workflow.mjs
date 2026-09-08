@@ -263,7 +263,7 @@ function main() {
     'Preflight source',
     'Preflight report',
     'reportFile: importPreflightReportFile',
-    'Local enrichment handoff',
+    'External runtime enrichment handoff',
     'reviewedNewEnrichmentCommands(imported, { entity })',
     'Selected queue export command',
     'selectedQueueExportCommand',
