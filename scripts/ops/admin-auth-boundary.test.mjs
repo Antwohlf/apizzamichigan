@@ -11,6 +11,8 @@ const sessionEnv = ['ADMIN', 'SESSION', 'SECRET'].join('_')
 const serviceRoleEnv = ['SUPABASE', 'SERVICE', 'ROLE', 'KEY'].join('_')
 const pizzaLaneEnv = ['PIPELINE', 'STATUS', 'PIZZA', 'LANE'].join('_')
 const tacoLaneEnv = ['PIPELINE', 'STATUS', 'TACO', 'LANE'].join('_')
+const foodStatusRootEnv = ['FOOD', 'PIPELINE', 'STATUS', 'ROOT'].join('_')
+const foodStatusMaxAgeEnv = ['FOOD', 'PIPELINE', 'STATUS', 'MAX', 'AGE', 'MINUTES'].join('_')
 const testPassword = 'test-admin-password-value'
 const testSigningValue = 'test-admin-signing-value-with-entropy'
 
@@ -26,10 +28,14 @@ test('status needs a real expiring session but not a Supabase service client', a
     service: process.env[serviceRoleEnv],
     pizzaLane: process.env[pizzaLaneEnv],
     tacoLane: process.env[tacoLaneEnv],
+    foodStatusRoot: process.env[foodStatusRootEnv],
+    foodStatusMaxAge: process.env[foodStatusMaxAgeEnv],
   }
   process.env[passwordEnv] = testPassword
   process.env[sessionEnv] = testSigningValue
   process.env[serviceRoleEnv] = ''
+  process.env[foodStatusRootEnv] = ''
+  process.env[foodStatusMaxAgeEnv] = '360'
   process.env.NODE_ENV = 'test'
 
   const app = require('../../server/index.js')
@@ -45,6 +51,8 @@ test('status needs a real expiring session but not a Supabase service client', a
       [serviceRoleEnv, previous.service],
       [pizzaLaneEnv, previous.pizzaLane],
       [tacoLaneEnv, previous.tacoLane],
+      [foodStatusRootEnv, previous.foodStatusRoot],
+      [foodStatusMaxAgeEnv, previous.foodStatusMaxAge],
     ]) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
@@ -91,4 +99,20 @@ test('status needs a real expiring session but not a Supabase service client', a
 
   const unknownEntity = await fetch(`${origin}/api/admin/pipeline-status?entity=burger`, { headers })
   assert.equal(unknownEntity.status, 400)
+
+  for (const entity of ['pizza', 'taco']) {
+    const publicationResponse = await fetch(`${origin}/api/admin/supabase-sync-readiness?entity=${entity}`, { headers })
+    assert.equal(publicationResponse.status, 200)
+    assert.match(publicationResponse.headers.get('cache-control') || '', /no-store/)
+    const publication = (await publicationResponse.json()).data
+    assert.deepEqual(Object.keys(publication), ['available', 'state', 'label', 'detail', 'generatedAt'])
+    assert.equal(publication.available, false)
+    assert.equal(publication.state, 'not_configured')
+    assert.equal(publication.label, 'External status not configured')
+    assert.match(publication.detail, /runs externally/)
+    assert.doesNotMatch(publication.detail, /disabled|pizza_places/i)
+  }
+
+  const unknownPublicationEntity = await fetch(`${origin}/api/admin/supabase-sync-readiness?entity=burger`, { headers })
+  assert.equal(unknownPublicationEntity.status, 400)
 })

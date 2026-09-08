@@ -1,7 +1,11 @@
 # Home Server Ops
 
-APizzaMichigan home-server operations now use direct Tailscale SSH to the
-Michigan iMac.
+> **Compatibility reference:** production jobs now run from the external
+> repository's `packages/food-runtime` workspace. The application-checkout
+> paths below are historical reconciliation examples, not current service
+> installation instructions.
+
+Home-server access uses direct Tailscale SSH to the Michigan iMac.
 
 ## Access
 

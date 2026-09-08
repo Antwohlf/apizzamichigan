@@ -13,8 +13,8 @@ public/              browser assets and aggregate dashboard snapshot
 api/                 serverless-style public API handlers
 server/              authenticated local editorial API
 config/              product profiles, taxonomies, and data authority policy
-scripts/enrichment/  product schema, review, and legacy worker code
-scripts/ops/         product verification and temporary legacy operations
+scripts/enrichment/  product schema plus compatibility code still used by app checks
+scripts/ops/         product verification and app/server compatibility reports
 docs/                public architecture and contributor documentation
 ```
 
@@ -24,20 +24,24 @@ APizza/Taco business policy, human review decisions, and publication authority.
 ## External pipeline-owned areas
 
 The external repository owns reusable adapters, execution, admission, retry,
-checkpoint, artifact, receipt, and profile-isolation mechanics. Product source
-selection and transformations remain separate profile components even when
-they share an adapter implementation.
+checkpoint, artifact, receipt, and profile-isolation mechanics. It also owns
+the extracted `packages/food-runtime` compatibility runtime used by the current
+scheduled Pizza/Taco jobs. Product source selection and transformations remain
+separate profile components even when they share an adapter implementation.
 
 The application must integrate with that runtime only through versioned
 database, status, and receipt contracts. Browser and server code must not
 import pipeline runtime packages directly.
 
-## Temporary legacy code
+## Residual compatibility code
 
-The current production source scheduler and enrichment workers still live under
-`scripts/`. They remain authoritative until each source/effect completes a
-shadow comparison, rollback rehearsal, and fenced no-dual-writer cutover.
-Their presence is migration debt, not the desired repository boundary.
+Production jobs no longer launch from this repository. Files under `scripts/`
+that overlap the extracted runtime remain only because application release
+checks import them, the administrator server executes or presents bounded
+reports, or the administrator UI presents legacy command handoffs. Their
+presence is migration debt, not shared runtime ownership. Remove each copy
+after its app-facing caller has a versioned external contract and corresponding
+regression coverage.
 
 The inactive code under `scripts/enrichment/archive/` is historical reference
 only and must not be used for current operations.

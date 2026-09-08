@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 
 const config = JSON.parse(readFileSync('config/source-pipeline.json', 'utf8'));
 const policy = JSON.parse(readFileSync('config/source-policy.json', 'utf8'));
-const plist = readFileSync('infra/local/launchd/com.apizzamichigan.source-pipeline.plist.template', 'utf8');
 const runner = readFileSync('scripts/ops/run-source-pipeline.mjs', 'utf8');
 const osmSummary = readFileSync('scripts/lib/osm-refresh-summary.mjs', 'utf8');
 const osmSource = readFileSync('scripts/ops/export-osm-source.mjs', 'utf8');
@@ -210,14 +209,12 @@ if (!runner.includes('OSM_PIPELINE_TIMEOUT_MS') || !runner.includes('1200000')) 
 if (!osmTiles.includes('detached: false') || !osmTiles.includes("child.kill('SIGKILL')")) {
   throw new Error('OSM tile workers must stay attached and be killed directly on timeout');
 }
-if (!plist.includes('run-source-pipeline.mjs --apply') || !plist.includes('<integer>900</integer>') || !plist.includes('<key>OVERPASS_QUERY_TIMEOUT_SECONDS</key>') || !plist.includes('<string>90</string>') || !plist.includes('<key>OSM_TILE_TIMEOUT_MS</key>') || !plist.includes('<string>180000</string>')) {
-  throw new Error('launchd template must run the applied pipeline every 15 minutes');
-}
+// Active scheduler behavior is verified in the external runtime repository.
 console.log(JSON.stringify({
   status: 'ok',
   sources: required,
   caps: { per_run: config.limits.new_places_per_run, per_day: config.limits.new_places_per_day },
   policy_version: policy.version,
   capabilities: Object.fromEntries(required.map(key => [key, config.sources[key].capabilities])),
-  schedule: 'every 15 minutes',
+  scope: 'retained compatibility tools; active scheduler owned externally',
 }));
