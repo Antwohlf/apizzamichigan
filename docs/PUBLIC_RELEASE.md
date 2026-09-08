@@ -17,8 +17,12 @@ to publish.
 - The existing modified development checkout is preserved separately.
 - The app/pipeline interface is explicit: entity-specific target inventories
   are inert, external write allowlists are empty, and administrator status is a
-  bounded display-only contract. This is a code boundary, not a production
-  cutover.
+  bounded display-only contract. Pizza and Taco production jobs now run from
+  the separate pipeline repository, with successful source and publication
+  cycles verified for both products.
+- The live queue's entity-identity migration completed offline with a verified
+  backup, preserving all jobs and retry history. The old worker schedules and
+  duplicate active worker implementations have been removed from this tree.
 
 ## Remaining gates
 
@@ -32,11 +36,8 @@ to publish.
   personal-review, and OSM-derived record files.
 - Copy concrete iMac runbooks and service definitions to private host storage,
   verify them against the live host, then sanitize their checked-in examples.
-- Reconcile the live Taco authority and every active legacy writer before
-  selecting any external status or apply lane.
-- Stop every legacy queue consumer, back up the SQLite queue, and complete its
-  entity-identity schema migration offline; ordinary worker startup must never
-  rewrite the live queue under old binaries.
+- Keep artifact-executor apply lanes separate from trusted-host production
+  authority; do not enable an inert lane merely because host jobs have moved.
 - Make Supabase grants and row-level security reproducible from migrations and
   verify the public client with `anon` integration tests.
 - Remove or server-route the legacy browser-side administrator writes.
