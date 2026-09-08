@@ -44,6 +44,10 @@ function main() {
   assert(legacyKeepalive.includes('packages/food-runtime')
     && !legacyKeepalive.includes('node:child_process')
     && !legacyKeepalive.includes('spawn('), 'legacy keepalive must fail closed and point to the external runtime');
+  const retiredSyncAgent = read('scripts/enrichment/agents/sync-agent.mjs');
+  assert(retiredSyncAgent.includes('packages/food-runtime')
+    && !retiredSyncAgent.includes('node:child_process')
+    && !retiredSyncAgent.includes('spawn('), 'retired sync agent must fail closed and point to the external runtime');
 
   const templates = readdirSync(LAUNCHD_DIR).filter(name => name.endsWith('.plist.template')).sort();
   assert(templates.every(name => name === 'com.apizzamichigan.pipeline-health.plist.template'), `pipeline launchd templates remain: ${templates.filter(name => name !== 'com.apizzamichigan.pipeline-health.plist.template').join(', ')}`);
