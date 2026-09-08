@@ -20,6 +20,28 @@ describe('syncHumanSummary', () => {
       tone: 'ready',
     }))
   })
+
+  test('presents the external compatibility publisher state without claiming local readiness', () => {
+    expect(syncHumanSummary({
+      state: 'succeeded',
+      label: 'Last publish succeeded',
+      detail: 'The external Pizza compatibility publisher completed successfully.',
+    })).toEqual({
+      title: 'Last publish succeeded',
+      detail: 'The external Pizza compatibility publisher completed successfully.',
+      tone: 'ready',
+    })
+
+    expect(syncHumanSummary({
+      state: 'not_configured',
+      label: 'External status not configured',
+      detail: 'Taco publication runs externally; configure the status root.',
+    })).toEqual(expect.objectContaining({
+      title: 'External status not configured',
+      detail: expect.stringContaining('runs externally'),
+      tone: 'unknown',
+    }))
+  })
 })
 
 describe('AdminSystemPanel lifecycle actions', () => {

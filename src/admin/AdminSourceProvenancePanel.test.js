@@ -5,6 +5,11 @@ import {
   selectedReviewEligibilitySummary,
 } from './AdminSourceProvenancePanel'
 
+const externalPipelinePrefix = [
+  'cd "$',
+  '{FOOD_PIPELINE_WORKSPACE:?Set FOOD_PIPELINE_WORKSPACE to the private external runtime workspace}" && ',
+].join('')
+
 describe('reviewedNewSyncCommands', () => {
   test('builds guarded exact-id Supabase sync commands for imported reviewed-new rows', () => {
     expect(reviewedNewSyncCommands([
@@ -14,8 +19,8 @@ describe('reviewedNewSyncCommands', () => {
       { place_id: null },
     ])).toEqual({
       ids: [181051, 181052],
-      dryRun: 'node scripts/sync-local-to-supabase.mjs --ids 181051,181052 --insert-missing-reviewed-new --batch 2 --max-batches 1 --dry-run',
-      apply: 'node scripts/sync-local-to-supabase.mjs --ids 181051,181052 --insert-missing-reviewed-new --batch 2 --max-batches 1',
+      dryRun: `${externalPipelinePrefix}node scripts/sync-local-to-supabase.mjs --entity pizza --ids 181051,181052 --insert-missing-reviewed-new --batch 2 --max-batches 1 --dry-run`,
+      apply: `${externalPipelinePrefix}node scripts/sync-local-to-supabase.mjs --entity pizza --ids 181051,181052 --insert-missing-reviewed-new --batch 2 --max-batches 1`,
     })
   })
 
@@ -23,13 +28,19 @@ describe('reviewedNewSyncCommands', () => {
     expect(reviewedNewSyncCommands([{ review_id: 1 }, { place_id: 'not-a-number' }])).toBeNull()
   })
 
-  test('does not build pizza-only Supabase commands for taco reviewed-new rows', () => {
+  test('builds a Taco-scoped publication handoff in the external runtime workspace', () => {
     expect(reviewedNewSyncCommands([
       { place_id: 101 },
     ], { entity: 'taco' })).toEqual({
-      unsupported: true,
-      reason: 'Reviewed-new Supabase publish handoff is currently implemented for pizza_places only.',
+      ids: [101],
+      dryRun: `${externalPipelinePrefix}node scripts/sync-local-to-supabase.mjs --entity taco --ids 101 --insert-missing-reviewed-new --batch 1 --max-batches 1 --dry-run`,
+      apply: `${externalPipelinePrefix}node scripts/sync-local-to-supabase.mjs --entity taco --ids 101 --insert-missing-reviewed-new --batch 1 --max-batches 1`,
     })
+  })
+
+  test('rejects unsupported publication entities', () => {
+    expect(() => reviewedNewSyncCommands([{ place_id: 101 }], { entity: 'burger' }))
+      .toThrow('Unsupported food pipeline entity: burger')
   })
 })
 
@@ -42,14 +53,14 @@ describe('reviewedNewEnrichmentCommands', () => {
     ])).toEqual({
       ids: [182004, 182005],
       scrape: [
-        'node scripts/enrichment/populate-scrape-from-db.mjs --type pizza --ids 182004,182005 --id-prefix all_the_places: --priority-boost 100000 --limit 2',
+        `${externalPipelinePrefix}node scripts/enrichment/populate-scrape-from-db.mjs --type pizza --ids 182004,182005 --id-prefix all_the_places: --priority-boost 100000 --limit 2`,
       ],
       classify: [
-        "node scripts/enrichment/populate-classify-from-db.mjs --type pizza --state '*' --ids 182004,182005 --id-prefix all_the_places: --priority-boost 100000 --limit 2",
+        `${externalPipelinePrefix}node scripts/enrichment/populate-classify-from-db.mjs --type pizza --state '*' --ids 182004,182005 --id-prefix all_the_places: --priority-boost 100000 --limit 2`,
       ],
       deterministic: {
-        dryRun: 'node scripts/ops/apply-deterministic-classification.mjs --ids 182004,182005 --id-prefix all_the_places:',
-        apply: 'node scripts/ops/apply-deterministic-classification.mjs --ids 182004,182005 --id-prefix all_the_places: --apply',
+        dryRun: `${externalPipelinePrefix}node scripts/ops/apply-deterministic-classification.mjs --ids 182004,182005 --id-prefix all_the_places:`,
+        apply: `${externalPipelinePrefix}node scripts/ops/apply-deterministic-classification.mjs --ids 182004,182005 --id-prefix all_the_places: --apply`,
       },
     })
   })
@@ -65,13 +76,20 @@ describe('reviewedNewEnrichmentCommands', () => {
     ], { entity: 'taco' })).toEqual({
       ids: [91, 92],
       scrape: [
-        'node scripts/enrichment/populate-scrape-from-db.mjs --type taco --ids 91,92 --id-prefix all_the_places: --priority-boost 100000 --limit 2',
+        `${externalPipelinePrefix}node scripts/enrichment/populate-scrape-from-db.mjs --type taco --ids 91,92 --id-prefix all_the_places: --priority-boost 100000 --limit 2`,
+      ],
+      classify: [
+        `${externalPipelinePrefix}node scripts/enrichment/populate-classify-from-db.mjs --type taco --state '*' --ids 91,92 --id-prefix all_the_places: --priority-boost 100000 --limit 2`,
       ],
       unsupported: {
-        classify: 'populate-classify-from-db.mjs currently rejects non-pizza datasets.',
         deterministic: 'apply-deterministic-classification.mjs is currently pizza_places only.',
       },
     })
+  })
+
+  test('rejects unsupported enrichment entities', () => {
+    expect(() => reviewedNewEnrichmentCommands([{ place_id: 91 }], { entity: 'burger' }))
+      .toThrow('Unsupported food pipeline entity: burger')
   })
 })
 

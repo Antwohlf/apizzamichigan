@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "runtimeRepository": "https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline",
+  "runtimePackage": "packages/food-runtime",
+  "products": ["apizzamichigan", "tacoboutmichigan"],
+  "scheduledJobsOwnedBySite": [],
+  "publicationStatus": {
+    "access": "read-only",
+    "rootEnvironmentVariable": "FOOD_PIPELINE_STATUS_ROOT",
+    "unconfiguredBehavior": "not_configured"
+  },
+  "backups": {
+    "owner": "external-runtime",
+    "targets": ["postgres", "sqlite_queue"],
+    "verification": "sha256-and-sqlite-integrity"
+  },
+  "legacyTools": "Retained for migration history and manual compatibility; not scheduled or invoked by the website."
+}

@@ -154,6 +154,11 @@ export default function AdminHomePanel({ entity, navigate }) {
     Number(syncReadiness?.wouldUpdate) || 0,
   )
   const protectedFieldConflicts = Number(syncReadiness?.protectedFieldConflicts) || 0
+  const hasPendingPublishCounts = Boolean(syncReadiness && [
+    'pendingAfterCheckpoint',
+    'wouldUpdate',
+    'protectedFieldConflicts',
+  ].some(field => Object.prototype.hasOwnProperty.call(syncReadiness, field)))
 
   return (
     <div className="admin-content">
@@ -229,7 +234,7 @@ export default function AdminHomePanel({ entity, navigate }) {
             <p className="admin-eyebrow">Public map</p>
             <h2 id="home-publishing-heading">Publishing status</h2>
             <p>{syncReadiness?.detail || 'Checking whether local changes are ready to reach the public map.'}</p>
-            {syncReadiness ? (
+            {hasPendingPublishCounts ? (
               <p className="admin-system-status__meta">
                 {pendingPublishCount
                   ? `${formatCount(pendingPublishCount)} local update${pendingPublishCount === 1 ? '' : 's'} waiting to publish.`

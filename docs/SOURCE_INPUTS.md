@@ -1,5 +1,9 @@
 # Source Inputs
 
+> Scheduled source acquisition now runs from `packages/food-runtime` in the
+> external pipeline repository. Local script paths in this document describe
+> retained compatibility/admin workflows, not production scheduler ownership.
+
 This is the input contract for adding more source data without overbuilding the
 schema or importing unreviewed facts.
 

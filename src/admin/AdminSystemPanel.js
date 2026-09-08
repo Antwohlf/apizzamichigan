@@ -51,6 +51,17 @@ export const syncHumanSummary = readiness => {
     }
   }
 
+  const externalStates = new Set(['running', 'succeeded', 'skipped', 'failed', 'not_configured', 'missing', 'stale', 'unavailable'])
+  if (externalStates.has(readiness.state)) {
+    return {
+      title: readiness.label || 'External publication status',
+      detail: readiness.detail || 'The external compatibility-runtime publication status needs review.',
+      tone: readiness.state === 'succeeded' ? 'ready'
+        : readiness.state === 'failed' ? 'blocked'
+          : 'unknown',
+    }
+  }
+
   return {
     title: 'Publication needs attention',
     detail: 'The local pipeline is available, but the public publishing status needs review.',
@@ -248,6 +259,11 @@ export default function AdminSystemPanel({ entity }) {
   const blockedCount = Math.max(0, Number(preflight?.rowsInspected || 0) - Number(preflight?.candidateReady || 0))
   const coordinateConflictCount = Number(preflight?.readinessCounts?.find?.(row => row.readiness === 'duplicate_accepted_source_coordinate')?.rows || 0)
   const syncSummary = syncHumanSummary(syncReadiness)
+  const hasSyncQueueCounts = Boolean(syncReadiness && [
+    'pendingAfterCheckpoint',
+    'wouldUpdate',
+    'protectedFieldConflicts',
+  ].some(field => Object.prototype.hasOwnProperty.call(syncReadiness, field)))
   const coverageRegions = basicFieldCoverage?.scope?.length
     ? basicFieldCoverage.scope
     : Object.keys(basicFieldCoverage?.byState || {})
@@ -335,7 +351,7 @@ export default function AdminSystemPanel({ entity }) {
               <p className="admin-eyebrow">Publishing</p>
               <h2 id="sync-status-heading">{syncSummary.title}</h2>
               <p>{syncSummary.detail}</p>
-              {syncReadiness ? (
+              {hasSyncQueueCounts ? (
                 <p className="admin-system-status__meta">
                   {Number(syncReadiness.pendingAfterCheckpoint || syncReadiness.wouldUpdate || 0)
                     ? `${formatCount(Math.max(Number(syncReadiness.pendingAfterCheckpoint) || 0, Number(syncReadiness.wouldUpdate) || 0))} local update${Math.max(Number(syncReadiness.pendingAfterCheckpoint) || 0, Number(syncReadiness.wouldUpdate) || 0) === 1 ? '' : 's'} waiting.`
@@ -345,7 +361,7 @@ export default function AdminSystemPanel({ entity }) {
                     : ''}
                 </p>
               ) : null}
-              {syncReadiness ? <p className="admin-system-status__meta">{syncRunSummary(syncReadiness.lastRun)}</p> : null}
+              {syncReadiness?.lastRun ? <p className="admin-system-status__meta">{syncRunSummary(syncReadiness.lastRun)}</p> : null}
               {syncReadiness?.detail ? (
                 <details className="admin-system-status__technical">
                   <summary>Technical details</summary>

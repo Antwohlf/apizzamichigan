@@ -4,14 +4,19 @@
 
 This repository owns the APizzaMichigan and TacoBoutMichigan web application,
 their canonical data model, the human review experience, and the guarded public
-publication contract. It also temporarily contains the legacy production
-source scheduler and enrichment workers.
+publication contract. Residual compatibility scripts remain here only where
+the application server, administrator UI, or release verification still uses
+them.
 
 Reusable execution infrastructure is developed in the public
 [Map Data Aggregation and Enhancement Pipeline](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline).
-That repository currently provides shared contracts, orchestration primitives,
-state and artifact stores, adapters, and a read-only APizza FSQ shadow. It has
-no authority to write this application's canonical or public data.
+That repository provides shared contracts, orchestration primitives, state and
+artifact stores, adapters, and a read-only APizza FSQ shadow. Its
+`packages/food-runtime` compatibility package is also the launch owner for the
+scheduled Pizza/Taco acquisition, enrichment, and guarded-publication jobs. The
+compatibility package preserves the established app-owned database contracts;
+it is distinct from granting the generalized executor authority to write this
+application's canonical or public data.
 
 The repositories now have separate codebases. This application also owns two
 distinct, versioned target inventories and a bounded status-snapshot contract.
@@ -19,11 +24,13 @@ The administrator interface reads only a selected Pizza or Taco status lane
 through that contract; a status document is display-only and cannot authorize
 or start pipeline work.
 
-The production runtime is not cut over. Legacy source, enrichment, review, and
-publication entrypoints still execute from this repository and remain
-authoritative for their current scopes. The external pipeline has no write
-authority, and neither app-owned target inventory represents an executable
-external-write grant.
+Production scheduling has moved out of the application checkout to the
+external repository's extracted compatibility runtime. The retained app-local
+copies are not production entrypoints. The generalized pipeline still has no
+write authority, and neither app-owned target inventory represents an
+executable external-write grant. Runtime-host evidence and service definitions
+remain private operational records rather than claims inferred from either
+repository.
 
 ## Ownership
 
@@ -45,7 +52,9 @@ The pipeline repository owns:
 - execution, admission, retry, checkpoint, artifact, and receipt mechanics;
 - reusable normalization, matching, review-event, and worker scaffolding;
 - profile-isolated runtime identity and resource budgets;
-- deployment-independent validation and dry-run/shadow execution.
+- deployment-independent validation and dry-run/shadow execution;
+- the extracted `packages/food-runtime` compatibility launcher and runtime
+  implementations used by the current scheduled Pizza/Taco jobs.
 
 Product-specific source selection and transformations live in distinct APizza,
 Taco, and BuildHere.city profiles. Sharing an adapter never implies sharing a
@@ -95,13 +104,17 @@ checkpoint is captured before the new owner can apply. A shadow comparison,
 complete rollback bundle, restore rehearsal, and observation window are
 required. Two writers must never own the same target scope concurrently.
 
-Until a source passes that sequence, the app-local legacy path remains
-authoritative. OSM moves after the simpler source adapters because it currently
-feeds shared queues and has the widest identity surface.
+The compatibility-runtime relocation does not waive this invariant. Until an
+individual source or effect is replaced by a generalized adapter, its extracted
+compatibility implementation remains authoritative. OSM moves after the
+simpler source adapters because it feeds shared queues and has the widest
+identity surface.
 
 ## What is separated now
 
 - Repository ownership and reusable scaffolding.
+- Scheduled compatibility-runtime launch ownership; production jobs no longer
+  launch from the application checkout.
 - App-owned Pizza and Taco target identities and field inventories.
 - Entity- and lane-isolated observational status files and admin presentation.
 - Explicit fail-closed registration state for every status lane; only the
@@ -113,14 +126,28 @@ feeds shared queues and has the widest identity surface.
 
 ## What remains coupled
 
-- The production schedulers and workers still launch app-local scripts.
-- Their checkpoints, SQLite queue, source-review state, and host services have
-  not moved to pipeline-owned state stores.
+- The administrator server still exposes an app-local FSQ adapter command and
+  executes the app-local Supabase readiness report. The administrator UI also
+  renders local legacy enrichment and publication commands. Those call sites
+  must be replaced by a versioned command/status boundary before their
+  compatibility files can be removed.
+- App release verifiers still inspect copied runtime implementations, launchd
+  templates, and shared policy helpers. Moving those assertions to a
+  cross-repository contract is a separate cleanup slice.
+- The Pizza `legacy` status lane remains registered to the app producer
+  identity. Runtime launch relocation does not silently re-register that lane;
+  the admin status view must stay fail-closed until a separately verified
+  producer-contract change is made.
+- The extracted runtime still uses the legacy SQLite/PostgreSQL state formats,
+  source-review tables, and guarded publisher. Moving launch ownership is not
+  the same as adopting the generalized artifact/state executor.
 - The existing iMac queue still needs a stop-the-world, backed-up schema
   migration after all old workers are unloaded. Until then its legacy uniqueness
   rule cannot store the same source identity for both products.
-- Publication still uses the legacy app publisher and broad legacy credential;
-  no narrow external writer role is provisioned or enabled.
-- The live iMac service inventory and Taco authority have not been verified.
+- Publication still uses the extracted compatibility publisher and its legacy
+  credential boundary; no generalized external writer role is provisioned or
+  enabled.
+- Live service and post-cutover evidence must be maintained and verified in the
+  private host record.
 - The external profiles remain non-deployable until their exact profile,
   catalog, host-policy, and target digests are bound in a deployment manifest.
