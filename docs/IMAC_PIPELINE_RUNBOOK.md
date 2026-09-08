@@ -1,6 +1,12 @@
 # iMac Pipeline Runbook
 
-This is the APizzaMichigan home-runner playbook for the Michigan iMac.
+> **Compatibility reference:** scheduled Pizza/Taco jobs now launch from
+> `packages/food-runtime` in the external pipeline repository. Do not install
+> or repoint production services from this application checkout. The commands
+> below are retained temporarily for host reconciliation and must be translated
+> to the private runtime workspace before use.
+
+This was the APizzaMichigan home-runner playbook for the Michigan iMac.
 
 ## Current Operating Model
 

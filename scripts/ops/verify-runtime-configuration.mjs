@@ -1,49 +1,25 @@
 #!/usr/bin/env node
-/**
- * Read-only deployment and runtime configuration contract check.
- *
- * This validates checked-in templates and entrypoints only. It never reads or
- * prints .env values and never contacts launchd, Postgres, Ollama, or Supabase.
- */
+/** Read-only contract check for the application-owned runtime boundary. */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
 const LAUNCHD_DIR = join(ROOT, 'infra/local/launchd');
-const REQUIRED_SCRIPTS = [
-  'scripts/ops/classifier-health-report.mjs',
-  'scripts/ops/pipeline-alert-report.mjs',
-  'scripts/ops/write-pipeline-status.mjs',
-  'scripts/ops/auto-guarded-supabase-sync.mjs',
-  'scripts/ops/run-source-pipeline.mjs',
-  'scripts/ops/source-activation-report.mjs',
-  'scripts/ops/reconcile-classifier-queue.mjs',
-  'scripts/ops/feed-classifier-retries.mjs',
-  'scripts/ops/verify-canonical-contract.mjs',
-  'scripts/enrichment/agents/llm-classifier.mjs',
-  'scripts/enrichment/agents/web-scraper.mjs',
-  'scripts/enrichment/slowlane/menu-parse-worker.mjs',
-  'scripts/ops/process-reviewed-new-batch.mjs',
-  'scripts/ops/create-local-backup.mjs',
-  'scripts/ops/verify-pipeline-boundary-contract.mjs',
-];
-const REQUIRED_BOUNDARY_FILES = [
+const REQUIRED_FILES = [
+  'server/index.js',
+  'shared/admin-session-boundary.cjs',
+  'shared/pipeline-status-boundary.cjs',
+  'shared/food-runtime-publication-status.cjs',
+  'config/food-runtime-boundary.json',
   'config/pipeline-boundary.json',
   'contracts/pipeline-status.v1.schema.json',
   'contracts/pipeline-targets/apizza-pipeline-write-contract.v1.json',
   'contracts/pipeline-targets/taco-pipeline-write-contract.v1.json',
-  'shared/admin-session-boundary.cjs',
-  'shared/pipeline-status-boundary.cjs',
 ];
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
-
-function read(path) {
-  return readFileSync(join(ROOT, path), 'utf8');
-}
+function assert(condition, message) { if (!condition) throw new Error(message); }
+function read(path) { return readFileSync(join(ROOT, path), 'utf8'); }
 
 function main() {
   assert(existsSync(join(ROOT, 'package.json')), 'package.json is missing');
@@ -51,90 +27,34 @@ function main() {
   for (const script of ['build', 'typecheck', 'start:server']) {
     assert(typeof packageJson.scripts?.[script] === 'string', `package.json is missing ${script}`);
   }
+  for (const path of REQUIRED_FILES) assert(existsSync(join(ROOT, path)), `required app contract is missing: ${path}`);
 
-  for (const path of REQUIRED_SCRIPTS) {
-    assert(existsSync(join(ROOT, path)), `required runtime entrypoint is missing: ${path}`);
-  }
-  for (const path of REQUIRED_BOUNDARY_FILES) {
-    assert(existsSync(join(ROOT, path)), `required pipeline boundary file is missing: ${path}`);
-  }
+  const boundary = JSON.parse(read('config/food-runtime-boundary.json'));
+  assert(Array.isArray(boundary.products) && boundary.products.includes('apizzamichigan') && boundary.products.includes('tacoboutmichigan'), 'food runtime boundary must name both products');
+  assert(Array.isArray(boundary.scheduledJobsOwnedBySite) && boundary.scheduledJobsOwnedBySite.length === 0, 'site must not own scheduled food jobs');
+  assert(boundary.publicationStatus?.access === 'read-only', 'food runtime publication must be read-only');
+  assert(boundary.publicationStatus?.rootEnvironmentVariable === 'FOOD_PIPELINE_STATUS_ROOT', 'food runtime status root contract changed');
+  assert(boundary.backups?.owner === 'external-runtime', 'food runtime backups must remain externally owned');
 
-  const templates = readdirSync(LAUNCHD_DIR)
-    .filter(name => name.endsWith('.plist.template'))
-    .sort();
-  assert(templates.length >= 7, `expected launchd templates, found ${templates.length}`);
+  const server = read('server/index.js');
+  for (const contract of ['admin-session-boundary.cjs', 'pipeline-status-boundary.cjs', 'food-runtime-publication-status.cjs']) assert(server.includes(contract), `server must use ${contract}`);
+  const publication = read('shared/food-runtime-publication-status.cjs');
+  assert(publication.includes('readFoodRuntimePublicationStatus') && publication.includes('foodRuntimePublicationStatusResponse'), 'publication status module must expose read-only status helpers');
 
-  for (const name of templates) {
-    const text = readFileSync(join(LAUNCHD_DIR, name), 'utf8');
-    assert(text.includes('<key>Label</key>'), `${name} is missing Label`);
-    assert(text.includes('<key>ProgramArguments</key>'), `${name} is missing ProgramArguments`);
-    assert(text.includes('<key>RunAtLoad</key>'), `${name} is missing RunAtLoad`);
-    assert(text.includes('<key>KeepAlive</key>') || text.includes('<key>StartInterval</key>') || text.includes('<key>StartCalendarInterval</key>'), `${name} needs KeepAlive, StartInterval, or StartCalendarInterval`);
-    assert(!/(FSQ_PLACES_TOKEN|HF_TOKEN|SUPABASE_SERVICE_ROLE|PGPASSWORD)\s*=/.test(text), `${name} contains a credential assignment`);
-  }
+  const templates = readdirSync(LAUNCHD_DIR).filter(name => name.endsWith('.plist.template')).sort();
+  assert(templates.every(name => name === 'com.apizzamichigan.pipeline-health.plist.template'), `pipeline launchd templates remain: ${templates.filter(name => name !== 'com.apizzamichigan.pipeline-health.plist.template').join(', ')}`);
+  assert(templates.length === 1, 'the app may retain only its pipeline-health status service template');
+  const health = read('infra/local/launchd/com.apizzamichigan.pipeline-health.plist.template');
+  for (const marker of ['<key>Label</key>', '<key>ProgramArguments</key>', '<key>RunAtLoad</key>']) assert(health.includes(marker), `pipeline-health template is missing ${marker}`);
+  assert(!/(FSQ_PLACES_TOKEN|HF_TOKEN|SUPABASE_SERVICE_ROLE|PGPASSWORD)\s*=/.test(health), 'pipeline-health template contains a credential assignment');
 
-  const menuParser = read('infra/local/launchd/com.apizzamichigan.menu-parser.plist.template');
-  assert(menuParser.includes('menu-parse-worker.mjs --max-jobs 100'), 'menu parser must remain bounded at 100 jobs');
-  assert(menuParser.includes('<integer>120</integer>'), 'menu parser should run every 120 seconds');
-  assert(menuParser.includes('<false/>'), 'menu parser must not run immediately at login');
-  assert(!menuParser.includes('OLLAMA_'), 'menu parser must not depend on Ollama');
-
-  const classifier = read('infra/local/launchd/com.apizzamichigan.classifier.plist.template');
-  assert(classifier.includes('llm-classifier.mjs'), 'classifier must run the LLM classifier');
-  assert(classifier.includes('--worker-id launchd-classify'), 'classifier must declare the primary worker id');
-  assert(classifier.includes('<key>KeepAlive</key>'), 'classifier must be self-healing with KeepAlive');
-  assert(classifier.includes('<string>llama3.2:latest</string>'), 'classifier must use the approved local model');
-  assert(classifier.includes('<string>http://127.0.0.1:11435</string>'), 'classifier must use the forwarded Ollama endpoint');
-
-  const tunnel = read('infra/local/launchd/com.apizzamichigan.laptop-ollama-tunnel.plist.template');
-  assert(tunnel.includes('<key>KeepAlive</key>'), 'laptop Ollama tunnel must be self-healing with KeepAlive');
-  assert(tunnel.includes('ExitOnForwardFailure=yes'), 'laptop Ollama tunnel must fail fast when forwarding is unavailable');
-  assert(tunnel.includes('ServerAliveInterval=30'), 'laptop Ollama tunnel must send SSH keepalives');
-  assert(tunnel.includes('127.0.0.1:11435:127.0.0.1:11434'), 'laptop Ollama tunnel endpoint must remain stable');
-
-  const sync = read('infra/local/launchd/com.apizzamichigan.supabase-sync.plist.template');
-  assert(sync.includes('<key>ENABLE_LIFECYCLE_SYNC</key>'), 'Supabase sync must explicitly enable lifecycle publication');
-  assert(sync.includes('<key>APIZZA_SYNC_BULK_RPC</key>'), 'Supabase sync must use the guarded bulk RPC path');
-  assert(sync.includes('<string>1</string>'), 'Supabase sync lifecycle publication must be enabled');
-
-  const backup = read('infra/local/launchd/com.apizzamichigan.backup.plist.template');
-  assert(backup.includes('create-local-backup.mjs'), 'backup service must run the local backup job');
-  assert(backup.includes('--retention 7'), 'backup service must retain seven runs');
-  assert(backup.includes('<key>StartCalendarInterval</key>'), 'backup service must run on a calendar schedule');
-
-  const retryFeeder = read('infra/local/launchd/com.apizzamichigan.classifier-retry-feeder.plist.template');
-  assert(retryFeeder.includes('feed-classifier-retries.mjs --apply'), 'classifier retry feeder must run the bounded retry feeder');
-  assert(retryFeeder.includes('<integer>300</integer>'), 'classifier retry feeder should run every five minutes');
-
-  const gitignore = read('.gitignore');
-  const ignoreLines = gitignore.split('\n').map(line => line.trim());
-  const hasEnvWildcard = ignoreLines.includes('.env*') || ignoreLines.includes('/.env*');
-  assert(hasEnvWildcard || ignoreLines.includes('.env'), '.gitignore must protect .env');
-  assert(hasEnvWildcard || ignoreLines.some(line => line.startsWith('.env.') || line === '.env.*'), '.gitignore must protect local env variants');
-  if (hasEnvWildcard) {
-    assert(ignoreLines.includes('!.env.example') || ignoreLines.includes('!/.env.example'), '.gitignore must permit the blank .env.example template');
-  }
-  for (const ignored of ['scripts/.job-queue.db', 'scripts/.fsq-portal-init.sql', 'scripts/.pipeline-status/']) {
-    assert(gitignore.split('\n').some(line => line.trim() === ignored || line.trim() === `/${ignored}`), `.gitignore must protect ${ignored}`);
-  }
-
+  const ignored = read('.gitignore').split('\n').map(line => line.trim());
+  assert(ignored.includes('.env*') && (ignored.includes('!.env.example') || ignored.includes('!/.env.example')), '.gitignore must protect env files while permitting .env.example');
+  assert(ignored.includes('/scripts/.pipeline-status/'), '.gitignore must protect local pipeline status');
   const envExample = read('.env.example');
-  for (const variable of [
-    'PIPELINE_STATUS_ROOT=',
-    'PIPELINE_STATUS_PIZZA_LANE=legacy',
-    'PIPELINE_STATUS_TACO_LANE=disabled',
-    'PIPELINE_DEPLOYMENT_ID=',
-  ]) {
-    assert(envExample.split('\n').includes(variable), `.env.example is missing safe pipeline setting: ${variable}`);
-  }
+  for (const variable of ['FOOD_PIPELINE_STATUS_ROOT=', 'FOOD_PIPELINE_STATUS_MAX_AGE_MINUTES=360']) assert(envExample.split('\n').includes(variable), `.env.example is missing safe setting: ${variable}`);
 
-  console.log('# Runtime Configuration Verification');
-  console.log('');
-  console.log(`launchd_templates=${templates.length}`);
-  console.log(`required_entrypoints=${REQUIRED_SCRIPTS.length}`);
-  console.log(`required_boundary_files=${REQUIRED_BOUNDARY_FILES.length}`);
-  console.log('secret_values_checked=none_read_or_printed');
-  console.log('status=ok');
+  console.log('# Runtime Configuration Verification\n\nlaunchd_templates=1\napp_owned_scheduled_food_jobs=0\npublication_status=read_only\nsecret_values_checked=none_read_or_printed\nstatus=ok');
 }
 
 main();

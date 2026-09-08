@@ -24,6 +24,9 @@ const {
   readPipelineStatusSnapshot,
   resolveStatusSelection,
 } = require('../shared/pipeline-status-boundary.cjs')
+const {
+  foodRuntimePublicationStatusResponse,
+} = require('../shared/food-runtime-publication-status.cjs')
 
 const app = express()
 // Note: 5000 is commonly hijacked by AirPlay Receiver on macOS.
@@ -327,6 +330,10 @@ function commandPartsToString(parts) {
   }).join(' ')
 }
 
+function externalFoodRuntimeCommand(parts) {
+  return `cd "\${FOOD_PIPELINE_WORKSPACE:?Set FOOD_PIPELINE_WORKSPACE to the private external runtime workspace}" && ${commandPartsToString(parts)}`
+}
+
 function fsqPortalSetupSteps({
   portalInitSqlExists,
   portalPythonDuckdbExists,
@@ -472,10 +479,10 @@ function readFsqSampleReadiness(entity) {
     canExportViaPortal,
     tokenStatus: tokens,
     missing,
-    adapterCommand: commandPartsToString(adapterCommand),
-    exportCommand: commandPartsToString(exportCommand),
-    portalExportCommand: commandPartsToString(portalExportCommand),
-    portalSetupCommand: commandPartsToString(portalSetupCommand),
+    adapterCommand: externalFoodRuntimeCommand(adapterCommand),
+    exportCommand: externalFoodRuntimeCommand(exportCommand),
+    portalExportCommand: externalFoodRuntimeCommand(portalExportCommand),
+    portalSetupCommand: externalFoodRuntimeCommand(portalSetupCommand),
     portalSetupSteps: fsqPortalSetupSteps({
       portalInitSqlExists,
       portalPythonDuckdbExists,
@@ -2436,75 +2443,24 @@ app.get('/api/admin/source-review-summary', requireAdminAuth, async (req, res) =
   }
 })
 
-app.get('/api/admin/supabase-sync-readiness', requireAdminAuth, async (req, res) => {
-  const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
-  if (entity === 'taco') {
-    return res.json({
-      data: {
-        available: true,
-        state: 'not_configured',
-        label: 'Not configured for tacos',
-        detail: 'The current guarded publisher is configured for pizza_places only.',
-        generatedAt: new Date().toISOString(),
-      },
-    })
+// Observe the external compatibility publisher only. This does not register or
+// authorize a generic pipeline apply lane with the application boundary.
+app.get('/api/admin/supabase-sync-readiness', requireSignedAdminSession, (req, res) => {
+  res.set('Cache-Control', 'no-store')
+  const entity = String(req.query?.entity || '').trim().toLowerCase()
+  if (!['pizza', 'taco'].includes(entity)) {
+    return res.status(400).json({ error: 'Publication status entity must be pizza or taco' })
   }
 
-  try {
-    const script = resolve(__dirname, '..', 'scripts/ops/supabase-sync-status-report.mjs')
-    const { stdout } = await execFileAsync(process.execPath, [script, '--json', '--hours', '24', '--batch', '50', '--sample', '1'], {
-      cwd: resolve(__dirname, '..'),
-      env: process.env,
-      timeout: 15000,
-      maxBuffer: 2 * 1024 * 1024,
-    })
-    const report = JSON.parse(stdout)
-    const bulkRpc = report.bulkRpc || {}
-    const pending = Number(report.summary?.pending_after_checkpoint) || 0
-    const wouldUpdate = Number(report.nextBatch?.wouldUpdate) || 0
-    const protectedFieldConflicts = Number(report.nextBatch?.protectedFieldConflicts) || 0
-    const hasPendingChanges = Boolean(pending || wouldUpdate)
-    const publishingReady = bulkRpc.state === 'ready'
-    const state = hasPendingChanges
-      ? (publishingReady ? 'ready' : 'blocked')
-      : 'nothing_waiting'
-    const detail = state === 'ready'
-      ? `${pending || wouldUpdate} local change${(pending || wouldUpdate) === 1 ? '' : 's'} eligible for the guarded publisher.`
-      : state === 'nothing_waiting'
-        ? publishingReady
-          ? 'Local and public data are caught up for the current checkpoint.'
-          : 'No local changes are waiting today. Future publishing still needs the Supabase migration.'
-        : bulkRpc.detail || 'Apply and verify the production Supabase migration before enabling bulk sync.'
-
-    return res.json({
-      data: {
-        available: true,
-        state,
-        label: state === 'ready' ? 'Ready to publish'
-          : state === 'nothing_waiting' ? 'Nothing waiting'
-            : 'Blocked by Supabase setup',
-        detail,
-        pendingAfterCheckpoint: pending,
-        wouldUpdate,
-        protectedFieldConflicts,
-        bulkRpcState: bulkRpc.state || 'unknown',
-        publishingReady,
-        lastRun: report.lastRun || null,
-        generatedAt: report.generatedAt || new Date().toISOString(),
-      },
-    })
-  } catch (error) {
-    console.error('[admin] Supabase sync readiness error', error)
-    return res.json({
-      data: {
-        available: false,
-        state: 'unavailable',
-        label: 'Sync status unavailable',
-        detail: 'The read-only sync check could not complete. No sync was started.',
-        generatedAt: new Date().toISOString(),
-      },
-    })
-  }
+  const configuredMaxAge = Number.parseInt(process.env.FOOD_PIPELINE_STATUS_MAX_AGE_MINUTES || '', 10)
+  const data = foodRuntimePublicationStatusResponse(
+    process.env.FOOD_PIPELINE_STATUS_ROOT || '',
+    entity,
+    Number.isInteger(configuredMaxAge) && configuredMaxAge > 0
+      ? { maxAgeMinutes: configuredMaxAge }
+      : {},
+  )
+  return res.json({ data })
 })
 
 app.get('/api/admin/pipeline-status', requireSignedAdminSession, (req, res) => {

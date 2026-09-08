@@ -1,5 +1,9 @@
 # Data Sources and Trust Contract
 
+> Scheduled source adapters now run from `packages/food-runtime` in the
+> external pipeline repository. App-local commands below remain compatibility
+> references for product policy, review, and rollback only.
+
 APizzaMichigan is a pizza-specific map/search product. Anthony's picks are an
 important editorial layer, but the core database should be broad enough to power
 discovery beyond personally reviewed places.

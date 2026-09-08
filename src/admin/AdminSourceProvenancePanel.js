@@ -33,16 +33,21 @@ const REVIEW_SCOPE_OPTIONS = [
   { value: 'independent', label: 'Independent sources' },
 ]
 const QUEUE_PAGE_SIZE = 25
+const FOOD_PIPELINE_WORKSPACE_GUARD = [
+  '$',
+  '{FOOD_PIPELINE_WORKSPACE:?Set FOOD_PIPELINE_WORKSPACE to the private external runtime workspace}',
+].join('')
+const EXTERNAL_PIPELINE_PREFIX = `cd "${FOOD_PIPELINE_WORKSPACE_GUARD}" &&`
 
 const formatCount = value => numberFormat.format(Number(value) || 0)
+const externalPipelineCommand = command => `${EXTERNAL_PIPELINE_PREFIX} ${command}`
+const checkedFoodEntity = entity => {
+  if (!['pizza', 'taco'].includes(entity)) throw new Error(`Unsupported food pipeline entity: ${entity}`)
+  return entity
+}
 
 export const reviewedNewSyncCommands = (importedRows, { entity = 'pizza' } = {}) => {
-  if (entity !== 'pizza') {
-    return {
-      unsupported: true,
-      reason: 'Reviewed-new Supabase publish handoff is currently implemented for pizza_places only.',
-    }
-  }
+  const selectedEntity = checkedFoodEntity(entity)
 
   const ids = [...new Set((importedRows || [])
     .map(row => Number(row?.place_id))
@@ -51,7 +56,7 @@ export const reviewedNewSyncCommands = (importedRows, { entity = 'pizza' } = {})
 
   const idList = ids.join(',')
   const batch = Math.min(ids.length, 100)
-  const base = `node scripts/sync-local-to-supabase.mjs --ids ${idList} --insert-missing-reviewed-new --batch ${batch} --max-batches 1`
+  const base = externalPipelineCommand(`node scripts/sync-local-to-supabase.mjs --entity ${selectedEntity} --ids ${idList} --insert-missing-reviewed-new --batch ${batch} --max-batches 1`)
   return {
     ids,
     dryRun: `${base} --dry-run`,
@@ -60,6 +65,7 @@ export const reviewedNewSyncCommands = (importedRows, { entity = 'pizza' } = {})
 }
 
 export const reviewedNewEnrichmentCommands = (importedRows, { entity = 'pizza' } = {}) => {
+  const selectedEntity = checkedFoodEntity(entity)
   const ids = [...new Set((importedRows || [])
     .map(row => Number(row?.place_id))
     .filter(id => Number.isInteger(id) && id > 0))]
@@ -69,15 +75,17 @@ export const reviewedNewEnrichmentCommands = (importedRows, { entity = 'pizza' }
   const idList = ids.join(',')
   const limit = Math.min(ids.length, 100)
   const scrape = [
-    `node scripts/enrichment/populate-scrape-from-db.mjs --type ${shellQuote(entity)} --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`,
+    externalPipelineCommand(`node scripts/enrichment/populate-scrape-from-db.mjs --type ${shellQuote(selectedEntity)} --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`),
   ]
 
-  if (entity !== 'pizza') {
+  if (selectedEntity === 'taco') {
     return {
       ids,
       scrape,
+      classify: [
+        externalPipelineCommand(`node scripts/enrichment/populate-classify-from-db.mjs --type taco --state '*' --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`),
+      ],
       unsupported: {
-        classify: 'populate-classify-from-db.mjs currently rejects non-pizza datasets.',
         deterministic: 'apply-deterministic-classification.mjs is currently pizza_places only.',
       },
     }
@@ -87,11 +95,11 @@ export const reviewedNewEnrichmentCommands = (importedRows, { entity = 'pizza' }
     ids,
     scrape,
     classify: [
-      `node scripts/enrichment/populate-classify-from-db.mjs --type pizza --state '*' --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`,
+      externalPipelineCommand(`node scripts/enrichment/populate-classify-from-db.mjs --type pizza --state '*' --ids ${idList} --id-prefix all_the_places: --priority-boost 100000 --limit ${limit}`),
     ],
     deterministic: {
-      dryRun: `node scripts/ops/apply-deterministic-classification.mjs --ids ${idList} --id-prefix all_the_places:`,
-      apply: `node scripts/ops/apply-deterministic-classification.mjs --ids ${idList} --id-prefix all_the_places: --apply`,
+      dryRun: externalPipelineCommand(`node scripts/ops/apply-deterministic-classification.mjs --ids ${idList} --id-prefix all_the_places:`),
+      apply: externalPipelineCommand(`node scripts/ops/apply-deterministic-classification.mjs --ids ${idList} --id-prefix all_the_places: --apply`),
     },
   }
 }
@@ -1210,6 +1218,9 @@ export default function AdminSourceProvenancePanel({ entity }) {
           <p style={{ margin: 0, color: '#94a3b8' }}>
             Real FSQ import remains sample-first. This panel only reports readiness; it does not download FSQ data or write source evidence.
           </p>
+          <p style={{ margin: 0, color: '#94a3b8' }}>
+            Run the commands below on the pipeline host after setting <code>FOOD_PIPELINE_WORKSPACE</code> to its private external runtime workspace.
+          </p>
           {fsqSample.samplePath ? (
             <p style={{ margin: 0, color: '#cbd5e1' }}>Sample path: <code>{fsqSample.samplePath}</code></p>
           ) : null}
@@ -1578,11 +1589,11 @@ export default function AdminSourceProvenancePanel({ entity }) {
                       {reviewedNewEnrichmentHandoff ? (
                         <>
                           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <strong style={{ color: '#dcfce7' }}>Local enrichment handoff</strong>
+                            <strong style={{ color: '#dcfce7' }}>External runtime enrichment handoff</strong>
                             <span style={badgeStyle}>{formatCount(reviewedNewEnrichmentHandoff.ids.length)} reviewed-new ids</span>
                           </div>
                           <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
-                            Enqueue scrape first. Enqueue classify after scrape has written fetched page data.
+                            Run these commands on the pipeline host. Enqueue scrape first, then enqueue classify after scrape has written fetched page data.
                           </p>
                           <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
                             For reviewed ATP imports without websites, run the deterministic dry-run before the apply command.
@@ -1611,8 +1622,8 @@ export default function AdminSourceProvenancePanel({ entity }) {
                           {reviewedNewEnrichmentHandoff.unsupported ? (
                             <div style={{ display: 'grid', gap: '0.25rem', color: '#fbbf24', fontSize: '0.84rem' }}>
                               <strong>Not yet automated for this dataset</strong>
-                              <span>{reviewedNewEnrichmentHandoff.unsupported.classify}</span>
-                              <span>{reviewedNewEnrichmentHandoff.unsupported.deterministic}</span>
+                              {reviewedNewEnrichmentHandoff.unsupported.classify ? <span>{reviewedNewEnrichmentHandoff.unsupported.classify}</span> : null}
+                              {reviewedNewEnrichmentHandoff.unsupported.deterministic ? <span>{reviewedNewEnrichmentHandoff.unsupported.deterministic}</span> : null}
                             </div>
                           ) : null}
                         </>
@@ -1629,7 +1640,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                             <span style={badgeStyle}>{formatCount(reviewedNewSyncHandoff.ids.length)} reviewed-new ids</span>
                           </div>
                           <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.84rem' }}>
-                            Run the dry-run first, then the apply command only if it shows reviewed-new inserts for this exact id list.
+                            Run these commands on the pipeline host. Run the dry-run first, then the apply command only if it shows reviewed-new inserts for this exact id list.
                           </p>
                           <div style={{ display: 'grid', gap: '0.25rem' }}>
                             <strong style={{ color: '#bae6fd', fontSize: '0.82rem' }}>Dry run</strong>

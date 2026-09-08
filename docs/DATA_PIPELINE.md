@@ -55,9 +55,11 @@ capability is not proof that either corresponding scheduled service is loaded
 on a host. Deployment state must come from a redacted live inventory, never
 from repository documentation.
 
-## Legacy application pipeline
+## Extracted compatibility runtime
 
-Until cutover, the app repository contains the legacy implementations for:
+The scheduled compatibility implementation now runs from
+`packages/food-runtime` in the external pipeline repository. It contains the
+existing implementations for:
 
 - OpenStreetMap and other source acquisition;
 - local SQLite job queues and worker heartbeats;
@@ -65,8 +67,16 @@ Until cutover, the app repository contains the legacy implementations for:
 - source-review reports and decision workflows;
 - guarded local-to-Supabase publication.
 
-These entrypoints remain temporary authorities. New reusable behavior belongs
-in the external pipeline repository; do not build a second app-local framework.
+These entrypoints remain temporary compatibility authorities while individual
+stages are replaced by reusable adapters. New reusable behavior belongs in the
+external pipeline repository; do not build a second app-local framework.
+
+Some copies remain under this repository's `scripts/` tree because the admin
+server still executes the local sync-readiness report and exposes an app-local
+FSQ command, the admin UI exposes legacy command handoffs, and application
+release checks import product policy from them. They are compatibility
+dependencies, not the scheduled production owner, and must be removed only
+after those app-facing boundaries are replaced.
 
 The compatibility work also closes known cross-entity leaks in that temporary
 path: new queue schemas use entity-scoped identity, workers can claim one
@@ -75,8 +85,8 @@ the entity through scrape, QA, readiness, RPC, and guarded publication gates,
 and Taco payload fields match the Taco RPC rather than inheriting Pizza-only
 fields. An existing legacy SQLite queue is deliberately left unchanged for
 rolling-code compatibility; moving it to entity-scoped uniqueness requires an
-offline, backed-up migration after every old worker is stopped. These fixes
-make migration safer; they do not move execution out of this repository.
+offline, backed-up migration after every old worker is stopped. Execution
+ownership has moved, but these legacy state and schema constraints remain.
 
 ## Safety rules
 
@@ -95,10 +105,12 @@ make migration safer; they do not move execution out of this repository.
 ## Current extraction status
 
 The external repository contains general contracts and executors plus a
-read-only APizza FSQ shadow path. It cannot download a real FSQ release or write
-canonical, review, or public product data. APizza/Taco production remains on
-the legacy application path until source-by-source parity and rollback gates
-are complete.
+read-only APizza FSQ shadow path. The generalized executor cannot download a
+real FSQ release or write canonical, review, or public product data. Separately,
+the extracted compatibility runtime now launches the existing APizza/Taco
+production jobs against app-owned contracts. This is a runtime-ownership move,
+not evidence that the generalized profiles have completed source-by-source
+replacement.
 
 This repository now exposes the application side of the boundary: inert,
 entity-specific target inventories and a read-only, entity/lane-specific status
@@ -112,16 +124,17 @@ attempt to register Taco legacy through configuration alone.
 
 ## Local verification
 
-These commands are read-only unless a separately documented command includes
-an explicit apply flag:
+Application contract and compatibility checks remain available here:
 
 ```sh
 npm run verify:release
 npm run test:ops
-node scripts/ops/source-pipeline-readiness-report.mjs
-node scripts/ops/supabase-sync-readiness-report.mjs --entity pizza --batch 25 --sample 3
-node scripts/ops/supabase-sync-readiness-report.mjs --entity taco --batch 25 --sample 3
+npm run verify:pipeline-boundary
 ```
+
+Production runtime planning and verification belong to
+`docs/FOOD_PRODUCTION_RUNTIME.md` in the external pipeline repository. Do not
+start scheduled jobs from this application checkout.
 
 Real hostnames, filesystem paths, schedules, installed service definitions, logs,
 credentials, and runtime snapshots must live outside the public repository.
