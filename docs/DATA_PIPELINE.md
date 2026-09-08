@@ -71,22 +71,21 @@ These entrypoints remain temporary compatibility authorities while individual
 stages are replaced by reusable adapters. New reusable behavior belongs in the
 external pipeline repository; do not build a second app-local framework.
 
-Some copies remain under this repository's `scripts/` tree because the admin
-server still executes the local sync-readiness report and exposes an app-local
-FSQ command, the admin UI exposes legacy command handoffs, and application
-release checks import product policy from them. They are compatibility
-dependencies, not the scheduled production owner, and must be removed only
-after those app-facing boundaries are replaced.
+The admin server now reads external publication-status files without executing
+pipeline scripts. Its operator commands explicitly target the external private
+workspace. Historical manual tools and shared product-policy helpers remain
+under `scripts/` during cleanup; they are not the scheduled production owner.
 
 The compatibility work also closes known cross-entity leaks in that temporary
 path: new queue schemas use entity-scoped identity, workers can claim one
 entity, reviewed-new processing resolves the exact canonical table and forwards
 the entity through scrape, QA, readiness, RPC, and guarded publication gates,
 and Taco payload fields match the Taco RPC rather than inheriting Pizza-only
-fields. An existing legacy SQLite queue is deliberately left unchanged for
-rolling-code compatibility; moving it to entity-scoped uniqueness requires an
-offline, backed-up migration after every old worker is stopped. Execution
-ownership has moved, but these legacy state and schema constraints remain.
+fields. The production SQLite queue has completed the offline, backed-up
+entity-identity migration after all workers were stopped and drained. Existing
+jobs and retry history were preserved. Other installations with the old global
+identity must use the external runtime's explicit offline migration; ordinary
+worker startup does not rewrite an existing queue.
 
 ## Safety rules
 
