@@ -10,15 +10,16 @@ test('selects distinct reviewed-new canonical tables without a Pizza fallback', 
   assert.throws(() => reviewedNewTarget(), /Unsupported/)
 })
 
-test('forwards the exact entity to guarded publication', () => {
-  const taco = guardedPublishArgs('taco', [17, 19])
-  assert.deepEqual(taco.slice(0, 5), [
-    'scripts/ops/guarded-supabase-sync.mjs',
-    '--entity',
-    'taco',
-    '--ids',
-    '17,19',
-  ])
-  assert.doesNotMatch(taco.join(' '), /--entity pizza/)
+test('fails closed with exact external Taco publication guidance', () => {
+  assert.throws(
+    () => guardedPublishArgs('taco', [17, 19]),
+    error => {
+      assert.match(error.message, /externally owned/)
+      assert.match(error.message, /FOOD_PIPELINE_WORKSPACE/)
+      assert.match(error.message, /guarded-supabase-sync\.mjs --entity taco --ids 17,19/)
+      assert.doesNotMatch(error.message, /--entity pizza/)
+      return true
+    },
+  )
   assert.throws(() => guardedPublishArgs('burger', [1]), /Unsupported/)
 })

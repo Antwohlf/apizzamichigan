@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Verify the checked-in low-I/O sync contract without contacting Supabase. */
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
   CANONICAL_MIRROR_COLS,
@@ -28,9 +28,19 @@ const searchMigrationPath = resolve(process.cwd(), 'scripts/enrichment/supabase-
 const searchMigration = readFileSync(searchMigrationPath, 'utf8');
 const statusReport = readFileSync(resolve(process.cwd(), 'scripts/ops/supabase-sync-status-report.mjs'), 'utf8');
 const readinessReport = readFileSync(resolve(process.cwd(), 'scripts/ops/project-readiness-report.mjs'), 'utf8');
-const guardedSync = readFileSync(resolve(process.cwd(), 'scripts/ops/guarded-supabase-sync.mjs'), 'utf8');
-const autoSync = readFileSync(resolve(process.cwd(), 'scripts/ops/auto-guarded-supabase-sync.mjs'), 'utf8');
 const credentials = readFileSync(resolve(process.cwd(), 'scripts/lib/supabase-sync-credentials.mjs'), 'utf8');
+const foodRuntimeBoundary = JSON.parse(readFileSync(resolve(process.cwd(), 'config/food-runtime-boundary.json'), 'utf8'));
+
+assert(foodRuntimeBoundary.runtimeRepository === 'https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline', 'Food publisher must name the external runtime repository.');
+assert(foodRuntimeBoundary.runtimePackage === 'packages/food-runtime', 'Food publisher must name the external runtime package.');
+assert(Array.isArray(foodRuntimeBoundary.scheduledJobsOwnedBySite) && foodRuntimeBoundary.scheduledJobsOwnedBySite.length === 0, 'Site must not own scheduled food jobs.');
+for (const movedImplementation of [
+  'scripts/ops/guarded-supabase-sync.mjs',
+  'scripts/ops/auto-guarded-supabase-sync.mjs',
+  'scripts/sync-local-to-supabase.mjs',
+]) {
+  assert(!existsSync(resolve(process.cwd(), movedImplementation)), `Migrated publisher must not remain in the app checkout: ${movedImplementation}`);
+}
 
 assert(SUPABASE_BULK_SYNC_RPC === 'apply_pizza_places_sync_batch', 'RPC name changed unexpectedly.');
 assert(migration.includes(`CREATE OR REPLACE FUNCTION public.${SUPABASE_BULK_SYNC_RPC}(p_rows jsonb)`), 'Migration must define the bulk RPC.');
@@ -54,7 +64,6 @@ for (const column of CANONICAL_MIRROR_COLS) {
 }
 assert(/lifecycle_status = CASE WHEN incoming\.patch \? 'lifecycle_status'/i.test(migration), 'Bulk RPC must support explicit lifecycle changes.');
 assert(/target\.id = incoming\.id/i.test(migration), 'Bulk RPC must update by canonical id only.');
-assert(/MAX_SYNC_BATCH_SIZE = 500/i.test(readFileSync(resolve(process.cwd(), 'scripts/sync-local-to-supabase.mjs'), 'utf8')), 'Sync client must cap bulk batches at 500 rows.');
 const recordShape = migration.match(/jsonb_to_record\(source\.item\) AS parsed\(([\s\S]*?)\n    \)\n  \)\n  UPDATE/)?.[1] || '';
 assert(recordShape, 'Bulk RPC record shape must be discoverable for contract checks.');
 const contractColumns = [...new Set([
@@ -104,18 +113,6 @@ assert(readinessReport.includes("sync.value.bulkRpc?.state === 'ready'"), 'Proje
 assert(statusReport.includes("(requireBulkRpc || bulkRpc?.configured) && bulkRpc.state !== 'ready'"), 'Sync status must block when required bulk RPC is unavailable.');
 assert(statusReport.includes("arg === '--require-bulk-rpc'"), 'Sync status must support an explicit bulk RPC requirement.');
 assert(guardedSyncBoundary.includes("'--require-bulk-rpc'"), 'Guarded sync must pass the explicit bulk RPC requirement.');
-assert(guardedSync.includes('bulk RPC gate failed'), 'Guarded sync must fail before writes when bulk RPC is not ready.');
-assert(guardedSync.includes("step('Bulk RPC Gate')"), 'Guarded sync must report the bulk RPC gate explicitly.');
-const noWorkExit = guardedSync.indexOf('No rows to update; stopping cleanly');
-const bulkGate = guardedSync.indexOf("step('Bulk RPC Gate')");
-assert(noWorkExit >= 0 && bulkGate > noWorkExit, 'Guarded sync must stop idle runs before requiring the bulk RPC.');
-assert((autoSync.match(/'--bulk-rpc'/g) || []).length >= 2, 'Scheduled sync and reconciliation must explicitly require the bulk RPC path.');
-assert(autoSync.includes("'scripts/ops/supabase-sync-status-report.mjs'"), 'Scheduled sync must check bulk capability before local repair.');
-assert(autoSync.includes("'--require-bulk-rpc'"), 'Scheduled sync must require the bulk RPC during preflight.');
-assert(autoSync.includes("throw new SyncSkipped('bulk sync unavailable')"), 'Scheduled sync must skip cleanly while migration is missing.');
-assert(autoSync.includes('read-only capability check unavailable'), 'Scheduled sync must skip structured read-only preflight failures without a stack trace.');
-assert(autoSync.includes("'skipped'"), 'Scheduled sync must record a skipped run when bulk sync is unavailable.');
-assert(autoSync.includes('if (lockAcquired) releaseLock();'), 'Scheduled sync must release the lock only when it acquired it.');
 assert(credentials.includes('Live Supabase sync requires SUPABASE_SERVICE_ROLE_KEY'), 'Live sync must require the service-role key.');
 assert(credentials.includes('dryRun'), 'Sync credential resolution must distinguish previews from live writes.');
 
@@ -123,5 +120,6 @@ console.log('# Bulk Sync Contract Verification');
 console.log('');
 console.log(`rpc=${SUPABASE_BULK_SYNC_RPC}`);
 console.log('writes=database-side-batch');
+console.log('publisher_owner=external-runtime');
 console.log(`canonical_mirror_fields=${CANONICAL_MIRROR_COLS.join(',')}`);
 console.log('status=ok');
