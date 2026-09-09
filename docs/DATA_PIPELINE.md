@@ -5,7 +5,7 @@ PostgreSQL tables to narrowly exposed Supabase tables and views. This repository
 owns the product schema, editorial policy, human decisions, and guarded
 publication interface.
 
-Reusable acquisition and processing infrastructure is moving to the separate
+Scheduled acquisition and processing infrastructure now lives in the separate
 [Map Data Aggregation and Enhancement Pipeline](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline).
 See [PIPELINE_BOUNDARY.md](PIPELINE_BOUNDARY.md) for the exact ownership and
 cutover rules.
@@ -103,19 +103,19 @@ worker startup does not rewrite an existing queue.
 
 ## Current extraction status
 
-The external repository contains general contracts and executors plus a
-read-only APizza FSQ shadow path. The generalized executor cannot download a
-real FSQ release or write canonical, review, or public product data. Separately,
-the extracted compatibility runtime now launches the existing APizza/Taco
-production jobs against app-owned contracts. This is a runtime-ownership move,
-not evidence that the generalized profiles have completed source-by-source
-replacement.
+The external repository contains shared contracts and executors plus the
+trusted-host Pizza/Taco production runtime and a distinct BuiltHere runtime.
+Food acquisition and publication use narrow credentials for app-owned contracts.
+The older artifact-based FSQ shadow and its apply lane remain a separate,
+restricted path. Do not generalize that lane's restrictions to all deployed
+adapters, or assume the runtime migration rewrote every legacy stage.
 
 This repository now exposes the application side of the boundary: inert,
 entity-specific target inventories and a read-only, entity/lane-specific status
 contract. Pizza legacy status is the only registered lane and remains its safe
 default. Every Taco lane is unregistered, and Taco status defaults to disabled
-pending an entity-safe collector and a live host inventory. Both external
+pending an entity-safe collector for that older contract. This does not disable
+Taco's scheduled runtime or its separate food-runtime publication status. Both external
 shadow lanes and both external apply lanes are explicitly unregistered;
 environment selection alone cannot make a status snapshot authoritative. No
 external apply profile is activated. This boundary release also rejects any
@@ -137,6 +137,7 @@ start scheduled jobs from this application checkout.
 
 Real hostnames, filesystem paths, schedules, installed service definitions, logs,
 credentials, and runtime snapshots must live outside the public repository.
-The existing host-specific runbooks and launchd templates are retained only
-until they can be reconciled with a live inventory and copied to private host
-storage; they block the repository visibility change in the meantime.
+The old host-specific runbooks were preserved privately and replaced with
+handoff documentation. The sole retained health template uses placeholders and
+must be configured privately. Other release gates, including state, record
+licensing, and Git history, remain in [PUBLIC_RELEASE.md](PUBLIC_RELEASE.md).

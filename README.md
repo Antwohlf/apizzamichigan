@@ -26,9 +26,10 @@ schema, human review, and final publication authority.
 The scheduled Pizza/Taco compatibility jobs now run from
 `packages/food-runtime` in the external repository. That package preserves the
 existing database and review behavior while the reusable executor is adopted
-incrementally. This runtime relocation does not grant write authority to the
-generalized shadow executor: external apply remains disabled there, and the
-application still owns every database write contract and publication decision.
+incrementally. The trusted-host runtime uses narrow credentials for app-owned
+write contracts. The separate artifact/shadow apply lanes remain disabled;
+runtime relocation does not activate those lanes. The application still owns
+every database write contract and publication decision.
 
 The administrator server reads external publication-status files; it does not
 execute pipeline workers or publication commands. Operator handoffs explicitly
@@ -78,6 +79,12 @@ npm run lint -- --quiet
 CI=true npm test -- --watchAll=false --runInBand
 npm run audit:public
 ```
+
+These are development checks, not permission to publish this repository.
+`npm run audit:public:release` additionally rejects known private state,
+record-level data, host topology, and a missing software license. It currently
+fails on unresolved release gates. Neither audit scans Git history; see
+[the release checklist](docs/PUBLIC_RELEASE.md) before changing visibility.
 
 The normal application build uses the committed aggregate dashboard snapshot
 and does not query the production database. Refresh that snapshot deliberately
