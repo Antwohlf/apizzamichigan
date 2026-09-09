@@ -9,11 +9,11 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /srv/apizzamichigan &amp;&amp; /usr/local/bin/node scripts/ops/write-pipeline-status.mjs</string>
+    <string>cd __APP_CHECKOUT__ &amp;&amp; __NODE_EXECUTABLE__ scripts/ops/write-pipeline-status.mjs</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/srv/apizzamichigan</string>
+  <string>__APP_CHECKOUT__</string>
 
   <key>RunAtLoad</key>
   <true/>
