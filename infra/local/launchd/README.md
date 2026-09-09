@@ -13,16 +13,23 @@ not authority to start workers or enable a pipeline apply lane.
 
 ## Pipeline Health Snapshot
 
-The read-only pipeline alert gate is scheduled every 15 minutes. It writes
+The optional template requests a read-only snapshot every 15 minutes. Its
+presence does not mean a service is installed. It writes
 `scripts/.pipeline-alert-status.json`, a machine-local snapshot consumed by the
 admin portal. It does not start workers, change queue rows, or publish to
 Supabase.
 
-Install:
+Do not install this template unchanged. In a private copy, replace
+`__APP_CHECKOUT__` and `__NODE_EXECUTABLE__` with validated absolute paths
+(shell-quote and XML-escape the command when necessary). Configure the registered
+status identity and private inputs first. This is a legacy diagnostic bridge,
+not the external runtime's publication-status collector.
+
+After preparing that private copy:
 
 ```bash
 mkdir -p /tmp/apizzamichigan
-cp infra/local/launchd/com.apizzamichigan.pipeline-health.plist.template \
+cp /path/to/private/com.apizzamichigan.pipeline-health.plist \
   ~/Library/LaunchAgents/com.apizzamichigan.pipeline-health.plist
 plutil -lint ~/Library/LaunchAgents/com.apizzamichigan.pipeline-health.plist
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.apizzamichigan.pipeline-health.plist

@@ -3,7 +3,7 @@
  * Read-only health summary for the launchd-managed classifier service.
  *
  * Intended for quick remote checks:
- *   ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
+ *   Run from the configured private runtime workspace, not a website checkout.
  */
 
 import Database from 'better-sqlite3'

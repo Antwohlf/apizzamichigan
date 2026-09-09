@@ -4,14 +4,14 @@ import { executionContext, nextActions, repositoryContext, summarizeFailure, sum
 
 test('includes non-secret execution context so reports are attributable to a machine', () => {
   const context = executionContext({
-    hostname: 'Ants-iMac.local',
+    hostname: 'example-runner',
     platform: 'darwin',
-    cwd: '/Users/ant/clawd/projects/apizzamichigan',
+    cwd: '/srv/example/app',
   })
 
-  assert.equal(context.hostname, 'Ants-iMac.local')
+  assert.equal(context.hostname, 'example-runner')
   assert.equal(context.platform, 'darwin')
-  assert.equal(context.cwd, '/Users/ant/clawd/projects/apizzamichigan')
+  assert.equal(context.cwd, '/srv/example/app')
   assert.match(context.node_version, /^v\d+/)
 })
 
@@ -35,7 +35,7 @@ test('includes repository identity and dirty state for stale-checkout detection'
 })
 
 test('summarizes connection failures without leaking stack traces', () => {
-  const message = summarizeFailure('AggregateError [ECONNREFUSED]:\n    at afterConnectMultiple\n    at /Users/ant/project/report.mjs:12:3')
+  const message = summarizeFailure('AggregateError [ECONNREFUSED]:\n    at afterConnectMultiple\n    at /srv/example/report.mjs:12:3')
   assert.equal(message, 'required local service unavailable (connection refused)')
 })
 

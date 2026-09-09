@@ -1,129 +1,13 @@
-# Home Server Ops
+# Runtime operations have moved
 
-> **Compatibility reference:** production jobs now run from the external
-> repository's `packages/food-runtime` workspace. The application-checkout
-> paths below are historical reconciliation examples, not current service
-> installation instructions.
+Pizza/Taco acquisition, enrichment, publication, and backup jobs belong to the
+[external pipeline repository](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline),
+under `packages/food-runtime`. Do not start workers from the website checkout.
 
-Home-server access uses direct Tailscale SSH to the Michigan iMac.
+Use its `docs/FOOD_PRODUCTION_RUNTIME.md` and the operator's private host
+inventory. SSH aliases, paths, credentials, installed services, and runtime
+evidence are deliberately not documented here.
 
-## Access
-
-From the MacBook:
-
-```bash
-ssh apizza-imac
-```
-
-Project root on the iMac:
-
-```bash
-/Users/ant/clawd/projects/apizzamichigan
-```
-
-## Standard Status
-
-```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs'
-```
-
-If `node` is unavailable in a non-interactive SSH command, wrap the command in
-the iMac login shell:
-
-```bash
-ssh apizza-imac 'zsh -lc "cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/home-status-report.mjs"'
-```
-
-Use `classifier-health-report.mjs` for the normal "is the launchd classifier
-healthy and advancing?" check. Use `home-status-report.mjs` when you need the
-broader queue/Postgres/Ollama/process details.
-
-## Standard Cleanup
-
-```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs'
-```
-
-Apply only after reviewing the dry-run:
-
-```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/stale-worker-cleanup.mjs --apply'
-```
-
-## Pre-Sync QA
-
-```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classification-qa-report.mjs --hours 24 --limit 500 --sample 25'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --batch 100 --sample 10'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --batch 50 --sample 20'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-readiness-report.mjs --changed-since-hours 6 --only-classified --checkpoint scripts/.supabase-sync-checkpoint.json --batch 50 --sample 20'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/guarded-supabase-sync.mjs --hours 6 --batch 50'
-```
-
-The recurring production sync is launchd-managed and runs the same guarded
-path through `scripts/ops/auto-guarded-supabase-sync.mjs`:
-
-```bash
-ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.supabase-sync"'
-ssh apizza-imac 'tail -100 /tmp/apizzamichigan/supabase-sync.log'
-```
-
-The wrapper also writes the latest scheduler outcome to the ignored local file
-`scripts/.supabase-sync-status.json`. The status report includes this as the
-`last scheduled run` field, so operators can distinguish a successful run from
-a deliberate skip (for example, the bulk RPC is unavailable) without parsing
-the full log:
-
-```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/supabase-sync-status-report.mjs --hours 6 --batch 50'
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node -e "console.log(require(\"fs\").readFileSync(\"scripts/.supabase-sync-status.json\", \"utf8\"))"'
-```
-
-It applies at most one 100-row ordinary batch every 30 minutes and exits without
-writing if health, QA, readiness, or dry-run gates fail. Broad reviewed-new
-reconciliation is maintenance-only; enable it explicitly with
-`APIZZA_SYNC_RUN_RECONCILIATION=true` when needed.
-
-## Service Control
-
-The first production service is the launchd-managed classifier:
-
-```bash
-ssh apizza-imac 'cd /Users/ant/clawd/projects/apizzamichigan && node scripts/ops/classifier-health-report.mjs'
-ssh apizza-imac 'launchctl print "gui/$(id -u)/com.apizzamichigan.classifier"'
-ssh apizza-imac 'tail -100 /tmp/apizzamichigan/classifier.log'
-ssh apizza-imac 'launchctl bootout "gui/$(id -u)/com.apizzamichigan.classifier"'
-```
-
-See `docs/IMAC_PIPELINE_RUNBOOK.md` for install/start commands.
-
-## Legacy OpenClaw Cron Jobs
-
-OpenClaw may remain active for unrelated local-agent work, but APizzaMichigan
-should not be driven by OpenClaw cron jobs. The old APizza watchdog/coordinator
-cron jobs must stay disabled:
-
-```bash
-ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron list'
-```
-
-Retired APizza cron IDs:
-
-- `092dc3b7-20ad-42a4-9dff-d5c417f4b90e`
-- `c92e0d70-6159-402b-8980-72784da8e936`
-
-If either is enabled:
-
-```bash
-ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron disable 092dc3b7-20ad-42a4-9dff-d5c417f4b90e'
-ssh apizza-imac '/usr/local/bin/node ~/.npm-global/lib/node_modules/openclaw/openclaw.mjs cron disable c92e0d70-6159-402b-8980-72784da8e936'
-```
-
-## Safety Rules
-
-- Keep Supabase sync manual-only until explicitly approved.
-- Do not run scraper, OSM extraction, menu parse, or QA as services in this phase.
-- Before starting classifier service, confirm queue `processing=0`.
-- Do not commit runtime DBs, logs, token caches, `.env*`, or progress artifacts.
+The former host-specific instructions were preserved privately before removal.
+Git history is historical evidence, not an installation guide.
+See [the application boundary](PIPELINE_BOUNDARY.md).
