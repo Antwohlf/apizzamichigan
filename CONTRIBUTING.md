@@ -17,6 +17,11 @@ CI=true npm test -- --watchAll=false --runInBand
 npm run audit:public
 ```
 
+The normal audit checks the current tree with documented legacy exceptions.
+Before changing repository visibility, run `npm run audit:public:release` and
+complete [PUBLIC_RELEASE.md](docs/PUBLIC_RELEASE.md), including the separate
+history/privacy scan. Passing the development audit alone is not sufficient.
+
 ## Data and operations safety
 
 - Use fabricated fixtures in tests. Do not contribute production database rows,
