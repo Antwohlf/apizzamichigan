@@ -1,6 +1,6 @@
 # Website and pipeline separation
 
-Verified on September 8, 2026.
+Verified on September 9, 2026.
 
 The website and pipeline are separately deployed projects. This repository owns
 the public maps, editorial interface, product schemas, and publication contracts.
@@ -34,8 +34,10 @@ its inactive apply declarations must not be mistaken for production authority.
 - Application repository visibility remains private pending the independent
   [public-release gates](PUBLIC_RELEASE.md), including licensing and historical
   data cleanup. The generalized pipeline repository is public.
-- Production database permissions are being audited separately; successful
-  runtime migration is not evidence of least-privilege credentials.
+- Production jobs use task-specific, non-administrator database accounts with
+  password authentication. Publication credentials live outside the shared
+  worker environment; private host recovery material is not part of either repo.
+  This is credential separation, not a sandbox between processes on the same host.
 
 The administrator publication display reads an explicit external status root.
 Without that configuration it reports unavailable external status; it does not
