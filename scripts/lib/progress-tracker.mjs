@@ -2,11 +2,14 @@
  * Progress tracker with checkpoint/resume support
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { writeFileSync } from 'node:fs'
+import { privatePipelineStatePath, readPrivateJson } from './private-pipeline-state.mjs'
 
 export class ProgressTracker {
   constructor(filePath = 'scripts/.pizza-metadata-progress.json') {
-    this.filePath = filePath
+    this.fileName = filePath.split(/[\\/]/).pop()
+    this.filePath = privatePipelineStatePath(this.fileName)
+    this.loaded = false
     this.data = {
       version: 1,
       lastUpdated: null,
@@ -22,18 +25,18 @@ export class ProgressTracker {
   }
 
   async load() {
-    if (existsSync(this.filePath)) {
-      try {
-        const content = readFileSync(this.filePath, 'utf-8')
-        this.data = JSON.parse(content)
-        console.log(`Loaded progress: ${this.data.stats.processed} places already processed`)
-      } catch (err) {
-        console.warn(`Could not load progress file: ${err.message}`)
-      }
-    }
+    this.loaded = false
+    const { value } = readPrivateJson(this.fileName, data => (
+      data && data.version === 1 && data.stats && typeof data.stats === 'object' &&
+      data.results && typeof data.results === 'object' && !Array.isArray(data.results)
+    ))
+    this.data = value
+    this.loaded = true
+    console.log(`Loaded progress: ${this.data.stats.processed} places already processed`)
   }
 
   async save() {
+    if (!this.loaded) throw new Error(`Refusing to save ${this.fileName} before a valid private checkpoint has loaded`)
     this.data.lastUpdated = new Date().toISOString()
     this.updateStats()
     writeFileSync(this.filePath, JSON.stringify(this.data, null, 2))

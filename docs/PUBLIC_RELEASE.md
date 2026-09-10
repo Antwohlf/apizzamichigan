@@ -8,8 +8,9 @@ to publish.
 
 - Generated metadata-review outputs and stale status/conversation artifacts are
   removed from the current tree and ignored. Six authoritative legacy resume
-  files remain temporarily because deleting them before host migration would
-  restart write-capable jobs; the release audit rejects them.
+  files are preserved in private local and host storage with matching SHA-256
+  checksums and removed from this tree. The unused generated OSM SQL import is
+  also privately backed up and removed.
 - Local browser automation, editor settings, outputs, backups, and runtime
   artifacts are ignored.
 - The public project overview, security policy, contribution rules, data
@@ -29,49 +30,78 @@ to publish.
 - Boundary documentation distinguishes the live trusted-host publishers from
   the older inert artifact/apply inventories. Taco's disabled legacy status lane
   does not mean its scheduled pipeline is disabled.
+- Legacy manual tools require `PRIVATE_PIPELINE_STATE_DIR` to name an existing
+  absolute directory outside the checkout. Missing, corrupt, or symlinked
+  checkpoints abort; trackers cannot save before a successful load. Restore the
+  six original checkpoint basenames into that directory, not the source tree.
+  These guards do not change the separate live pipeline's state or schedules.
+- The admin form's Pizza/Taco/frozen writes use the authenticated Express API,
+  not public Supabase mutations. Pizza/Taco photo metadata is entity-scoped.
+  The current frozen schema does not support photos; its UI says so explicitly.
+  As before, administration requires the separately running Express server;
+  static hosting alone does not supply admin API routes.
+- The public-client grant migration was applied and verified on September 10.
+  Anonymous API reads of the canonical public columns still return rows; full
+  rows, internal columns, backup rows, and suggestion reads are denied. Core
+  tables have no anonymous/authenticated write grants; the existing three-field
+  Pizza suggestion insert remains. Trusted publisher permissions are unchanged.
 
-## Audit snapshot — September 9, 2026
+## Database verification
+
+`supabase/migrations/20260910165538_harden_public_client_grants.sql` hardens the
+existing schema; it is not a complete fresh-database bootstrap. Run the
+review-photo schema prerequisite when provisioning that metadata table. The
+migration preserves existing RLS policies and enables RLS on each affected table.
+
+Run `node scripts/ops/verify-public-client.mjs` with `PUBLIC_SUPABASE_URL` and
+`PUBLIC_SUPABASE_ANON_KEY` supplied privately. It rejects privileged keys, never
+prints records, and performs only reads. Database catalog checks separately
+verify write grants and service-role-only synchronization RPC execution.
+
+The security advisor still reports a Postgres patch upgrade and `pg_trgm` in
+the public schema. These require a planned maintenance review, not an automatic
+database upgrade during repository publication. Two no-policy informational
+findings correspond to deliberately closed tables. Table/sequence defaults
+are narrowed for future objects created by `postgres`; other owners' defaults
+and each new function's EXECUTE grants still require explicit review.
+
+## Audit snapshot — September 10, 2026
 
 The repository is still private. The ordinary current-tree audit passes with
 documented legacy exceptions; the release audit fails. Known remaining files:
 
-- Six tracked resume files: `.taco-metadata-progress.json`,
-  `scripts/.pizza-metadata-progress.json`, `scripts/.state-import-progress.json`,
-  `scripts/.taco-state-import-progress.json`, and
-  `scripts/.address-enrichment-{pizza_places,taco_places}.json`.
-- Record-level data: `scripts/osm-pizza-import.sql`, `src/data.js`,
+- Record-level data: `src/data.js`,
   `src/data/frozenTacos.js`, and `src/data/tacoPlaces.js`.
 - The application's `LICENSE` is missing.
 
-The production-dependency scan (`npm audit --omit=dev`) reports 13 affected
-packages: seven high, four moderate, two low, and no critical findings. This is
+After compatible locked dependency updates, the production-dependency scan
+(`npm audit --omit=dev`) reports five affected packages: zero high, three
+moderate, two low, and no critical findings. The remaining packages are
+`express`, `body-parser`, `qs`, `@supabase/supabase-js`, and `@supabase/auth-js`. This is
 a dependency advisory inventory, not proof that each issue is reachable in the
 deployed app. Review and test updates separately; do not force major upgrades
 as part of documentation cleanup.
 
-Runtime queue cutover does not by itself prove that these six separate legacy
-manual-tool checkpoints can be discarded. Preserve and reconcile each consumer
-before removal. Do not delete fallback data merely to make an audit pass.
+A fresh private mirror includes remote branches and pull-request refs. Gitleaks
+8.30.1 scanned all refs and reported 12 occurrences of one reviewed public
+Supabase `anon` key, not a privileged credential. This is not a privacy clearance:
+historical metadata reports, checkpoints, source records, and operator runbooks
+still remain reachable. No history rewrite or remote branch deletion has occurred.
+Do not delete fallback data merely to make an audit pass.
 
 ## Remaining gates
 
 - Choose and add the application's software license.
 - Enable and verify a private vulnerability-reporting route, then update
   `SECURITY.md` with that exact route.
-- Preserve, checksum, and move the six legacy resume files to private host
-  state; make their consumers use the migrated location or fail closed before
-  removing the tracked copies.
 - Remove, synthesize, or explicitly license the remaining first-party fallback,
-  personal-review, and OSM-derived record files.
+  personal-review record files.
 - Finish sanitizing archived operator code, and confirm no additional topology
   or record-level files exist outside the audit's known-path inventory.
 - Keep artifact-executor apply lanes separate from trusted-host production
   authority; do not enable an inert lane merely because host jobs have moved.
-- Make Supabase grants and row-level security reproducible from migrations and
-  verify the public client with `anon` integration tests.
-- Remove or server-route the legacy browser-side administrator writes.
-- Resolve high-severity production dependency advisories.
-- Run an authoritative secret and privacy scan against a fresh mirror clone.
+- Complete the final privacy review and repeat secret scanning on the actual
+  publication candidate after the history/content decision.
 - Review retained history and remote branches for generated data and private
   operations details. Obtain explicit approval and a backup/clone-transition
   plan before rewriting history or deleting remote branches.
