@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { supabase } from './supabaseClient'
 import { entityConfig } from './config/entityConfig'
-import { uploadReviewPhoto, REVIEW_PHOTO_BUCKET } from './utils/uploadPhoto'
+import { prepareReviewPhotoUpload } from './utils/uploadPhoto'
 import InlineSpinner from './components/ui/InlineSpinner'
 import { useGlobalLoading } from './hooks/useGlobalLoading'
 
@@ -25,6 +24,8 @@ const initialPizzaState = {
   status: 'visited',
   review: '',
   notes: '',
+  state: '',
+  googlePlaceId: '',
   photo: null,
 }
 
@@ -39,6 +40,8 @@ const initialTacoState = {
   status: 'visited',
   review: '',
   notes: '',
+  state: '',
+  googlePlaceId: '',
   photo: null,
 }
 
@@ -49,6 +52,11 @@ const initialFrozenState = {
   rating: '',
   notes: '',
   photo: null,
+}
+
+const stateFromFormattedAddress = address => {
+  const match = String(address || '').match(/,\s*([A-Z]{2})\s+\d{5}(?:-\d{4})?(?:,|$)/)
+  return match?.[1] || ''
 }
 
 function PhotoPicker({ value, onChange }) {
@@ -93,7 +101,7 @@ function PhotoPicker({ value, onChange }) {
         </div>
       ) : (
         <p className="admin-photo-picker__hint">
-          Photos stay local for now. Upload support can be wired to Supabase when ready.
+          The image is processed locally, then saved through the authenticated admin service.
         </p>
       )}
     </div>
@@ -422,7 +430,10 @@ export default function AdminForm() {
 
   const normalizePrice = value => (PRICE_OPTIONS.includes(value) ? value : '$')
 
-  const submitPlaceToServer = async ({ entity, payload, style }) => {
+  const submitPlaceToServer = async ({ entity, payload, style, photo }) => {
+    const preparedPhoto = photo?.file
+      ? await prepareReviewPhotoUpload(photo.file, { prefix: entity })
+      : null
     const response = await fetch('/api/admin/submitPlace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -433,49 +444,22 @@ export default function AdminForm() {
         address: payload.address,
         lat: payload.lat,
         lng: payload.lng,
-        price: payload.price,
+        price: payload.price ?? payload.Price,
         status: payload.status,
         review: payload.review,
-        rating: payload.rating,
-        notes: payload.notes,
+        rating: payload.rating ?? payload.Rating,
+        notes: payload.notes ?? payload.Notes,
+        state: payload.state,
+        google_place_id: payload.googlePlaceId,
         style,
+        brand: payload.Brand,
+        product: payload.Type,
+        photo: preparedPhoto,
       }),
     })
     const responsePayload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(responsePayload?.error || 'Failed to save place.')
-    return responsePayload.data
-  }
-
-  const uploadPlacePhoto = async (file, { entity, recordId }) => {
-    const { path } = await uploadReviewPhoto(file, {
-      reviewId: recordId,
-      prefix: `${entity}/${recordId}`,
-    })
-
-    const { data: publicData, error: publicError } = supabase.storage
-      .from(REVIEW_PHOTO_BUCKET)
-      .getPublicUrl(path)
-
-    if (publicError) {
-      throw new Error(publicError.message || 'Unable to create public URL')
-    }
-
-    return { path, publicUrl: publicData?.publicUrl || null }
-  }
-
-  const appendPhotoToRow = async ({ table, id, storedUrl, existingPhotos = [] }) => {
-    if (!storedUrl) return
-    const photosArray = Array.isArray(existingPhotos) ? existingPhotos.filter(Boolean) : []
-    const nextPhotos = [...photosArray, storedUrl]
-
-    const { error } = await supabase.from(table).update({ photos: nextPhotos }).eq('id', id)
-    if (error) {
-      // Fallback to single url column if array column is unavailable
-      const fallback = await supabase.from(table).update({ photo_url: storedUrl }).eq('id', id)
-      if (fallback.error) {
-        throw error
-      }
-    }
+    return responsePayload
   }
 
   const cleanupPhotoPreview = photoState => {
@@ -496,6 +480,8 @@ export default function AdminForm() {
       status: pizzaForm.status,
       review: stripTags(pizzaForm.review),
       notes: stripTags(pizzaForm.notes),
+      state: pizzaForm.state,
+      googlePlaceId: pizzaForm.googlePlaceId,
     }
 
     if (!payload.name || !payload.address || Number.isNaN(payload.lat) || Number.isNaN(payload.lng) || !payload.style) {
@@ -507,33 +493,10 @@ export default function AdminForm() {
     setGlobalLoadingVariant('pizza')
     openGlobalLoading('Saving pizza place…')
     try {
-      const inserted = await submitPlaceToServer({ entity: 'pizza', payload, style: payload.style })
-
-      if (pizzaForm.photo?.file && inserted?.id) {
-        try {
-          const { publicUrl, path } = await uploadPlacePhoto(pizzaForm.photo.file, {
-            entity: 'pizza',
-            recordId: inserted.id,
-          })
-          const storedUrl = publicUrl || path
-          if (storedUrl) {
-            await appendPhotoToRow({
-              table: pizzaConfig.table,
-              id: inserted.id,
-              storedUrl,
-              existingPhotos: inserted.photos,
-            })
-          }
-        } catch (photoError) {
-          console.error('[admin] pizza photo upload failed', photoError)
-          setMessage('Pizza place saved, but photo upload failed. Try adding the photo from the review editor later.')
-          cleanupPhotoPreview(pizzaForm)
-          setPizzaForm(initialPizzaState)
-          return
-        }
-      }
-
-      setMessage('Pizza place added and photo uploaded!')
+      const result = await submitPlaceToServer({ entity: 'pizza', payload, style: payload.style, photo: pizzaForm.photo })
+      setMessage(result.photo?.error
+        ? 'Pizza place saved, but photo upload failed. Try adding the photo from the review editor later.'
+        : pizzaForm.photo?.file ? 'Pizza place added and photo uploaded!' : 'Pizza place added!')
       cleanupPhotoPreview(pizzaForm)
       setPizzaForm(initialPizzaState)
     } catch (err) {
@@ -557,6 +520,8 @@ export default function AdminForm() {
       status: tacoForm.status,
       review: stripTags(tacoForm.review),
       notes: stripTags(tacoForm.notes),
+      state: tacoForm.state,
+      googlePlaceId: tacoForm.googlePlaceId,
     }
 
     if (!payload.name || !payload.address || Number.isNaN(payload.lat) || Number.isNaN(payload.lng) || !payload.type) {
@@ -568,33 +533,10 @@ export default function AdminForm() {
     setGlobalLoadingVariant('taco')
     openGlobalLoading('Saving taco spot…')
     try {
-      const inserted = await submitPlaceToServer({ entity: 'taco', payload, style: payload.type })
-
-      if (tacoForm.photo?.file && inserted?.id) {
-        try {
-          const { publicUrl, path } = await uploadPlacePhoto(tacoForm.photo.file, {
-            entity: 'taco',
-            recordId: inserted.id,
-          })
-          const storedUrl = publicUrl || path
-          if (storedUrl) {
-            await appendPhotoToRow({
-              table: tacoConfig.table,
-              id: inserted.id,
-              storedUrl,
-              existingPhotos: inserted.photos,
-            })
-          }
-        } catch (photoError) {
-          console.error('[admin] taco photo upload failed', photoError)
-          setMessage('Taco spot saved, but photo upload failed. Try adding the photo from the review editor later.')
-          cleanupPhotoPreview(tacoForm)
-          setTacoForm(initialTacoState)
-          return
-        }
-      }
-
-      setMessage('Taco spot added and photo uploaded!')
+      const result = await submitPlaceToServer({ entity: 'taco', payload, style: payload.type, photo: tacoForm.photo })
+      setMessage(result.photo?.error
+        ? 'Taco spot saved, but photo upload failed. Try adding the photo from the review editor later.'
+        : tacoForm.photo?.file ? 'Taco spot added and photo uploaded!' : 'Taco spot added!')
       cleanupPhotoPreview(tacoForm)
       setTacoForm(initialTacoState)
     } catch (err) {
@@ -624,51 +566,10 @@ export default function AdminForm() {
     setGlobalLoadingVariant('pizza')
     openGlobalLoading('Logging frozen pizza…')
     try {
-      const { data: inserted, error } = await supabase
-        .from('frozen_pizzas')
-        .insert([payload])
-        .select('id, photos, photo_url')
-        .single()
-
-      if (error) throw error
-
-      if (frozenForm.photo?.file && inserted?.id) {
-        try {
-          const { publicUrl, path } = await uploadPlacePhoto(frozenForm.photo.file, {
-            entity: 'frozen',
-            recordId: inserted.id,
-          })
-          const storedUrl = publicUrl || path
-          if (storedUrl) {
-            try {
-              await appendPhotoToRow({
-                table: 'frozen_pizzas',
-                id: inserted.id,
-                storedUrl,
-                existingPhotos: inserted.photos,
-              })
-            } catch (attachError) {
-              // If both photos array and photo_url fail, surface but do not fail the entire flow.
-              console.warn('[admin] frozen photo attach fallback', attachError)
-              const fallbackUpdate = await supabase
-                .from('frozen_pizzas')
-                .update({ photo_path: storedUrl })
-                .eq('id', inserted.id)
-              if (fallbackUpdate.error) {
-                console.warn('[admin] frozen photo_path fallback failed', fallbackUpdate.error)
-              }
-            }
-          }
-        } catch (photoError) {
-          console.error('[admin] frozen photo upload failed', photoError)
-          setMessage('Frozen pizza logged, but photo upload failed. Add it later from the admin dashboard.')
-          cleanupPhotoPreview(frozenForm)
-          setFrozenForm(initialFrozenState)
-          return
-        }
-      }
-
-      setMessage('Frozen pizza logged and photo uploaded!')
+      const result = await submitPlaceToServer({ entity: 'frozen', payload, photo: frozenForm.photo })
+      setMessage(result.photo?.error
+        ? 'Frozen pizza logged, but photo upload failed. Add it later from the admin dashboard.'
+        : frozenForm.photo?.file ? 'Frozen pizza logged and photo uploaded!' : 'Frozen pizza logged!')
       cleanupPhotoPreview(frozenForm)
       setFrozenForm(initialFrozenState)
     } catch (err) {
@@ -770,6 +671,8 @@ export default function AdminForm() {
                     ...prev,
                     name: nextName,
                     address: nextAddress,
+                    state: stateFromFormattedAddress(nextAddress),
+                    googlePlaceId: details?.place_id || suggestion?.place_id || '',
                   }))
                   if (details) {
                     const lat = typeof details.lat === 'number' ? details.lat.toString() : null
@@ -886,6 +789,8 @@ export default function AdminForm() {
                     ...prev,
                     name: nextName,
                     address: nextAddress,
+                    state: stateFromFormattedAddress(nextAddress),
+                    googlePlaceId: details?.place_id || suggestion?.place_id || '',
                   }))
                   if (details) {
                     const lat = typeof details.lat === 'number' ? details.lat.toString() : null
@@ -1036,7 +941,9 @@ export default function AdminForm() {
               />
             </label>
 
-            <PhotoPicker value={frozenForm.photo} onChange={photo => setFrozenForm(prev => ({ ...prev, photo }))} />
+            <p className="admin-photo-picker__hint">
+              Frozen pizza photos are not supported by the current database schema.
+            </p>
           </>
         )}
 
