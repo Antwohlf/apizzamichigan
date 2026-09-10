@@ -9,8 +9,9 @@ provider responses, logs, and pipeline artifacts are not licensed for reuse
 here.
 
 The repository is still private and currently contains legacy record-level
-files, including first-party fallback data, personal reviews, an OSM-derived
-SQL import, and resume checkpoints. Their presence is being inventoried; they
+files, including first-party fallback data and personal reviews. The generated
+OSM SQL import and resume checkpoints were privately preserved and removed from
+the current tree; older history still contains them. The remaining records
 must be removed, replaced with synthetic data, or receive an explicit
 provenance and licensing decision before repository visibility changes.
 

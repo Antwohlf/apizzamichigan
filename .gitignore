@@ -27,6 +27,9 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 
+# Legacy manual-tool state belongs on the private host. The tools require
+# PRIVATE_PIPELINE_STATE_DIR and fail closed if migrated state is unavailable.
+# Keep these patterns so a private-state misconfiguration cannot re-track them.
 # enrichment pipeline local artifacts
 /.osm-id-cache.json
 /scripts/.osm-id-cache.json
@@ -80,3 +83,5 @@ __pycache__/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.supabase/
+supabase/.temp/

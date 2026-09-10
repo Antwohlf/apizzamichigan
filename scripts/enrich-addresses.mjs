@@ -11,7 +11,8 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import { writeFileSync, readFileSync, existsSync } from 'fs'
+import { writeFileSync } from 'fs'
+import { privatePipelineStatePath, readPrivateJson } from './lib/private-pipeline-state.mjs'
 import 'dotenv/config'
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://htahyiuvqmalfpbgiizx.supabase.co'
@@ -26,22 +27,18 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 // Progress file path
 function getProgressFile(table) {
-  return `scripts/.address-enrichment-${table}.json`
+  return privatePipelineStatePath(`.address-enrichment-${table}.json`)
 }
 
 /**
  * Load progress from file
  */
 function loadProgress(table) {
-  const file = getProgressFile(table)
-  if (existsSync(file)) {
-    try {
-      return JSON.parse(readFileSync(file, 'utf8'))
-    } catch {
-      return { processed: {}, lastId: null }
-    }
-  }
-  return { processed: {}, lastId: null }
+  const { value } = readPrivateJson(`.address-enrichment-${table}.json`, data => (
+    data && data.processed && typeof data.processed === 'object' &&
+    !Array.isArray(data.processed) && Object.prototype.hasOwnProperty.call(data, 'lastId')
+  ))
+  return value
 }
 
 /**

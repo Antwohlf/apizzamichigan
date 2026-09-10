@@ -5,11 +5,14 @@
  * Extends the base ProgressTracker with state-specific functionality.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { writeFileSync } from 'node:fs'
+import { privatePipelineStatePath, readPrivateJson } from './private-pipeline-state.mjs'
 
 export class StateImportTracker {
   constructor(filePath = 'scripts/.state-import-progress.json') {
-    this.filePath = filePath
+    this.fileName = filePath.split(/[\\/]/).pop()
+    this.filePath = privatePipelineStatePath(this.fileName)
+    this.loaded = false
     this.data = {
       version: 1,
       lastUpdated: null,
@@ -26,23 +29,24 @@ export class StateImportTracker {
   }
 
   async load() {
-    if (existsSync(this.filePath)) {
-      try {
-        const content = readFileSync(this.filePath, 'utf-8')
-        this.data = JSON.parse(content)
-        console.log(`Loaded progress: ${this.data.states.completed.length} states completed`)
-        if (this.data.states.failed.length > 0) {
-          console.log(`  ${this.data.states.failed.length} states previously failed (will retry)`)
-        }
-      } catch (err) {
-        console.warn(`Could not load progress file: ${err.message}`)
-      }
-    } else {
-      this.data.startedAt = new Date().toISOString()
+    this.loaded = false
+    const { value } = readPrivateJson(this.fileName, data => (
+      data && data.version === 1 && data.states &&
+      Array.isArray(data.states.completed) && Array.isArray(data.states.failed) &&
+      Array.isArray(data.states.pending) && data.recordCounts &&
+      typeof data.recordCounts === 'object' && data.retries && typeof data.retries === 'object' &&
+      data.errors && typeof data.errors === 'object'
+    ))
+    this.data = value
+    this.loaded = true
+    console.log(`Loaded progress: ${this.data.states.completed.length} states completed`)
+    if (this.data.states.failed.length > 0) {
+      console.log(`  ${this.data.states.failed.length} states previously failed (will retry)`)
     }
   }
 
   async save() {
+    if (!this.loaded) throw new Error(`Refusing to save ${this.fileName} before a valid private checkpoint has loaded`)
     this.data.lastUpdated = new Date().toISOString()
     writeFileSync(this.filePath, JSON.stringify(this.data, null, 2))
   }

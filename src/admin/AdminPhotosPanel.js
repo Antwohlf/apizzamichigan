@@ -114,6 +114,7 @@ export default function AdminPhotosPanel({ entity }) {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
+          entity,
           files: [{
             path: prepared.path,
             size: prepared.size,
@@ -128,7 +129,7 @@ export default function AdminPhotosPanel({ entity }) {
       updatePhotos(reviewId, latest)
     }
     return latest
-  }, [reviews, updatePhotos])
+  }, [entity, reviews, updatePhotos])
 
   const reorder = useCallback(async (reviewId, photos) => {
     const order = Array.isArray(photos) ? photos.map(photo => photo.id).filter(Boolean) : []
@@ -137,13 +138,13 @@ export default function AdminPhotosPanel({ entity }) {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ order }),
+      body: JSON.stringify({ entity, order }),
     })
     if (!response.ok) throw new Error(await response.text() || 'Failed to update photo order.')
     const payload = await response.json()
     updatePhotos(reviewId, payload?.data)
     return payload?.data
-  }, [updatePhotos])
+  }, [entity, updatePhotos])
 
   const remove = useCallback(async (reviewId, photoId) => {
     const response = await fetch(`/api/admin/review-photos/${photoId}`, {

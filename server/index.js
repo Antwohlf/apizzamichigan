@@ -18,6 +18,10 @@ const {
   validateAdminSessionValue,
 } = require('../shared/admin-session-boundary.cjs')
 const {
+  normalizeAdminPlaceSubmission,
+  normalizePreparedPhoto,
+} = require('../shared/admin-place-write-boundary.cjs')
+const {
   presentPipelineStatus,
   readPipelineStatusSnapshot,
   resolveStatusSelection,
@@ -1705,7 +1709,16 @@ const getStorageClient = () => {
   return serviceClient.storage.from(REVIEW_PHOTO_BUCKET)
 }
 
-async function fetchPhotosForPlace(placeId) {
+function requireReviewPhotoEntity(value) {
+  if (value !== 'pizza' && value !== 'taco') {
+    const error = new Error('Photo entity must be pizza or taco.')
+    error.status = 400
+    throw error
+  }
+  return value
+}
+
+async function fetchPhotosForPlace(placeId, entity) {
   if (!reviewPhotosTableAvailable) {
     return []
   }
@@ -1716,6 +1729,7 @@ async function fetchPhotosForPlace(placeId) {
       .from(REVIEW_PHOTO_TABLE)
       .select('id, place_id, storage_path, sort_order')
       .eq('place_id', placeId)
+      .eq('entity_type', requireReviewPhotoEntity(entity))
       .order('sort_order', { ascending: true })
 
     if (error) {
@@ -1743,11 +1757,13 @@ async function fetchPhotosForPlace(placeId) {
   }
 }
 
-async function insertReviewPhotoRows(placeId, paths) {
+async function insertReviewPhotoRows(placeId, paths, entity) {
+  const entityType = requireReviewPhotoEntity(entity)
   const { count, error: countError } = await serviceClient
     .from(REVIEW_PHOTO_TABLE)
     .select('id', { count: 'exact', head: true })
     .eq('place_id', placeId)
+    .eq('entity_type', entityType)
 
   if (countError) {
     if (countError?.code === 'PGRST205') {
@@ -1770,6 +1786,7 @@ async function insertReviewPhotoRows(placeId, paths) {
     place_id: placeId,
     storage_path: path,
     sort_order: baseOrder + index + 1,
+    entity_type: entityType,
   }))
 
   const { error: insertError } = await serviceClient.from(REVIEW_PHOTO_TABLE).insert(inserts)
@@ -1793,6 +1810,48 @@ function isSafeStoragePath(path) {
     !path.includes('..') &&
     /^[A-Za-z0-9/_-]+\.webp$/.test(path)
   )
+}
+
+async function uploadSubmittedPlacePhoto(photo, { entity, inserted }) {
+  const fileName = photo.path.split('/').pop()
+  const storagePath = `${entity}/${inserted.id}/${fileName}`
+  if (!isSafeStoragePath(storagePath)) {
+    const error = new Error('Invalid photo storage path.')
+    error.status = 400
+    throw error
+  }
+
+  const buffer = Buffer.from(photo.dataBase64, 'base64')
+  if (buffer.length === 0 || buffer.length > MAX_REVIEW_PHOTO_BYTES) {
+    const error = new Error('Photo is too large after processing.')
+    error.status = 413
+    throw error
+  }
+
+  const storage = getStorageClient()
+  const { error: uploadError } = await storage.upload(storagePath, buffer, {
+    cacheControl: '3600',
+    contentType: photo.mimeType,
+    upsert: false,
+  })
+  if (uploadError) throw uploadError
+
+  try {
+    const { error: metadataError } = await serviceClient.from(REVIEW_PHOTO_TABLE).insert({
+      place_id: inserted.id,
+      storage_path: storagePath,
+      sort_order: 1,
+      entity_type: entity,
+    })
+    if (metadataError) throw metadataError
+    const { data: publicData } = storage.getPublicUrl(storagePath)
+    return { path: storagePath, publicUrl: publicData?.publicUrl || null }
+  } catch (error) {
+    await storage.remove([storagePath]).catch(cleanupError => {
+      console.warn('[admin] failed to clean up submitted place photo', cleanupError)
+    })
+    throw error
+  }
 }
 
 app.post('/api/bug-report', async (req, res) => {
@@ -1831,58 +1890,30 @@ app.get('/api/admin/check', (req, res) => {
 })
 
 app.post('/api/admin/submitPlace', requireAdminAuth, async (req, res) => {
-  const {
-    entity,
-    name,
-    address,
-    city,
-    url,
-    style,
-    price,
-    status,
-    review,
-    rating,
-    notes,
-    lat,
-    lng,
-  } = req.body || {}
-
-  if (!['pizza', 'taco'].includes(entity)) {
-    return res.status(400).json({ error: 'Entity must be pizza or taco' })
-  }
-  if (!name || !address || typeof lat !== 'number' || typeof lng !== 'number' || !style) {
-    return res.status(400).json({ error: 'Missing required fields' })
-  }
-
-  const row = {
-    name,
-    address,
-    city: city || null,
-    url: url || null,
-    price: price || null,
-    status: status || 'unvisited',
-    review: review || null,
-    notes: notes || null,
-    rating: typeof rating === 'number' ? rating : null,
-    lat,
-    lng,
-  }
-
-  if (entity === 'pizza') {
-    row.style = style
-  } else {
-    row.type = style
-  }
-
-  const table = getPlaceTable(entity)
-
   try {
+    const submission = normalizeAdminPlaceSubmission(req.body)
+    const photo = normalizePreparedPhoto(req.body?.photo)
+    const { entity, row } = submission
+    const table = submission.table || getPlaceTable(entity)
+    if (entity === 'frozen' && photo) {
+      return res.status(400).json({ error: 'Frozen pizza photos are not supported by the current database schema.' })
+    }
     const { data, error } = await serviceClient.from(table).insert(row).select('*').single()
     if (error) throw error
-    return res.json({ data })
+
+    let photoResult = null
+    if (photo) {
+      try {
+        photoResult = await uploadSubmittedPlacePhoto(photo, { entity, inserted: data })
+      } catch (photoError) {
+        console.error('[admin] submitted place photo error', photoError)
+        photoResult = { error: photoError.message || 'Failed to upload photo.' }
+      }
+    }
+    return res.json({ data, photo: photoResult })
   } catch (error) {
     console.error('[admin] submit error', error)
-    return res.status(500).json({ error: 'Failed to submit place' })
+    return res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to submit place' })
   }
 })
 
@@ -1910,7 +1941,8 @@ app.get('/api/admin/reviews', requireAdminAuth, async (req, res) => {
       const { data: photoRows, error: photosError } = await serviceClient
         .from(REVIEW_PHOTO_TABLE)
         .select('id, place_id, storage_path, sort_order')
-        .in('place_id', placeIds)
+          .in('place_id', placeIds)
+          .eq('entity_type', entity)
         .order('sort_order', { ascending: true })
 
       if (photosError) {
@@ -1956,6 +1988,7 @@ app.get('/api/admin/reviews', requireAdminAuth, async (req, res) => {
 app.post('/api/admin/reviews/:id/photos', requireAdminAuth, async (req, res) => {
   try {
     const placeId = req.params.id
+    const entity = requireReviewPhotoEntity(req.body?.entity)
     const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter(Boolean) : []
     if (!placeId) {
       return res.status(400).json({ error: 'Missing review identifier.' })
@@ -1967,9 +2000,9 @@ app.post('/api/admin/reviews/:id/photos', requireAdminAuth, async (req, res) => 
       return res.status(503).json({ error: 'Review photos table is not configured yet.' })
     }
 
-    await insertReviewPhotoRows(placeId, paths)
+    await insertReviewPhotoRows(placeId, paths, entity)
 
-    const photos = await fetchPhotosForPlace(placeId)
+    const photos = await fetchPhotosForPlace(placeId, entity)
     return res.json({ data: photos })
   } catch (error) {
     console.error('[admin] create review photo error', error)
@@ -1979,10 +2012,12 @@ app.post('/api/admin/reviews/:id/photos', requireAdminAuth, async (req, res) => 
 
 app.post('/api/admin/reviews/:id/photos/upload', requireAdminAuth, async (req, res) => {
   const placeId = req.params.id
+  let entity
   const files = Array.isArray(req.body?.files) ? req.body.files : []
   const uploadedPaths = []
 
   try {
+    entity = requireReviewPhotoEntity(req.body?.entity)
     if (!placeId) {
       return res.status(400).json({ error: 'Missing review identifier.' })
     }
@@ -2024,8 +2059,8 @@ app.post('/api/admin/reviews/:id/photos/upload', requireAdminAuth, async (req, r
       uploadedPaths.push(storagePath)
     }
 
-    await insertReviewPhotoRows(placeId, uploadedPaths)
-    const photos = await fetchPhotosForPlace(placeId)
+    await insertReviewPhotoRows(placeId, uploadedPaths, entity)
+    const photos = await fetchPhotosForPlace(placeId, entity)
     return res.json({ data: photos })
   } catch (error) {
     if (uploadedPaths.length > 0) {
@@ -2043,6 +2078,7 @@ app.post('/api/admin/reviews/:id/photos/upload', requireAdminAuth, async (req, r
 app.patch('/api/admin/reviews/:id/photos/reorder', requireAdminAuth, async (req, res) => {
   try {
     const placeId = req.params.id
+    const entity = requireReviewPhotoEntity(req.body?.entity)
     const order = Array.isArray(req.body?.order) ? req.body.order : []
     if (!placeId) {
       return res.status(400).json({ error: 'Missing review identifier.' })
@@ -2060,6 +2096,7 @@ app.patch('/api/admin/reviews/:id/photos/reorder', requireAdminAuth, async (req,
         .update({ sort_order: index + 1 })
         .eq('id', photoId)
         .eq('place_id', placeId)
+        .eq('entity_type', entity)
     )
 
     const results = await Promise.all(updates)
@@ -2072,7 +2109,7 @@ app.patch('/api/admin/reviews/:id/photos/reorder', requireAdminAuth, async (req,
       throw failed.error
     }
 
-    const photos = await fetchPhotosForPlace(placeId)
+    const photos = await fetchPhotosForPlace(placeId, entity)
     return res.json({ data: photos })
   } catch (error) {
     console.error('[admin] reorder review photos error', error)
@@ -2092,7 +2129,7 @@ app.delete('/api/admin/review-photos/:photoId', requireAdminAuth, async (req, re
   try {
     const { data: photo, error } = await serviceClient
       .from(REVIEW_PHOTO_TABLE)
-      .select('id, place_id, storage_path')
+      .select('id, place_id, storage_path, entity_type')
       .eq('id', photoId)
       .single()
 
@@ -2122,7 +2159,7 @@ app.delete('/api/admin/review-photos/:photoId', requireAdminAuth, async (req, re
       throw deleteError
     }
 
-    const photos = await fetchPhotosForPlace(photo.place_id)
+    const photos = await fetchPhotosForPlace(photo.place_id, photo.entity_type)
     return res.json({ data: photos })
   } catch (error) {
     console.error('[admin] delete review photo error', error)

@@ -24,6 +24,7 @@ set
 create table if not exists public."review-photos" (
   id uuid primary key default gen_random_uuid(),
   place_id bigint not null,
+  entity_type text not null default 'pizza',
   storage_path text not null unique,
   sort_order integer not null default 1,
   created_at timestamptz not null default now(),
@@ -33,11 +34,28 @@ create table if not exists public."review-photos" (
       and storage_path not like '/%'
       and storage_path not like '%..%'
     ),
-  constraint review_photos_sort_order_positive check (sort_order > 0)
+  constraint review_photos_sort_order_positive check (sort_order > 0),
+  constraint review_photos_entity_type_supported check (entity_type in ('pizza', 'taco'))
 );
+
+alter table public."review-photos"
+  add column if not exists entity_type text not null default 'pizza';
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'review_photos_entity_type_supported'
+  ) then
+    alter table public."review-photos"
+      add constraint review_photos_entity_type_supported check (entity_type in ('pizza', 'taco'));
+  end if;
+end $$;
 
 create index if not exists review_photos_place_order_idx
   on public."review-photos" (place_id, sort_order, created_at);
+
+create index if not exists review_photos_entity_place_order_idx
+  on public."review-photos" (entity_type, place_id, sort_order, created_at);
 
 alter table public."review-photos" enable row level security;
 
