@@ -43,8 +43,10 @@ documented legacy exceptions; the release audit fails. Known remaining files:
   `src/data/frozenTacos.js`, and `src/data/tacoPlaces.js`.
 - The application's `LICENSE` is missing.
 
-The production-dependency scan (`npm audit --omit=dev`) reports 13 affected
-packages: seven high, four moderate, two low, and no critical findings. This is
+After compatible locked dependency updates, the production-dependency scan
+(`npm audit --omit=dev`) reports five affected packages: zero high, three
+moderate, two low, and no critical findings. The remaining packages are
+`express`, `body-parser`, `qs`, `@supabase/supabase-js`, and `@supabase/auth-js`. This is
 a dependency advisory inventory, not proof that each issue is reachable in the
 deployed app. Review and test updates separately; do not force major upgrades
 as part of documentation cleanup.
