@@ -33,7 +33,8 @@ test('private host serves the built app without masking unknown APIs or exposing
   const api = express()
   api.get('/api/admin/check', (_req, res) => res.status(401).json({ authorized: false }))
   api.post('/api/admin/login', (_req, res) => res.json({ reached: true }))
-  const app = createPrivateHost({ api, webRoot, origin, release: 'test-release' })
+  let ready = false
+  const app = createPrivateHost({ api, webRoot, origin, release: 'test-release', isReady: () => ready })
   const server = app.listen(0, '127.0.0.1')
   await new Promise(resolve => server.once('listening', resolve))
   t.after(async () => {
@@ -41,6 +42,8 @@ test('private host serves the built app without masking unknown APIs or exposing
     rmSync(root, { recursive: true, force: true })
   })
   const base = `http://127.0.0.1:${server.address().port}`
+  assert.equal((await fetch(base + '/healthz')).status, 503)
+  ready = true
   for (const path of ['/admin/reviews', '/admin/reviews/data', '/tacos', '/tacos/places/42']) {
     const response = await fetch(base + path)
     assert.equal(response.status, 200)

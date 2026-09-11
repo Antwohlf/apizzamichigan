@@ -36,7 +36,7 @@ function privateTlsSettings(env) {
   return { host, port, options }
 }
 
-function createPrivateHost({ api, webRoot, origin, release = 'unknown' }) {
+function createPrivateHost({ api, webRoot, origin, release = 'unknown', isReady = () => true }) {
   const url = new URL(origin)
   if (url.protocol !== 'https:' || url.origin !== origin || url.username || url.password) {
     throw new Error('ADMIN_PUBLIC_ORIGIN must be an HTTPS origin without a path.')
@@ -63,7 +63,10 @@ function createPrivateHost({ api, webRoot, origin, release = 'unknown' }) {
     }
     return next()
   })
-  app.get('/healthz', (_req, res) => res.json({ status: 'ok', release }))
+  app.get('/healthz', (_req, res) => {
+    const ready = isReady()
+    res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'starting', release })
+  })
   app.use(api)
   // Never let the SPA hide an unknown API endpoint or return a secret/config file.
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }))
@@ -81,21 +84,44 @@ if (require.main === module) {
     if (!process.env[key]) throw new Error(`Missing private admin setting: ${key}`)
   }
   if (process.env.NODE_ENV !== 'production') throw new Error('The private admin host requires NODE_ENV=production.')
+  let ready = false
   const app = createPrivateHost({
     api: require('./index.js'),
     webRoot: process.env.ADMIN_WEB_ROOT || resolve(__dirname, '../build'),
     origin: process.env.ADMIN_PUBLIC_ORIGIN,
     release: process.env.APP_RELEASE || 'unknown',
+    isReady: () => ready,
   })
   const tls = privateTlsSettings(process.env)
-  const server = app.listen(Number(process.env.PORT || 5050), '127.0.0.1', () => {
-    console.log('Private admin host ready on loopback.')
-  })
-  const listeners = [server]
+  const listeners = []
+  let started = 0
+  let stopping = false
+  const stop = (code = 0) => {
+    if (stopping) return
+    stopping = true
+    ready = false
+    Promise.all(listeners.map(listener => new Promise(resolve => listener.close(resolve)))).then(() => process.exit(code))
+    setTimeout(() => process.exit(1), 10000).unref()
+  }
+  const onListening = () => {
+    started += 1
+    if (started === (tls ? 2 : 1) && !stopping) {
+      ready = true
+      console.log('Private admin host ready; all configured listeners are active.')
+    }
+  }
+  const watch = listener => {
+    listeners.push(listener)
+    listener.on('error', error => {
+      console.error(`Private admin listener failed (${error.code || 'unknown'}); shutting down.`)
+      stop(1)
+    })
+  }
+  watch(app.listen(Number(process.env.PORT || 5050), '127.0.0.1', onListening))
   if (tls) {
     const httpsServer = createServer(tls.options, app)
-    listeners.push(httpsServer)
-    httpsServer.listen(tls.port, tls.host, () => console.log('Private admin HTTPS ready on the tailnet interface.'))
+    watch(httpsServer)
+    httpsServer.listen(tls.port, tls.host, onListening)
     // The host certificate-renewal job owns issuance. Reload valid renewed files
     // without restarting the API; a failed refresh never replaces the last key.
     setInterval(() => {
@@ -103,12 +129,8 @@ if (require.main === module) {
       catch { console.error('Private HTTPS certificate refresh failed; retaining the last valid certificate.') }
     }, 60000).unref()
   }
-  const stop = () => {
-    Promise.all(listeners.map(listener => new Promise(resolve => listener.close(resolve)))).then(() => process.exit(0))
-    setTimeout(() => process.exit(1), 10000).unref()
-  }
-  process.on('SIGTERM', stop)
-  process.on('SIGINT', stop)
+  process.on('SIGTERM', () => stop(0))
+  process.on('SIGINT', () => stop(0))
 }
 
 module.exports = { createPrivateHost, privateTlsSettings }
