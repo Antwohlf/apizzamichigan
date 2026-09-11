@@ -65,7 +65,7 @@ findings correspond to deliberately closed tables. Table/sequence defaults
 are narrowed for future objects created by `postgres`; other owners' defaults
 and each new function's EXECUTE grants still require explicit review.
 
-## Audit snapshot — September 10, 2026
+## Audit snapshot — September 11, 2026
 
 The repository is still private. The ordinary current-tree audit passes with
 documented legacy exceptions; the release audit fails. Known remaining files:
@@ -82,12 +82,25 @@ a dependency advisory inventory, not proof that each issue is reachable in the
 deployed app. Review and test updates separately; do not force major upgrades
 as part of documentation cleanup.
 
-A fresh private mirror includes remote branches and pull-request refs. Gitleaks
-8.30.1 scanned all refs and reported 12 occurrences of one reviewed public
-Supabase `anon` key, not a privileged credential. This is not a privacy clearance:
-historical metadata reports, checkpoints, source records, and operator runbooks
-still remain reachable. No history rewrite or remote branch deletion has occurred.
-Do not delete fallback data merely to make an audit pass.
+The existing repository's 18 branches were sanitized in place after a verified
+private mirror backup. Eleven identified operational artifact paths were removed
+throughout history, and known personal machine references were replaced with
+neutral examples. No branches were deleted. Commit authors, timestamps, and
+topology were preserved; commit IDs changed. Application code and assets were
+preserved. A separate CI fix handles unavailable pre-rewrite comparison commits
+without fetching removed history.
+
+Gitleaks 8.30.1 scanned the locally rewritten refs and reported 12 occurrences
+of one reviewed public Supabase `anon` key, not a privileged credential. A fresh
+GitHub clone verified the selected private paths and machine references were
+absent from branch history. This is not a full privacy clearance: GitHub still
+retains 46 original pull-request head refs, and issue #8 contains private
+operational material. A GitHub Support assessment request is drafted but has not
+been submitted. No issue bodies or comments have been changed.
+
+Use a fresh clone for further work; never merge or force-push the old history
+back into the cleaned repository. Do not delete fallback data merely to make an
+audit pass. Website deployment is described in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Remaining gates
 
@@ -96,15 +109,14 @@ Do not delete fallback data merely to make an audit pass.
   `SECURITY.md` with that exact route.
 - Remove, synthesize, or explicitly license the remaining first-party fallback,
   personal-review record files.
-- Finish sanitizing archived operator code, and confirm no additional topology
-  or record-level files exist outside the audit's known-path inventory.
+- Resolve the retained original pull-request refs and cached historical views
+  with GitHub Support; a branch rewrite cannot remove these owner-read-only refs.
+- Redact or remove private operational material in issue #8 and its comments,
+  including any retained edit history. Private backups are already preserved.
 - Keep artifact-executor apply lanes separate from trusted-host production
   authority; do not enable an inert lane merely because host jobs have moved.
 - Complete the final privacy review and repeat secret scanning on the actual
   publication candidate after the history/content decision.
-- Review retained history and remote branches for generated data and private
-  operations details. Obtain explicit approval and a backup/clone-transition
-  plan before rewriting history or deleting remote branches.
 - Decide whether the historical non-noreply author email may remain public.
 
 The visibility change happens only after a fresh clone passes both the normal
