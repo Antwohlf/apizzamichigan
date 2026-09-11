@@ -3,8 +3,10 @@
 Do not include credentials, private business data, or production database
 extracts in a public issue. While this repository remains private, invited
 collaborators should contact the owner through an existing private channel.
-A verified private reporting address or GitHub private-vulnerability-reporting
-flow must be added before repository visibility changes.
+When switching the repository to public, enable GitHub private vulnerability
+reporting and verify the **Security → Advisories → Report a vulnerability**
+route. GitHub does not currently expose that setting for this private repository;
+it is part of the visibility transition, not a separate licensing prerequisite.
 
 ## Credential boundary
 

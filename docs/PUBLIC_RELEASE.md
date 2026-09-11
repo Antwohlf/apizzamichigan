@@ -1,8 +1,9 @@
 # Public repository release
 
-The GitHub repository remains private while the following release gates are
-completed. Passing normal CI is necessary but does not make the repository safe
-to publish.
+The owner has approved making the existing GitHub repository public, including
+its committed website reviews and fallback content. Selecting a software reuse
+license is not a publication prerequisite. Only concrete privacy/security
+cleanup remains relevant; passing CI alone does not scan GitHub-retained history.
 
 ## Completed cleanup
 
@@ -67,12 +68,11 @@ and each new function's EXECUTE grants still require explicit review.
 
 ## Audit snapshot — September 11, 2026
 
-The repository is still private. The ordinary current-tree audit passes with
-documented legacy exceptions; the release audit fails. Known remaining files:
-
-- Record-level data: `src/data.js`,
-  `src/data/frozenTacos.js`, and `src/data/tacoPlaces.js`.
-- The application's `LICENSE` is missing.
+The ordinary current-tree audit passes with documented legacy exceptions.
+The owner-approved review/fallback files (`src/data.js`, `src/data/frozenTacos.js`,
+and `src/data/tacoPlaces.js`) no longer fail release checks solely because they
+contain place records. They still receive all credential/private-topology checks.
+A missing software `LICENSE` is no longer treated as a security failure.
 
 After compatible locked dependency updates, the production-dependency scan
 (`npm audit --omit=dev`) reports five affected packages: zero high, three
@@ -94,9 +94,13 @@ Gitleaks 8.30.1 scanned the locally rewritten refs and reported 12 occurrences
 of one reviewed public Supabase `anon` key, not a privileged credential. A fresh
 GitHub clone verified the selected private paths and machine references were
 absent from branch history. This is not a full privacy clearance: GitHub still
-retains 46 original pull-request head refs, and issue #8 contains private
-operational material. A GitHub Support assessment request is drafted but has not
-been submitted. No issue bodies or comments have been changed.
+retains 46 original pull-request head refs. The Home Server Ops issue #8 and its
+five comments were deleted after exact private-backup verification. GitHub
+confirms the issue is deleted and its comments are no longer available. The
+retained PR refs/cached commits require a separate GitHub Support purge. The
+request was submitted and acknowledged on September 11, 2026; GitHub's cleanup
+is pending. The repository remains private until that retained material is
+resolved. There is no remaining owner licensing decision blocking publication.
 
 Use a fresh clone for further work; never merge or force-push the old history
 back into the cleaned repository. Do not delete fallback data merely to make an
@@ -104,20 +108,17 @@ audit pass. Website deployment is described in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Remaining gates
 
-- Choose and add the application's software license.
-- Enable and verify a private vulnerability-reporting route, then update
-  `SECURITY.md` with that exact route.
-- Remove, synthesize, or explicitly license the remaining first-party fallback,
-  personal-review record files.
+- As part of switching visibility, enable and verify GitHub private vulnerability
+  reporting, then update `SECURITY.md` with the active route. Its API currently
+  returns 404 while this repository is private.
 - Resolve the retained original pull-request refs and cached historical views
   with GitHub Support; a branch rewrite cannot remove these owner-read-only refs.
-- Redact or remove private operational material in issue #8 and its comments,
-  including any retained edit history. Private backups are already preserved.
 - Keep artifact-executor apply lanes separate from trusted-host production
   authority; do not enable an inert lane merely because host jobs have moved.
 - Complete the final privacy review and repeat secret scanning on the actual
   publication candidate after the history/content decision.
-- Decide whether the historical non-noreply author email may remain public.
+
+Existing Git author identity is preserved as approved by the owner.
 
 The visibility change happens only after a fresh clone passes both the normal
 CI suite and the release-mode public audit.

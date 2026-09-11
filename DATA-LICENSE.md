@@ -1,19 +1,24 @@
 # Data and asset licensing
 
-The software license for this repository does not automatically apply to data
-or media.
+Publication of this repository and permission to reuse its contents are separate
+questions. No blanket software, data, or media reuse license is granted here.
 
 Production database snapshots, place records, source-derived datasets, review
 queues, personal ratings and notes, user submissions, uploaded photographs,
 provider responses, logs, and pipeline artifacts are not licensed for reuse
 here.
 
-The repository is still private and currently contains legacy record-level
-files, including first-party fallback data and personal reviews. The generated
-OSM SQL import and resume checkpoints were privately preserved and removed from
-the current tree; older history still contains them. The remaining records
-must be removed, replaced with synthetic data, or receive an explicit
-provenance and licensing decision before repository visibility changes.
+The owner approved public display of the site's committed review/fallback
+content on September 11, 2026: `src/data.js`, `src/data/frozenTacos.js`, and
+`src/data/tacoPlaces.js`. These are intentionally included website content, not
+private pipeline checkpoints or an export of the production database. That
+publication approval does not relicense third-party material or grant blanket
+redistribution rights to upstream datasets.
+
+The generated OSM SQL import, resume checkpoints, operational reports, and raw
+conversation artifacts were privately preserved and removed from branch
+history. GitHub's retained historical copies are tracked separately in
+[PUBLIC_RELEASE.md](docs/PUBLIC_RELEASE.md).
 
 Files explicitly described as synthetic fixtures contain fabricated
 names, identifiers, addresses, phone numbers, and URLs. They exist only for

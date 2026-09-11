@@ -41,7 +41,8 @@ const required = [
   'SECURITY.md',
   'docs/PIPELINE_BOUNDARY.md',
 ]
-if (release) required.push('LICENSE')
+// Public visibility does not require granting a software reuse license.
+// NOTICE and DATA-LICENSE.md document that decision separately from privacy.
 for (const path of required) {
   if (!files.includes(path)) errors.push(`${path}: required public-repository file is missing`)
 }

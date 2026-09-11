@@ -31,9 +31,11 @@ its inactive apply declarations must not be mistaken for production authority.
 - Taco-specific Overture support is deferred; the Pizza-only adapter is disabled
   for Taco.
 - BuiltHere's host-only work is preserved. BuiltHere has not been cut over.
-- Application repository visibility remains private pending the independent
-  [public-release gates](PUBLIC_RELEASE.md), including licensing and historical
-  data cleanup. The generalized pipeline repository is public.
+- Public visibility of this application repository and its committed website
+  content is approved. GitHub-retained historical copies still need cleanup;
+  selecting a software reuse license is not a visibility prerequisite. See
+  [publication status](PUBLIC_RELEASE.md). The generalized pipeline repository
+  is public.
 - Production jobs use task-specific, non-administrator database accounts with
   password authentication. Publication credentials live outside the shared
   worker environment; private host recovery material is not part of either repo.

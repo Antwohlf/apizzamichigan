@@ -1,12 +1,12 @@
 APizzaMichigan and TacoBoutMichigan
 Copyright 2026 Anthony Wohlfeil
 
-This private repository contains application source code, fabricated test
-fixtures, and legacy record-level files awaiting removal or an explicit
-licensing decision. It does not grant rights to place data, personal reviews,
-submitted photos, source-provider datasets, or third-party trademarks and
-assets. See DATA-LICENSE.md for the data and asset boundary.
+This repository contains application source code, fabricated test fixtures,
+and owner-approved website review/fallback content. It does not grant blanket
+reuse rights to source-provider datasets, submitted photographs, or third-party
+trademarks and assets. See DATA-LICENSE.md for the data and asset boundary.
 
-A software license has not yet been selected for this application repository.
-Public visibility alone does not grant permission to copy, modify, or
-redistribute the code.
+No additional software reuse license is granted. Public visibility permits
+viewing and forking through GitHub under GitHub's terms; it does not by itself
+provide a general open-source license. Selecting such a license is independent
+of repository visibility.

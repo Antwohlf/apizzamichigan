@@ -21,10 +21,11 @@ const legacyRuntimePaths = new Set([
 
 const releaseDataReviewPaths = new Set([
   'scripts/osm-pizza-import.sql',
-  'src/data.js',
-  'src/data/frozenTacos.js',
-  'src/data/tacoPlaces.js',
 ])
+
+// The owner approved publication of the site's committed review/fallback
+// content on September 11, 2026 (DATA-LICENSE.md). These files still receive
+// all credential and private-topology text checks; approval is not a bypass.
 
 const legacyPrivateTopologyPaths = new Set([
   'docs/HOME_SERVER_OPS.md',

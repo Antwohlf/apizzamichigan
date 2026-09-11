@@ -17,6 +17,16 @@ test('rejects generated data and local runtime paths', () => {
   assert.deepEqual(pathViolations('data/source-samples/fixtures/fsq-os-places-pizza-fixture.json'), [])
 })
 
+test('permits owner-approved site content without weakening privacy checks', () => {
+  const privatePath = ['', 'Users', 'alice', 'private', 'state'].join('/')
+  for (const path of ['src/data.js', 'src/data/frozenTacos.js', 'src/data/tacoPlaces.js']) {
+    assert.deepEqual(pathViolations(path, { release: true }), [])
+    assert.ok(textViolations(path, privatePath, { release: true }).length)
+    assert.ok(textViolations(path, "const ADMIN_PASSWORD = 'private-value'", { release: true }).length)
+  }
+  assert.ok(pathViolations('scripts/osm-pizza-import.sql', { release: true }).length)
+})
+
 test('rejects pipeline status snapshots at default and custom host paths', () => {
   const snapshot = JSON.stringify({
     schema: { name: 'map-data-pipeline.status', version: 1 },
