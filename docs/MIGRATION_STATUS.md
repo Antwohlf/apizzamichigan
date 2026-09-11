@@ -28,8 +28,11 @@ its inactive apply declarations must not be mistaken for production authority.
 
 ## Work deliberately kept separate
 
-- Taco-specific Overture support is deferred; the Pizza-only adapter is disabled
-  for Taco.
+- Taco-specific Overture support was completed in the external pipeline and
+  verified on the production host on September 11, 2026. Taco uses its own
+  restaurant-category policy and delivery checkpoints, not Pizza's acquisition
+  filter. Incremental scanning continues; see the pipeline's
+  [Taco Overture guide](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline/blob/main/docs/TACO_OVERTURE.md).
 - BuiltHere's host-only work is preserved. BuiltHere has not been cut over.
 - This application repository and the generalized pipeline repository are public.
   The owner accepted residual GitHub-retained historical exposure; see
