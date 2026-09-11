@@ -49,8 +49,18 @@ The administrator server no longer imports legacy script helpers, probes source
 credentials/setup files, reads raw OSM inputs, or reads a shared CSV queue.
 Editorial policy is app-owned under `server/product/`. Optional historical
 review summaries use the bounded, entity-specific external report adapter;
-current review work remains in the canonical database. This code change does
-not configure an operator's private report mount or change production workers.
-Vercel deploys the frontend; a separately running administrator API must use the
-updated code to receive these backend changes. Unconfigured historical reports
-remain unavailable without blocking canonical review decisions.
+current review work remains in the canonical database.
+
+The updated administrator UI and API are deployed together on the trusted iMac,
+with private Tailscale HTTPS access and the existing administrator login. Both
+products' canonical queues, external review reports, and publication status were
+verified through authenticated HTTPS requests; both review interfaces were also
+checked in a browser. The dedicated local database account cannot delete tables,
+change schemas, or read worker state. No editorial decisions were submitted as
+deployment tests, and pipeline workers were not restarted.
+
+Vercel continues to serve the public websites independently. Private host
+configuration and deployment evidence stay outside Git; see the
+[private administrator deployment guide](PRIVATE_ADMIN_DEPLOYMENT.md). Historical
+reports are labeled separately from current work, and unconfigured reports remain
+unavailable without blocking canonical review decisions.
