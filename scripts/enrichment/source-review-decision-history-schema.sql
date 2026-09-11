@@ -16,8 +16,15 @@ CREATE TABLE IF NOT EXISTS source_review_decision_history (
   action TEXT NOT NULL,
   reviewer_notes TEXT,
   reviewed_by TEXT,
+  canonical_before JSONB,
+  canonical_after JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Upgrade earlier installations explicitly, outside the request-handling role.
+ALTER TABLE source_review_decision_history
+  ADD COLUMN IF NOT EXISTS canonical_before JSONB,
+  ADD COLUMN IF NOT EXISTS canonical_after JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_source_review_history_queue
   ON source_review_decision_history(review_queue_id, created_at DESC);

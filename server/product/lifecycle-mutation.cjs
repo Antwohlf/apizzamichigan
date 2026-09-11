@@ -1,4 +1,5 @@
 // App-owned editorial lifecycle policy; never a pipeline worker entrypoint.
+const { requireLifecycleHistory } = require('./schema-readiness.cjs')
 const TABLE_BY_ENTITY = Object.freeze({ pizza: 'pizza_places', taco: 'taco_places' })
 const ALLOWED_STATUSES = new Set(['active', 'closed', 'replaced', 'demolished'])
 
@@ -48,27 +49,6 @@ function normalizeLifecycleChange({ entity = 'pizza', placeId, lifecycleStatus, 
     replacementId: successorId,
     reason: normalizedReason || 'Restored to active after manual review.',
   }
-}
-
-async function ensureLifecycleHistorySchema(client) {
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS place_lifecycle_history (
-      id BIGSERIAL PRIMARY KEY,
-      entity_type TEXT NOT NULL CHECK (entity_type IN ('pizza', 'taco')),
-      place_id BIGINT NOT NULL,
-      previous_lifecycle_status TEXT,
-      previous_replaced_by_id BIGINT,
-      lifecycle_status TEXT,
-      replaced_by_id BIGINT,
-      reason TEXT NOT NULL,
-      changed_by TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `)
-  await client.query(`
-    CREATE INDEX IF NOT EXISTS idx_place_lifecycle_history_place
-    ON place_lifecycle_history (entity_type, place_id, created_at DESC)
-  `)
 }
 
 async function readLifecycleTargets(client, input, { lock = false } = {}) {
@@ -127,7 +107,7 @@ async function applyLifecycleChange(client, rawInput, { changedBy = 'admin' } = 
   const input = normalizeLifecycleChange(rawInput)
   await client.query('BEGIN')
   try {
-    await ensureLifecycleHistorySchema(client)
+    await requireLifecycleHistory(client)
     const targets = await readLifecycleTargets(client, input, { lock: true })
     const preview = lifecyclePreview(input, targets)
     const updated = await client.query(`

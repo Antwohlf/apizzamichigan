@@ -11,6 +11,7 @@ const { handleBugReport } = require('../api/_lib/bugReport')
 const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
 const { getClientIp } = require('../api/_lib/request')
 const { applyLifecycleChange, normalizeLifecycleChange } = require('./product/lifecycle-mutation.cjs')
+const { requireReviewHistory } = require('./product/schema-readiness.cjs')
 const {
   DEFAULT_SESSION_TTL_MS,
   createAdminSessionValue,
@@ -508,34 +509,7 @@ async function sourceReviewQueueExists(client) {
   `)
   if (!result.rows[0]?.exists) return false
   if (!sourceReviewDecisionHistorySchemaReady) {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS source_review_decision_history (
-        id BIGSERIAL PRIMARY KEY,
-        review_queue_id BIGINT NOT NULL,
-        entity_type TEXT NOT NULL,
-        source TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        previous_review_kind TEXT,
-        previous_status TEXT,
-        previous_decision TEXT,
-        previous_canonical_place_id BIGINT,
-        review_kind TEXT NOT NULL,
-        status TEXT NOT NULL,
-        decision TEXT,
-        canonical_place_id BIGINT,
-        action TEXT NOT NULL,
-        reviewer_notes TEXT,
-        reviewed_by TEXT,
-        canonical_before JSONB,
-        canonical_after JSONB,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-    await client.query(`
-      ALTER TABLE source_review_decision_history
-        ADD COLUMN IF NOT EXISTS canonical_before JSONB,
-        ADD COLUMN IF NOT EXISTS canonical_after JSONB
-    `)
+    await requireReviewHistory(client)
     sourceReviewDecisionHistorySchemaReady = true
   }
   return true
