@@ -8,9 +8,20 @@ import { request } from 'node:http'
 
 const require = createRequire(import.meta.url)
 const express = require('express')
-const { createPrivateHost } = require('../../server/private-host.cjs')
+const { createPrivateHost, privateTlsSettings } = require('../../server/private-host.cjs')
 const { requireReviewHistory, requireLifecycleHistory } = require('../../server/product/schema-readiness.cjs')
 const origin = 'https://admin.example.test'
+
+test('direct private HTTPS rejects public interfaces and incomplete settings', () => {
+  assert.equal(privateTlsSettings({}), null)
+  assert.throws(() => privateTlsSettings({ ADMIN_TLS_HOST: '100.71.1.1' }), /supplied together/)
+  const env = { ADMIN_TLS_HOST: '100.71.1.1', ADMIN_TLS_PORT: '8443', ADMIN_TLS_CERT: '/missing/cert', ADMIN_TLS_KEY: '/missing/key', ADMIN_PUBLIC_ORIGIN: `${origin}:8443` }
+  for (const host of ['0.0.0.0', '::', '127.0.0.1', '203.0.113.10', '100.63.1.1', '100.128.1.1', '8.8.8.8']) {
+    assert.throws(() => privateTlsSettings({ ...env, ADMIN_TLS_HOST: host }), /Tailscale IPv4/)
+  }
+  assert.throws(() => privateTlsSettings({ ...env, ADMIN_TLS_PORT: '443' }), /port must match/)
+  assert.throws(() => privateTlsSettings({ ...env, ADMIN_TLS_CERT: 'relative.crt' }), /absolute paths/)
+})
 
 test('private host serves the built app without masking unknown APIs or exposing source/config', async t => {
   const root = mkdtempSync(join(tmpdir(), 'private-admin-host-'))

@@ -2,7 +2,7 @@
 
 The public Vercel website does not host the local-database administrator API.
 Run the existing admin UI and API together on the trusted iMac, privately over
-Tailscale HTTPS. Do not expose the service using Tailscale Funnel or public port
+Tailscale with HTTPS. Do not expose the service using Tailscale Funnel or public port
 forwarding. The existing admin password is still required on the private network.
 
 ## Release and configuration
@@ -24,11 +24,28 @@ and `FOOD_PIPELINE_STATUS_ROOT` to its `scripts` directory. These are read-only
 inputs; old or rejected artifacts are not current queue counts.
 
 Start the pinned release's `server/private-host.cjs` from the private working
-directory under the host's process supervisor. It binds only to `127.0.0.1:5050`.
+directory under the host's process supervisor. Its HTTP listener binds only to `127.0.0.1:5050`.
 Configure a private HTTPS reverse proxy to that port, preserving the host and
 forwarded protocol. The server trusts only loopback proxies and rejects
 cross-origin state-changing requests. Keep both frontend and API on that origin.
 The UI entrypoint is `/admin/reviews`; `/healthz` identifies the running release.
+
+### Direct private HTTPS alternative
+
+Some macOS Tailscale installations cannot persist Serve configuration because of
+[a Keychain storage error](https://github.com/tailscale/tailscale/issues/19933).
+Do not disable state encryption or reset Tailscale to work around this.
+Instead, obtain a certificate using `tailscale cert` into the private runtime
+directory, with the key mode 0600. Set all four `ADMIN_TLS_*` settings: the host's
+Tailscale IPv4 address, an unprivileged port such as 8443, and absolute certificate
+and key paths. Include the same port in `ADMIN_PUBLIC_ORIGIN`.
+
+This adds HTTPS bound only to the specified tailnet address, never a wildcard or
+LAN interface. The server validates the hostname, validity dates, key pair, and
+key permissions. Run `tailscale cert` daily under the host supervisor with
+`--min-validity=720h` and explicit output paths. The service reloads valid renewed
+certificates every minute without restarting the API. Verify expiry and renewal
+output during host maintenance; issuance failures must not be ignored.
 
 ## Database permissions
 
@@ -41,6 +58,10 @@ Create a dedicated login without superuser, database creation, role creation,
 replication, bypass-RLS, object ownership, or inherited worker roles. Apply
 `infra/admin/local-role.sql` with psql's `admin_role` and `admin_database` variables.
 Use bounded connection, statement, idle-transaction, and lock timeouts.
+Scope host authentication for that login to the product database, rejecting
+other databases before generic rules. Preserve existing roles' rules and verify
+wrong-password and wrong-database connections fail after reload. CONNECT grants
+alone do not override a database's default PUBLIC access.
 
 The role can read and edit the two products' canonical places and review evidence,
 and append audit records. It cannot delete/truncate tables, change schemas, or
@@ -63,4 +84,6 @@ For rollback, stop only the admin service, select the previous release and saved
 configuration, and restart it. Keep the existing database and current pipeline
 state; do not restore stale data. A first deployment can be rolled back by
 unloading only the admin supervisor entry and removing its private proxy route.
+For direct HTTPS, also unload its certificate-renewal job. Do not disable the
+host's Tailscale connection or remove another service's configuration.
 Store host paths, credentials, and deployment evidence privately, not in Git.
