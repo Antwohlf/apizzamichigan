@@ -63,4 +63,4 @@ old queues during ordinary startup.
 
 Live inventories, credentials, installed services, and cutover evidence stay
 private. Follow external `docs/FOOD_PRODUCTION_RUNTIME.md` for operations and
-[PUBLIC_RELEASE.md](PUBLIC_RELEASE.md) for website repository release gates.
+[PUBLIC_RELEASE.md](PUBLIC_RELEASE.md) for public repository maintenance.

@@ -292,7 +292,7 @@ async function main() {
       console.log('\nSync complete! You can now run the enrichment pipeline.')
       console.log('Next steps:')
       console.log('  1. Verify: node scripts/ops/home-status-report.mjs')
-      console.log('  2. Start classifier service via docs/IMAC_PIPELINE_RUNBOOK.md')
+      console.log('  2. Follow docs/PIPELINE_BOUNDARY.md to operate the external runtime')
     }
 
   } catch (error) {

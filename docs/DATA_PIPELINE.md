@@ -137,7 +137,6 @@ start scheduled jobs from this application checkout.
 
 Real hostnames, filesystem paths, schedules, installed service definitions, logs,
 credentials, and runtime snapshots must live outside the public repository.
-The old host-specific runbooks were preserved privately and replaced with
-handoff documentation. The sole retained health template uses placeholders and
-must be configured privately. Other release gates, including state, record
-licensing, and Git history, remain in [PUBLIC_RELEASE.md](PUBLIC_RELEASE.md).
+The sole retained health template uses placeholders and must be configured
+privately. Public repository hygiene and the accepted historical-cleanup limits
+are documented in [PUBLIC_RELEASE.md](PUBLIC_RELEASE.md).

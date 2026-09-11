@@ -14,13 +14,13 @@ npm run test:ops
 npm run typecheck
 npm run lint -- --quiet
 CI=true npm test -- --watchAll=false --runInBand
-npm run audit:public
+npm run audit:public:release
 ```
 
-The normal audit checks the current tree with documented legacy exceptions.
-Before changing repository visibility, run `npm run audit:public:release` and
-complete [PUBLIC_RELEASE.md](docs/PUBLIC_RELEASE.md), including the separate
-history/privacy scan. Passing the development audit alone is not sufficient.
+The repository is public. Both audit commands reject private runtime state and
+host details; release mode also rejects unapproved record-level extracts.
+See [public repository maintenance](docs/PUBLIC_RELEASE.md) for audit scope and
+the history-cleanup notice.
 
 ## Data and operations safety
 

@@ -30,4 +30,16 @@ I have used AI coding agents throughout much of the recent development, particul
 
 ## Stack
 
-React, Node.js, Leaflet, Supabase, PostgreSQL, Playwright, and Ollama.
+React, Node.js, Leaflet, Supabase, and PostgreSQL. The external pipeline uses
+Ollama for local classification.
+
+## Development and documentation
+
+See [local development](docs/LOCAL_DEVELOPMENT.md) to run the app and
+[contributing](CONTRIBUTING.md) for the verification commands.
+
+- [Repository structure](docs/REPO_STRUCTURE.md)
+- [Application and pipeline boundary](docs/PIPELINE_BOUNDARY.md)
+- [Data dictionary](docs/DATA_DICTIONARY.md) and [source policy](docs/DATA_SOURCES.md)
+- [Website deployment](docs/DEPLOYMENT.md)
+- [Security policy](SECURITY.md) and [public repository maintenance](docs/PUBLIC_RELEASE.md)

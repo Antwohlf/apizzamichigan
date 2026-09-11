@@ -43,8 +43,9 @@ presence is migration debt, not shared runtime ownership. Remove each copy
 after its app-facing caller has a versioned external contract and corresponding
 regression coverage.
 
-The inactive code under `scripts/enrichment/archive/` is historical reference
-only and must not be used for current operations.
+The retired bulk import scripts and archived worker framework have been removed.
+Historical implementations remain recoverable in Git history; they are not
+installation instructions. Do not restore them as website-owned jobs.
 
 ## Guardrails
 

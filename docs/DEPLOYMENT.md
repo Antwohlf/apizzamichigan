@@ -32,5 +32,5 @@ Use a fresh clone of the existing repository for new work. Do not merge or
 force-push from a checkout containing the old history. Preserve uncommitted work
 privately and transfer only reviewed changes onto the cleaned `main`.
 
-Repository publication is separate from deploying the website. The remaining
-GitHub-retained history cleanup is tracked in [PUBLIC_RELEASE.md](PUBLIC_RELEASE.md).
+The repository is public. The accepted limits of the historical cleanup are
+documented in [PUBLIC_RELEASE.md](PUBLIC_RELEASE.md); they are not a deployment gate.

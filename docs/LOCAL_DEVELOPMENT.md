@@ -2,6 +2,28 @@
 
 This project can be developed and tested without the home-server iMac.
 
+## Run the website
+
+Use Node.js 22 or newer:
+
+```sh
+npm ci
+npm start
+```
+
+The React development server serves the public app at `http://localhost:3000`.
+Use `.env.example` as a reference for an untracked `.env.local`; keep private
+provider and database credentials out of browser-prefixed variables.
+
+The public maps do not need a locally running pipeline. Administration and
+server-backed features require the separately configured Express server. Supply
+its settings in the process environment or an untracked `.env` and start it in
+a second terminal with `npm run start:server` (port 5050). The React development
+proxy forwards API requests there. Do not point local write-capable tools at
+production data as part of UI development.
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test and audit checklist.
+
 ## Safe checks
 
 ```bash

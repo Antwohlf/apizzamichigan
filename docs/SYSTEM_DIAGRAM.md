@@ -62,108 +62,16 @@ The everyday workflow is intentionally short. Technical reports, source details,
 and import controls remain available, but they are kept out of the main review
 path.
 
-## Current Project Shape
+## Runtime ownership
 
-## Current Production Shape
+- This repository owns the public maps, admin review interface, product schemas,
+  protected editorial fields, and guarded database publication contracts.
+- The [external pipeline repository](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline)
+  owns acquisition, enrichment, queues, scheduling, and the production publishers.
+- The website reads public data independently of pipeline execution. Its admin
+  interface reads bounded status snapshots; reading status does not authorize writes.
+- Host services, machine paths, schedules, and operational state belong in private
+  deployment inventories, not this diagram.
 
-```mermaid
-graph TD
-    OP["MacBook Operator<br/>Tailscale SSH"] --> IMAC["Michigan iMac<br/>external food-runtime checkout"]
-
-    subgraph "iMac Process Control"
-        LAUNCHD["launchd<br/>com.apizzamichigan.classifier"]
-        SYNC_SVC["launchd<br/>com.apizzamichigan.supabase-sync"]
-        MANUAL["Manual SSH Commands<br/>scrape / OSM / QA"]
-    end
-
-    subgraph "Active Classifier Service"
-        CLS["LLM Classifier<br/>llm-classifier.mjs"]
-    end
-
-    subgraph "Manual / Opt-In Agents"
-        OSM["OSM Extractor<br/>osm-extractor.mjs"]
-        SCR["Web Scraper<br/>web-scraper.mjs"]
-        MP["Menu Parse Slowlane"]
-        QA["QA Scripts"]
-        SYNC["Guarded Supabase Sync<br/>auto-guarded-supabase-sync.mjs"]
-    end
-
-    subgraph "Local State"
-        SQLITE[("SQLite Queue<br/>scripts/.job-queue.db")]
-        PG[("Local Postgres<br/>pizza_enrichment")]
-        LOGS[("/tmp/apizzamichigan/*.log")]
-    end
-
-    subgraph "External Services"
-        OLLAMA["Ollama<br/>llama3.2:latest"]
-        OVERPASS["Overpass API"]
-        WEBSITES["Restaurant Websites"]
-        SUPABASE["Supabase"]
-    end
-
-    OP --> LAUNCHD
-    OP --> SYNC_SVC
-    OP --> MANUAL
-    LAUNCHD --> CLS
-    SYNC_SVC --> SYNC
-    CLS --> SQLITE
-    CLS --> PG
-    CLS --> OLLAMA
-    CLS --> LOGS
-
-    MANUAL --> OSM
-    MANUAL --> SCR
-    MANUAL --> MP
-    MANUAL --> QA
-    MANUAL --> SYNC
-
-    OSM --> SQLITE
-    OSM --> PG
-    OSM --> OVERPASS
-    SCR --> SQLITE
-    SCR --> PG
-    SCR --> WEBSITES
-    MP --> SQLITE
-    MP --> PG
-    MP --> OLLAMA
-    QA --> PG
-    SYNC --> PG
-    SYNC --> SUPABASE
-```
-
-## Data Flow
-
-1. Supabase remains the public production database.
-2. The iMac maintains local Postgres (`pizza_enrichment`) as the enrichment working database.
-3. SQLite `scripts/.job-queue.db` tracks enrichment jobs and worker state.
-4. The first launchd-managed service runs only classification jobs.
-5. Supabase sync is launchd-managed through guarded health, QA, readiness,
-   dry-run, and protected-field gates.
-
-## Operational Defaults
-
-- Remote control: `ssh example-host`
-- Classifier model: `llama3.2:latest`
-- Classifier output cap: `OLLAMA_NUM_PREDICT=80`
-- Classifier timeout: `OLLAMA_TIMEOUT_MS=240000`
-- Sync service: `com.apizzamichigan.supabase-sync`, one guarded 100-row batch every 30 minutes
-- OSM source refresh: launchd-managed through the bounded source pipeline
-- Website scraping: launchd-managed through the single scraper worker
-- Menu parsing: paused/manual slowlane
-
-## Key Files
-
-| Component | Path |
-|-----------|------|
-| iMac runbook | `docs/IMAC_PIPELINE_RUNBOOK.md` |
-| launchd templates | `infra/local/launchd/` |
-| classifier health report | `scripts/ops/classifier-health-report.mjs` |
-| classification QA report | `scripts/ops/classification-qa-report.mjs` |
-| status report | `scripts/ops/home-status-report.mjs` |
-| stale worker cleanup | `scripts/ops/stale-worker-cleanup.mjs` |
-| bounded classifier report | `scripts/ops/classifier-batch-report.mjs` |
-| classifier | external `packages/food-runtime/scripts/enrichment/agents/llm-classifier.mjs` |
-| queue | external `packages/food-runtime/scripts/enrichment/queue.mjs` |
-| guarded sync | external `packages/food-runtime/scripts/ops/auto-guarded-supabase-sync.mjs` |
-| direct sync engine | external `packages/food-runtime/scripts/sync-local-to-supabase.mjs` |
-| archived legacy pipeline | `scripts/enrichment/archive/` |
+See [PIPELINE_BOUNDARY.md](PIPELINE_BOUNDARY.md) for integration details and
+[DATA_PIPELINE.md](DATA_PIPELINE.md) for the product data flow.

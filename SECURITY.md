@@ -1,12 +1,9 @@
 # Security policy
 
-Do not include credentials, private business data, or production database
-extracts in a public issue. While this repository remains private, invited
-collaborators should contact the owner through an existing private channel.
-When switching the repository to public, enable GitHub private vulnerability
-reporting and verify the **Security → Advisories → Report a vulnerability**
-route. GitHub does not currently expose that setting for this private repository;
-it is part of the visibility transition, not a separate licensing prerequisite.
+Report security issues privately through
+[GitHub's vulnerability reporting form](https://github.com/Antwohlf/apizzamichigan/security/advisories/new).
+Private vulnerability reporting is enabled. Do not include credentials, private
+business data, or production database extracts in a public issue.
 
 ## Credential boundary
 

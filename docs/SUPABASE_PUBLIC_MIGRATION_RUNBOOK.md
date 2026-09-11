@@ -3,6 +3,11 @@
 This is a one-time additive change for the public pizza and taco tables. It
 does not alter or delete records.
 
+This repository owns the SQL contracts, not the scheduled publisher. Runtime
+configuration, activation, and rollback belong to the
+[external food runtime](https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline/tree/main/packages/food-runtime).
+Do not install or reload a publisher from this checkout.
+
 ## Apply
 
 1. Open the project's Supabase SQL Editor.
@@ -51,7 +56,7 @@ It should return one function row with `security_definer = true`,
 lifecycle columns, and a zero-row probe of `{"updated_count": 0}`. This probe
 does not modify any place rows.
 
-From the private application checkout, run the read-only check. Set `APP_ROOT`
+From a privately configured application checkout, run the read-only check. Set `APP_ROOT`
 to that checkout without committing its value:
 
 ```bash
@@ -70,10 +75,10 @@ The expected lifecycle section is:
 - remote schema: ready
 ```
 
-If the remote schema is ready, the launchd template already contains the
-required lifecycle flag. Reload the service only when the iMac checkout has
-the current template, then rerun the same readiness report and require
-`enabled: yes` with no remote-schema error.
+If the remote schema is ready, follow the external runtime's deployment
+instructions to configure its publisher. This checkout does not contain that
+service template. Require `enabled: yes` with no remote-schema error before
+enabling lifecycle publication.
 
 ## Optional Search Index Step
 
@@ -89,7 +94,7 @@ latency as the tables grow.
 Run the consolidated read-only audit:
 
 ```bash
-/usr/local/bin/node scripts/ops/project-readiness-report.mjs --json
+node scripts/ops/project-readiness-report.mjs --json
 ```
 
 The `Public schema and search performance` gate should no longer list the two
@@ -103,21 +108,25 @@ After the SQL migration succeeds, run the status report before changing the
 service:
 
 ```bash
-/usr/local/bin/node scripts/ops/supabase-sync-status-report.mjs --json
+node scripts/ops/supabase-sync-status-report.mjs --json
 ```
 
 The report must show `bulkRpc.state: "not_configured"` or `"ready"` with
 `bulkRpc.available: true`. If it shows `migration_missing`, do not enable the
 flag; the production migration has not reached Supabase yet. If it shows
-`not_configured`, set `APIZZA_SYNC_BULK_RPC=1` in the iMac sync environment and
-reload the launchd job. Rerun the report and require `bulkRpc.state: "ready"`.
+`not_configured`, configure bulk publication through the external runtime's
+approved deployment workflow. Rerun the report and require
+`bulkRpc.state: "ready"`. Do not substitute an app-local write command for a
+missing publisher configuration.
 
-The normal guarded sync will then batch updates through the RPC. The launchd
-wrapper passes --bulk-rpc explicitly for both its regular and reconciliation
-runs, so scheduled sync fails closed rather than silently falling back to
-high-I/O row-level updates. Reviewed-new inserts remain on the existing guarded
-insert path. Row-level updates remain available only for an explicitly
-operator-invoked manual run.
+## Public-client grants
+
+The separate `supabase/migrations/20260910165538_harden_public_client_grants.sql`
+migration hardens the existing public-client permissions. It is not a complete
+database bootstrap. Preserve the required review-photo schema and existing
+editorial/publication contracts when provisioning another installation.
+See [PUBLIC_RELEASE.md](PUBLIC_RELEASE.md) for the read-only public-client
+verification command and its limits.
 
 ## Rollback
 

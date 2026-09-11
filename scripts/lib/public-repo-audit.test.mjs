@@ -6,9 +6,9 @@ import test from 'node:test'
 import { pathViolations, textViolations } from './public-repo-audit.mjs'
 
 test('rejects generated data and local runtime paths', () => {
-  assert.deepEqual(pathViolations('.taco-metadata-progress.json'), [])
+  assert.ok(pathViolations('.taco-metadata-progress.json').length)
   assert.ok(pathViolations('.taco-metadata-progress.json', { release: true }).length)
-  assert.deepEqual(pathViolations('scripts/.address-enrichment-pizza_places.json'), [])
+  assert.ok(pathViolations('scripts/.address-enrichment-pizza_places.json').length)
   assert.ok(pathViolations('scripts/.new-import-progress.json').length)
   assert.ok(pathViolations('output/browser.png').length)
   assert.ok(pathViolations('reports/source-review/export.json').length)
@@ -83,11 +83,14 @@ test('release checks reject private host topology', () => {
   assert.ok(textViolations('docs/runbook.md', privateAddress, { release: true }).length)
 })
 
-test('normal CI rejects new host topology while grandfathering exact legacy files', () => {
+test('normal CI rejects host topology even at former exception paths', () => {
+  // The deleted runbook path is intentional: restoring an old filename must
+  // not restore its former exception to the public-repository audit.
   const privatePath = ['', 'Users', 'alice', 'projects', 'app'].join('/')
   assert.ok(textViolations('docs/new-runbook.md', privatePath).length)
-  assert.deepEqual(textViolations('docs/IMAC_PIPELINE_RUNBOOK.md', privatePath), [])
+  assert.ok(textViolations('docs/IMAC_PIPELINE_RUNBOOK.md', privatePath).length)
   assert.ok(textViolations('docs/IMAC_PIPELINE_RUNBOOK.md', privatePath, { release: true }).length)
+  assert.ok(textViolations('infra/local/launchd/example.plist.template', privatePath).length)
 })
 
 test('rejects broad secret assignments and private keys', () => {

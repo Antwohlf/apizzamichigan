@@ -7,9 +7,8 @@ const forbiddenExactPaths = new Set([
   'scripts/taco-metadata-review.json',
 ])
 
-// These files are still authoritative resume state for legacy write-capable
-// scripts. They may remain only while the app repository is private. Removing
-// them before a verified host migration would silently restart work.
+// Retired import checkpoints belong in private operational storage, never in
+// the public source tree. Keep the exact names blocked against reintroduction.
 const legacyRuntimePaths = new Set([
   '.taco-metadata-progress.json',
   'scripts/.address-enrichment-pizza_places.json',
@@ -27,20 +26,8 @@ const releaseDataReviewPaths = new Set([
 // content on September 11, 2026 (DATA-LICENSE.md). These files still receive
 // all credential and private-topology text checks; approval is not a bypass.
 
-const legacyPrivateTopologyPaths = new Set([
-  'docs/HOME_SERVER_OPS.md',
-  'docs/IMAC_PIPELINE_RUNBOOK.md',
-  'docs/SAFEGUARDS.md',
-  'docs/SYSTEM_DIAGRAM.md',
-  'scripts/enrichment/archive/watchdog-keepalive.mjs',
-  'scripts/enrichment/keepalive.mjs',
-  'scripts/ops/classifier-health-report.mjs',
-  'scripts/ops/project-readiness-report.test.mjs',
-])
-
 const anonJwtAllowlist = new Set([
   'src/supabaseClient.js',
-  'scripts/migrate-add-state-column.mjs',
 ])
 
 const jwtPattern = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
@@ -101,15 +88,14 @@ function isPlaceholder(value, { allowIdentifierReference = false } = {}) {
 
 export function pathViolations(path, { release = false } = {}) {
   const violations = []
-  const grandfatheredRuntimePath = legacyRuntimePaths.has(path)
   if (forbiddenExactPaths.has(path)) violations.push('generated, operational, or conversation artifact')
-  if (release && grandfatheredRuntimePath) violations.push('legacy tracked runtime state requires verified host migration')
+  if (legacyRuntimePaths.has(path)) violations.push('private runtime checkpoint')
   if (release && releaseDataReviewPaths.has(path)) violations.push('record-level data requires an explicit public licensing decision')
   if (/^(?:reports|backups|output|assets|\.playwright-cli|\.vscode)(?:\/|$)/.test(path)) {
     violations.push('host-local output directory')
   }
-  if (!grandfatheredRuntimePath && /^scripts\/\..*-progress\.json(?:\..*)?$/.test(path)) violations.push('runtime progress file')
-  if (!grandfatheredRuntimePath && /^scripts\/\.address-enrichment-.*\.json$/.test(path)) violations.push('address-enrichment result')
+  if (/^scripts\/\..*-progress\.json(?:\..*)?$/.test(path)) violations.push('runtime progress file')
+  if (/^scripts\/\.address-enrichment-.*\.json$/.test(path)) violations.push('address-enrichment result')
   if (/^scripts\/.*-metadata-review\.json$/.test(path)) violations.push('metadata review result')
   if (/^scripts\/\.pipeline-status(?:\/|$)/.test(path)) violations.push('pipeline status runtime snapshot')
   if (/(?:^|\/)\.env(?:\..*)?$/.test(path) && path !== '.env.example') violations.push('environment file')
@@ -120,7 +106,7 @@ export function pathViolations(path, { release = false } = {}) {
   return violations
 }
 
-export function textViolations(path, text, { release = false } = {}) {
+export function textViolations(path, text) {
   const violations = []
 
   for (const token of text.match(jwtPattern) || []) {
@@ -147,14 +133,8 @@ export function textViolations(path, text, { release = false } = {}) {
     violations.push('contains a pipeline status runtime snapshot')
   }
 
-  const topologyGrandfathered = !release && (
-    legacyPrivateTopologyPaths.has(path)
-    || path.startsWith('infra/local/launchd/')
-  )
-  if (!topologyGrandfathered) {
-    for (const [pattern, message] of releaseOnlyTextPatterns) {
-      if (pattern.test(text)) violations.push(message)
-    }
+  for (const [pattern, message] of releaseOnlyTextPatterns) {
+    if (pattern.test(text)) violations.push(message)
   }
 
   return [...new Set(violations)]
