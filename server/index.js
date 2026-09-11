@@ -12,6 +12,7 @@ const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
 const { getClientIp } = require('../api/_lib/request')
 const { applyLifecycleChange, normalizeLifecycleChange } = require('./product/lifecycle-mutation.cjs')
 const { requireReviewHistory } = require('./product/schema-readiness.cjs')
+const { sourceRecordIdentity } = require('./product/source-record-identity.cjs')
 const {
   DEFAULT_SESSION_TTL_MS,
   createAdminSessionValue,
@@ -664,8 +665,7 @@ const canonicalSourceReviewName = row => {
 }
 
 const sourceReviewCandidatePayload = row => {
-  const source = String(row.source || '').trim()
-  const sourceId = String(row.source_id || '').trim()
+  const identity = sourceRecordIdentity(row.source, row.source_id)
   return {
     name: canonicalSourceReviewName(row),
     lat: sourceReviewCoordinate(row, ['lat', 'latitude']),
@@ -674,7 +674,7 @@ const sourceReviewCandidatePayload = row => {
     state: row.source_data?.region || row.source_data?.state || row.source_data?.country || null,
     websiteUrl: row.source_data?.website || row.source_data?.['contact:website'] || null,
     phone: row.source_data?.phone || row.source_data?.['contact:phone'] || null,
-    googlePlaceId: source && sourceId ? `${source}:${sourceId}` : null,
+    googlePlaceId: identity.googlePlaceId,
   }
 }
 
@@ -1111,7 +1111,7 @@ async function importReviewedNewCandidate(client, tableName, row) {
     row.entity_type,
     place.id,
     row.source,
-    row.source_id,
+    sourceRecordIdentity(row.source, row.source_id).sourceId,
     row.source_url,
     metadata.license,
     metadata.attribution,
@@ -1305,7 +1305,7 @@ async function upsertReviewedPlaceSource(client, row, canonicalPlaceId, reviewer
     row.entity_type,
     canonicalPlaceId,
     row.source,
-    row.source_id,
+    sourceRecordIdentity(row.source, row.source_id).sourceId,
     row.source_url,
     metadata.license,
     metadata.attribution,
