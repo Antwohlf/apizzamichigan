@@ -1,0 +1,27 @@
+{
+  "name": "food-review-artifacts",
+  "version": 1,
+  "producerRepository": "Antwohlf/map-data-aggregation-enhancement-pipeline",
+  "consumerRepository": "Antwohlf/apizzamichigan",
+  "access": "read-only",
+  "rootEnvironmentVariable": "FOOD_PIPELINE_REPORT_ROOT",
+  "format": "food-runtime-review-report",
+  "directory": "source-review",
+  "filenamePattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*-review\\.json$",
+  "entities": ["pizza", "taco"],
+  "sources": ["osm", "fsq_os_places", "all_the_places", "overture_places", "wikidata", "official_website"],
+  "maxReports": 128,
+  "maxFileBytes": 8388608,
+  "maxTotalBytes": 33554432,
+  "maxAgeMinutes": 360,
+  "futureToleranceMinutes": 5,
+  "requiredFields": ["entity", "source", "generated_at", "counts"],
+  "countFields": {
+    "inputRows": "inputRowsInspected",
+    "matched": "matchedExistingPlaces",
+    "ambiguous": "ambiguousReviewCandidates",
+    "likelyNew": "likelyNewUnmatchedCandidates",
+    "accepted": "acceptedForPlaceSourcesImport"
+  },
+  "excludes": ["source rows", "review decisions", "credentials", "commands", "source absence claims", "queue state"]
+}

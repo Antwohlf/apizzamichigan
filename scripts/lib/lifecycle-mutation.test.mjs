@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const require = createRequire(import.meta.url)
-const { applyLifecycleChange, normalizeLifecycleChange } = require('./lifecycle-mutation.cjs')
+const { applyLifecycleChange, normalizeLifecycleChange } = require('../../server/product/lifecycle-mutation.cjs')
 
 test('requires a reason for historical lifecycle changes', () => {
   assert.throws(

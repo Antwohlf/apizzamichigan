@@ -11,7 +11,7 @@ separate
 src/                 public and administrator React interfaces
 public/              browser assets and aggregate dashboard snapshot
 api/                 serverless-style public API handlers
-server/              authenticated local editorial API
+server/              authenticated editorial API, product policy, input adapters
 config/              product profiles, taxonomies, and data authority policy
 scripts/enrichment/  product schema plus compatibility code still used by app checks
 scripts/ops/         product verification and app/server compatibility reports
@@ -35,13 +35,21 @@ import pipeline runtime packages directly.
 
 ## Residual compatibility code
 
-Production jobs no longer launch from this repository. Files under `scripts/`
-that overlap the extracted runtime remain only because application release
-checks import them, the administrator server executes or presents bounded
-reports, or the administrator UI presents legacy command handoffs. Their
-presence is migration debt, not shared runtime ownership. Remove each copy
-after its app-facing caller has a versioned external contract and corresponding
-regression coverage.
+The website and administrator server do not import `scripts/` or pipeline
+runtime packages. Editorial lifecycle rules and human-gated identity guidance
+live in `server/product/`; optional manual review CLIs depend on those product
+rules, not the other way around.
+
+The admin app reads canonical review tables and explicitly configured external
+status/report inputs. The report adapter lives in `server/integrations/`, with
+its compatibility interface in `contracts/food-review-artifacts.v1.json`.
+It does not inspect worker queues, provider credentials, Python environments,
+or raw OSM inputs. See [the boundary](PIPELINE_BOUNDARY.md) for configuration.
+
+Some manual compatibility utilities and their checks remain in `scripts/`.
+They are not dependencies of the running website/admin API, and do not own
+production schedules. Their presence does not require installing the pipeline
+repository alongside the website.
 
 The retired bulk import scripts and archived worker framework have been removed.
 Historical implementations remain recoverable in Git history; they are not

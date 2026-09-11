@@ -56,7 +56,7 @@ describe('AdminSystemPanel lifecycle actions', () => {
       if (url.includes('/source-provenance')) {
         return Promise.resolve(jsonResponse({
           database: { available: true, sourceCounts: [], matchMethods: [] },
-          fsqSample: {},
+          sourceOperations: { owner: 'external-runtime' },
         }))
       }
       if (url.includes('/source-review-summary')) {
@@ -66,7 +66,8 @@ describe('AdminSystemPanel lifecycle actions', () => {
         return Promise.resolve(jsonResponse({
           available: true,
           total: 1,
-          latest_input_observation_counts: { observed: 0, unobserved: 1, unavailable: 0 },
+          latest_input_observation_counts: { observed: 0, unobserved: 0, unavailable: 1 },
+          latest_input_observation_detail: 'Current source-observation evidence is not available here. Stale evidence does not establish a closure or absence from OSM.',
           rows: [{
             place_id: 42,
             name: 'Old Town Pizza',
@@ -74,7 +75,7 @@ describe('AdminSystemPanel lifecycle actions', () => {
             source_url: 'https://www.openstreetmap.org/node/42',
             retrieved_at: '2025-01-01T00:00:00Z',
             freshness_days: 30,
-            latest_input_observation: 'unobserved_in_latest_input',
+            latest_input_observation: 'not_available',
           }],
         }))
       }
@@ -114,10 +115,32 @@ describe('AdminSystemPanel lifecycle actions', () => {
     await userEvent.selectOptions(lifecycleSelect, 'stale')
     expect(await screen.findByText('Old Town Pizza')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Mark closed' })).not.toBeInTheDocument()
-    expect(screen.getByText(/1 stale row were not seen in the latest OSM refresh/i)).toBeInTheDocument()
+    expect(screen.getByText(/Stale evidence does not establish a closure or absence from OSM/i)).toBeInTheDocument()
+    expect(screen.queryByText(/were not seen in the latest OSM refresh/i)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'View place' })).toHaveAttribute('href', '/places/42')
     expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', 'https://www.openstreetmap.org/node/42')
     expect(fetchMock.mock.calls.some(([url, options]) => options?.method === 'PATCH' && String(url).includes('/api/admin/places/'))).toBe(false)
+  })
+
+  test('does not repeat raw-file absence claims from an older backend during rollout', async () => {
+    const original = fetchMock.getMockImplementation()
+    fetchMock.mockImplementation((url, options) => {
+      if (url.includes('/lifecycle-candidates')) {
+        return Promise.resolve(jsonResponse({
+          available: true,
+          total: 1,
+          latest_input_observation_counts: { observed: 0, unobserved: 1, unavailable: 0 },
+          rows: [{ place_id: 42, name: 'Old Town Pizza', source: 'osm', freshness_days: 30, latest_input_observation: 'unobserved_in_latest_input' }],
+        }))
+      }
+      return original(url, options)
+    })
+    render(<AdminSystemPanel entity="pizza" />)
+    await userEvent.selectOptions(await screen.findByRole('combobox'), 'stale')
+    expect(await screen.findByText('Old Town Pizza')).toBeInTheDocument()
+    expect(screen.getByText(/Stale evidence does not establish a closure or absence from OSM/i)).toBeInTheDocument()
+    expect(screen.queryByText(/not seen in the latest OSM refresh/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Mark closed' })).not.toBeInTheDocument()
   })
 
   test('shows closed source signals as a review-only lifecycle category', async () => {

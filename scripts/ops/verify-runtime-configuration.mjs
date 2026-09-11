@@ -13,6 +13,10 @@ const REQUIRED_FILES = [
   'shared/food-runtime-publication-status.cjs',
   'config/food-runtime-boundary.json',
   'config/pipeline-boundary.json',
+  'contracts/food-review-artifacts.v1.json',
+  'server/integrations/food-review-artifacts.cjs',
+  'server/product/lifecycle-mutation.cjs',
+  'server/product/source-review-identity.mjs',
   'contracts/pipeline-status.v1.schema.json',
   'contracts/pipeline-targets/apizza-pipeline-write-contract.v1.json',
   'contracts/pipeline-targets/taco-pipeline-write-contract.v1.json',
@@ -35,6 +39,8 @@ function main() {
   assert(boundary.publicationStatus?.access === 'read-only', 'food runtime publication must be read-only');
   assert(boundary.publicationStatus?.rootEnvironmentVariable === 'FOOD_PIPELINE_STATUS_ROOT', 'food runtime status root contract changed');
   assert(boundary.backups?.owner === 'external-runtime', 'food runtime backups must remain externally owned');
+  assert(boundary.reviewArtifacts?.access === 'read-only'
+    && boundary.reviewArtifacts.rootEnvironmentVariable === 'FOOD_PIPELINE_REPORT_ROOT', 'review reports must use the explicit external read-only contract');
 
   const server = read('server/index.js');
   for (const contract of ['admin-session-boundary.cjs', 'pipeline-status-boundary.cjs', 'food-runtime-publication-status.cjs']) assert(server.includes(contract), `server must use ${contract}`);

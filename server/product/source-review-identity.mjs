@@ -1,3 +1,4 @@
+// App-owned, read-only identity guidance. Decisions always remain human-gated.
 export function normalizeText(value) {
   return String(value || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ')
 }

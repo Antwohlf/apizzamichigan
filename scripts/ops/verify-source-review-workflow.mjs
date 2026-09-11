@@ -17,7 +17,7 @@ const ADMIN = [
 ].join('\n');
 const AUTO_LINK = readFileSync('scripts/ops/auto-link-source-review-queue.mjs', 'utf8');
 const AI_REVIEW = readFileSync('scripts/ops/ai-source-review-triage.mjs', 'utf8');
-const AI_IDENTITY = readFileSync('scripts/lib/source-review-identity.mjs', 'utf8');
+const AI_IDENTITY = readFileSync('server/product/source-review-identity.mjs', 'utf8');
 const RECLASSIFY_AMBIGUOUS = readFileSync('scripts/ops/reclassify-ambiguous-source-candidates.mjs', 'utf8');
 const ACCEPT_LIKELY_NEW = readFileSync('scripts/ops/accept-likely-new-source-candidates.mjs', 'utf8');
 const REVIEWED_NEW_BACKLOG = readFileSync('scripts/ops/reviewed-new-source-backlog-report.mjs', 'utf8');
@@ -136,7 +136,7 @@ function main() {
     'The decision value must be exactly one of',
   ], 'AI source review guard');
   includesAll(AI_REVIEW, [
-    "from '../lib/source-review-identity.mjs'",
+    "from '../../server/product/source-review-identity.mjs'",
     'deterministicDecision',
     'evidenceFor',
   ], 'AI identity evidence integration');
@@ -152,7 +152,7 @@ function main() {
     'JOIN source_review_queue queue ON queue.id = assessment.review_queue_id',
     '(assessment.created_at < queue.updated_at) AS stale',
     "if (assessment && !assessment.stale)",
-    "const identity = await import('../scripts/lib/source-review-identity.mjs')",
+    "const identity = await import('./product/source-review-identity.mjs')",
     'const deterministic = identity.deterministicDecision(reviewRow, evidence)',
     "model: 'deterministic-identity'",
     'the UI still keeps the human decision gate.',

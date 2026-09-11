@@ -12,7 +12,7 @@ import { createRequire } from 'module'
 
 const { Pool } = pg
 const require = createRequire(import.meta.url)
-const { applyLifecycleChange, normalizeLifecycleChange, previewLifecycleChange } = require('../lib/lifecycle-mutation.cjs')
+const { applyLifecycleChange, normalizeLifecycleChange, previewLifecycleChange } = require('../../server/product/lifecycle-mutation.cjs')
 
 function valueAfter(flag) {
   const index = process.argv.indexOf(flag)

@@ -571,7 +571,7 @@ export default function AdminSystemPanel({ entity }) {
               {lifecycleCandidates?.available === false ? <div className="admin-alert admin-alert--warning">Local lifecycle evidence is unavailable.</div> : null}
               {lifecycleKind === 'stale' && lifecycleCandidates?.latest_input_observation_counts ? (
                 <p className="admin-system-copy" role="status">
-                  {formatCount(lifecycleCandidates.latest_input_observation_counts.unobserved)} stale row{lifecycleCandidates.latest_input_observation_counts.unobserved === 1 ? '' : 's'} were not seen in the latest OSM refresh; {formatCount(lifecycleCandidates.latest_input_observation_counts.observed)} were seen and only need a refresh.
+                  {lifecycleCandidates.latest_input_observation_detail || 'Current source-observation evidence is not available here. Stale evidence does not establish a closure or absence from OSM.'}
                 </p>
               ) : null}
               {lifecycleCandidates?.available && !lifecycleCandidates.rows?.length ? <p className="admin-system-copy">No candidates in this category.</p> : null}
@@ -606,11 +606,7 @@ export default function AdminSystemPanel({ entity }) {
                               <td>
                                 <span>{row.freshness_days} day window</span>
                                 <small className="admin-table__subtext">
-                                  {row.latest_input_observation === 'unobserved_in_latest_input'
-                                    ? 'Not seen in the latest OSM refresh. This is a review lead, not proof the place closed.'
-                                    : row.latest_input_observation === 'observed_in_latest_input'
-                                      ? 'Seen in the latest OSM refresh. The evidence record itself is simply overdue for refresh.'
-                                      : 'Stale evidence is not a closure signal. Check the source before deciding what to do.'}
+                                  Stale evidence is not a closure signal. Check the source before deciding what to do.
                                 </small>
                                 <div className="admin-table__actions">
                                   <a href={`${entity === 'taco' ? '/tacos/places' : '/places'}/${encodeURIComponent(String(row.place_id))}`}>View place</a>
@@ -854,13 +850,8 @@ export default function AdminSystemPanel({ entity }) {
                 </table>
               </div>
               <div className="admin-alert" style={{ marginTop: 14 }}>
-                Source evidence remains local. Raw setup commands and adapter operations stay in project scripts and documentation.
+                Human review stays in this app. Source setup, provider credentials, and adapter operations belong to the external pipeline.
               </div>
-              {payload?.fsqSample?.missing?.length ? (
-                <div className="admin-alert admin-alert--warning" style={{ marginTop: 10 }}>
-                  Foursquare sample setup still needs attention: {payload.fsqSample.missing.join('; ')}
-                </div>
-              ) : null}
             </div>
           </details>
         </>

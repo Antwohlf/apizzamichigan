@@ -1064,8 +1064,6 @@ export default function AdminSourceProvenancePanel({ entity }) {
 
   const database = payload.database || {}
   const reviewArtifacts = payload.reviewArtifacts || {}
-  const reviewQueueCsv = payload.reviewQueueCsv || {}
-  const fsqSample = payload.fsqSample || {}
   const promotionCandidates = database.promotionCandidates || {}
   const promotionCounts = promotionCandidates.counts || []
   const promotionSample = promotionCandidates.sample || []
@@ -1199,76 +1197,14 @@ export default function AdminSourceProvenancePanel({ entity }) {
       </StatusMessage>
 
       <section style={blockStyle}>
-        <h2 style={{ margin: '0 0 0.75rem', color: '#f8fafc', fontSize: '1rem' }}>FSQ OS Places Sample</h2>
-        <div style={{ display: 'grid', gap: '0.65rem' }}>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ ...badgeStyle, color: fsqSample.state === 'sample_ready' ? '#86efac' : ['hf_export_ready', 'portal_export_ready', 'portal_setup_needed'].includes(fsqSample.state) ? '#fbbf24' : '#fca5a5' }}>
-              {fsqSample.state || 'unknown'}
-            </span>
-            <span style={badgeStyle}>{fsqSample.recommendedAction || 'no action available'}</span>
-            <span style={badgeStyle}>{fsqSample.sampleExists ? 'sample present' : 'sample missing'}</span>
-            <span style={badgeStyle}>portal SQL: {fsqSample.portalInitSqlExists ? 'present' : 'missing'}</span>
-            <span style={badgeStyle}>portal Python: {fsqSample.portalPythonDuckdbExists ? 'present' : 'missing'}</span>
-            {(fsqSample.tokenStatus || []).map(token => (
-              <span key={token.name} style={badgeStyle}>
-                {token.name}: {token.present ? 'present' : 'missing'}
-              </span>
-            ))}
-          </div>
-          <p style={{ margin: 0, color: '#94a3b8' }}>
-            Real FSQ import remains sample-first. This panel only reports readiness; it does not download FSQ data or write source evidence.
-          </p>
-          <p style={{ margin: 0, color: '#94a3b8' }}>
-            Run the commands below on the pipeline host after setting <code>FOOD_PIPELINE_WORKSPACE</code> to its private external runtime workspace.
-          </p>
-          {fsqSample.samplePath ? (
-            <p style={{ margin: 0, color: '#cbd5e1' }}>Sample path: <code>{fsqSample.samplePath}</code></p>
-          ) : null}
-          {Array.isArray(fsqSample.missing) && fsqSample.missing.length ? (
-            <div style={{ color: '#fca5a5' }}>
-              Missing: {fsqSample.missing.join('; ')}
-            </div>
-          ) : null}
-          {Array.isArray(fsqSample.portalSetupSteps) && fsqSample.portalSetupSteps.length ? (
-            <div style={{ display: 'grid', gap: '0.35rem' }}>
-              <strong style={{ color: '#f8fafc' }}>Places Portal setup checklist</strong>
-              <div style={{ display: 'grid', gap: '0.3rem' }}>
-                {fsqSample.portalSetupSteps.map(step => (
-                  <div key={step.id} style={{ display: 'grid', gap: '0.15rem', padding: '0.55rem', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 8, background: 'rgba(15, 23, 42, 0.55)' }}>
-                    <span style={{ color: step.status === 'done' || step.status === 'ready' ? '#86efac' : step.status === 'needed' ? '#fbbf24' : '#fca5a5', fontWeight: 800 }}>
-                      {step.status}: {step.title}
-                    </span>
-                    <span style={{ color: '#94a3b8' }}>{step.detail}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {fsqSample.portalSetupCommand ? (
-            <div style={{ display: 'grid', gap: '0.25rem' }}>
-              <strong style={{ color: '#f8fafc' }}>Places Portal setup command</strong>
-              <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.portalSetupCommand}</code>
-            </div>
-          ) : null}
-          {fsqSample.adapterCommand ? (
-            <div style={{ display: 'grid', gap: '0.25rem' }}>
-              <strong style={{ color: '#f8fafc' }}>Adapter report</strong>
-              <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.adapterCommand}</code>
-            </div>
-          ) : null}
-          {fsqSample.exportCommand ? (
-            <div style={{ display: 'grid', gap: '0.25rem' }}>
-              <strong style={{ color: '#f8fafc' }}>HF export</strong>
-              <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.exportCommand}</code>
-            </div>
-          ) : null}
-          {fsqSample.portalExportCommand ? (
-            <div style={{ display: 'grid', gap: '0.25rem' }}>
-              <strong style={{ color: '#f8fafc' }}>Places Portal export</strong>
-              <code style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>{fsqSample.portalExportCommand}</code>
-            </div>
-          ) : null}
-        </div>
+        <h2 style={{ margin: '0 0 0.75rem', color: '#f8fafc', fontSize: '1rem' }}>Source operations</h2>
+        <p style={{ color: '#94a3b8' }}>
+          Source setup, sample exports, and processing run in the external pipeline.
+          This app reviews canonical evidence; it does not inspect provider credentials or start workers.
+        </p>
+        <a href="https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline/blob/main/docs/FOOD_PRODUCTION_RUNTIME.md" target="_blank" rel="noreferrer">
+          Open pipeline operations documentation
+        </a>
       </section>
 
       <section style={blockStyle}>
@@ -2379,7 +2315,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
       <section style={blockStyle}>
         <h2 style={{ margin: '0 0 0.75rem', color: '#f8fafc', fontSize: '1rem' }}>Review Artifacts</h2>
         {!reviewArtifacts.available ? (
-          <p style={{ margin: 0, color: '#94a3b8' }}>No local review artifact directory found at {reviewArtifacts.inputDir}.</p>
+          <p style={{ margin: 0, color: '#94a3b8' }}>{reviewArtifacts.detail || 'External review reports are unavailable. Review decisions still come from the canonical database.'}</p>
         ) : (
           <div style={tableWrapStyle}>
             <table style={tableStyle}>
@@ -2407,7 +2343,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
                         {row.file}
                       </button>
                     </td>
-                    <td style={tdStyle}>{row.sourceLabel || row.source}</td>
+                    <td style={tdStyle}>{row.sourceLabel || row.source}{row.stale ? ' (historical)' : ''}</td>
                     <td style={tdStyle}>{formatCount(row.inputRows)}</td>
                     <td style={tdStyle}>{formatCount(row.matched)}</td>
                     <td style={tdStyle}>
@@ -2442,7 +2378,7 @@ export default function AdminSourceProvenancePanel({ entity }) {
           </div>
         )}
         <p style={{ margin: '0.9rem 0 0', color: '#94a3b8' }}>
-          CSV queue: {reviewQueueCsv.available ? `${formatCount(reviewQueueCsv.reviewRows)} rows at ${reviewQueueCsv.path}` : `not found at ${reviewQueueCsv.path}`}
+          Artifact totals describe previous runs, not the current backlog. Review queue counts and decisions come from the canonical database.
         </p>
       </section>
     </div>

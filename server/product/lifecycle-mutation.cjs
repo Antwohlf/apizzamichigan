@@ -1,3 +1,4 @@
+// App-owned editorial lifecycle policy; never a pipeline worker entrypoint.
 const TABLE_BY_ENTITY = Object.freeze({ pizza: 'pizza_places', taco: 'taco_places' })
 const ALLOWED_STATUSES = new Set(['active', 'closed', 'replaced', 'demolished'])
 

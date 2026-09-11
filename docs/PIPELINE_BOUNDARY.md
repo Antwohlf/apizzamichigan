@@ -23,13 +23,41 @@ not mean every legacy algorithm has been rewritten.
 - App-owned schemas, public views, protected-field policy, and publication RPCs.
 - External publication snapshots read through
   `shared/food-runtime-publication-status.cjs` and `FOOD_PIPELINE_STATUS_ROOT`.
+- External review-report summaries adapted through
+  `contracts/food-review-artifacts.v1.json` and `FOOD_PIPELINE_REPORT_ROOT`.
 - Operator command handoffs explicitly targeting the private external workspace.
 - Inert target inventories under `contracts/pipeline-targets/`.
 
 The admin server reads publication status without launching pipeline workers
-or publication commands. Manual tools, source-review helpers, and shared policy
-code remain under `scripts/`; they are not production scheduler owners.
+or publication commands. It imports no pipeline runtime or `scripts/` modules.
+App-owned editorial lifecycle and identity rules live in `server/product/`;
+manual review tools depend on them. Source setup and credential checks are
+performed in the external pipeline, not inferred from the website environment.
 Release checks validate app contracts, not current host health.
+
+## Optional external report input
+
+Set `FOOD_PIPELINE_REPORT_ROOT` privately to the external runtime workspace's
+`reports` directory, or a separately mounted copy of that directory. It must be
+an absolute, non-symlink path outside the website checkout. The app reads only
+`source-review/*-review.json` through the v1 adapter; no external code is loaded.
+The existing food runtime already writes this format, so no worker deployment
+or new producer is required. The contract version describes the adapter; it
+does not pretend older reports carried a version marker.
+
+Reports must name the exact Pizza/Taco entity, a known source, an ISO timestamp,
+and the five declared counts. The adapter limits file sizes and count, rejects
+symlinks and malformed input, and returns only summary fields. Old reports are
+labelled historical. Totals describe past artifacts, not current pending work.
+The canonical review database remains authoritative for the worklist and human
+decisions. Missing configuration or rejected input is reported as unavailable;
+it is not zero backlog or a stopped pipeline.
+
+The old app-local report-directory/CSV settings and FSQ setup probes are no
+longer consumed by the admin server. Neither raw OSM input arrays nor partial
+tile manifests are an app interface. Stale evidence alone cannot establish a
+closure or absence from a later source run; the admin view reports that
+observation as unavailable rather than inferring a negative result.
 
 ## Distinct status and authorization contracts
 

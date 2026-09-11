@@ -220,24 +220,14 @@ function main() {
     rmSync(handoffDir, { recursive: true, force: true });
   }
 
-  assert(SERVER.includes('readFsqSampleReadiness'), 'admin server should expose FSQ sample readiness');
-  assert(SERVER.includes('FSQ_OS_PLACES_SAMPLE'), 'FSQ readiness should check FSQ_OS_PLACES_SAMPLE');
-  assert(SERVER.includes('FSQ_PLACES_TOKEN'), 'FSQ readiness should check FSQ_PLACES_TOKEN');
-  assert(SERVER.includes('HUGGINGFACE_HUB_TOKEN'), 'FSQ readiness should check Hugging Face token fallback');
-  assert(SERVER.includes('portal_setup_needed'), 'FSQ readiness should distinguish incomplete Places Portal setup from Hugging Face tokens');
-  assert(SERVER.includes('portal_export_ready'), 'FSQ readiness should expose a Places Portal export-ready state');
-  assert(SERVER.includes('portalExportCommand'), 'FSQ readiness should expose the Portal export command');
-  assert(SERVER.includes('portalSetupCommand'), 'FSQ readiness should expose the Portal setup command');
-  assert(SERVER.includes('portalSetupSteps'), 'FSQ readiness should expose the Portal setup checklist');
-  assert(SERVER.includes('blocked_missing_sample_or_token'), 'FSQ readiness should report blocked state explicitly');
-  assert(SERVER.includes('fsqSample'), 'source provenance payload should include FSQ sample readiness');
-  assert(ADMIN_PANEL.includes('FSQ OS Places Sample'), 'admin panel should show FSQ sample readiness');
-  assert(ADMIN_PANEL.includes('Places Portal export'), 'admin panel should show the Portal export command');
-  assert(ADMIN_PANEL.includes('Places Portal setup checklist'), 'admin panel should show the Portal setup checklist');
-  assert(ADMIN_PANEL.includes('Places Portal setup command'), 'admin panel should show the Portal setup command');
-  assert(ADMIN_PANEL.includes('portal SQL:'), 'admin panel should show Portal init SQL readiness');
-  assert(ADMIN_PANEL.includes('Real FSQ import remains sample-first.'), 'admin panel should keep FSQ sample-first boundary visible');
-  assert(ADMIN_PANEL.includes('it does not download FSQ data or write source evidence'), 'admin panel should state FSQ readiness is read-only');
+  assert(!SERVER.includes('readFsqSampleReadiness'), 'admin must not inspect worker FSQ setup');
+  for (const name of ['FSQ_OS_PLACES_SAMPLE', 'FSQ_PLACES_TOKEN', 'HUGGINGFACE_HUB_TOKEN', 'portalSetupCommand']) {
+    assert(!SERVER.includes(name), `admin must not inspect or configure external source runtime: ${name}`);
+  }
+  assert(SERVER.includes('readFoodReviewArtifacts'), 'admin must use its read-only review artifact adapter');
+  assert(SERVER.includes("owner: 'external-runtime'"), 'source operations must be externally owned');
+  assert(ADMIN_PANEL.includes('Open pipeline operations documentation'), 'admin must hand off source operations');
+  assert(!ADMIN_PANEL.includes('portalSetupCommand'), 'admin must not generate provider setup commands');
 
   console.log('# FSQ Sample Workflow Verification');
   console.log('');

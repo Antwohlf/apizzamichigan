@@ -8,7 +8,7 @@
  */
 
 import pg from 'pg'
-import { deterministicDecision, evidenceFor, normalizeText } from '../lib/source-review-identity.mjs'
+import { deterministicDecision, evidenceFor, normalizeText } from '../../server/product/source-review-identity.mjs'
 
 const args = parseArgs(process.argv.slice(2))
 const table = args.entity === 'taco' ? 'taco_places' : 'pizza_places'

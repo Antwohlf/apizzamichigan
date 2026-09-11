@@ -9,6 +9,12 @@
     "rootEnvironmentVariable": "FOOD_PIPELINE_STATUS_ROOT",
     "unconfiguredBehavior": "not_configured"
   },
+  "reviewArtifacts": {
+    "access": "read-only",
+    "contract": "contracts/food-review-artifacts.v1.json",
+    "rootEnvironmentVariable": "FOOD_PIPELINE_REPORT_ROOT",
+    "unconfiguredBehavior": "not_configured"
+  },
   "backups": {
     "owner": "external-runtime",
     "targets": ["postgres", "sqlite_queue"],

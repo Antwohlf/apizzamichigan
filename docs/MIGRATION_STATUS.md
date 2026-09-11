@@ -42,3 +42,15 @@ its inactive apply declarations must not be mistaken for production authority.
 The administrator publication display reads an explicit external status root.
 Without that configuration it reports unavailable external status; it does not
 infer that publication is disabled or that no updates are waiting.
+
+## App-side boundary update — September 11, 2026
+
+The administrator server no longer imports legacy script helpers, probes source
+credentials/setup files, reads raw OSM inputs, or reads a shared CSV queue.
+Editorial policy is app-owned under `server/product/`. Optional historical
+review summaries use the bounded, entity-specific external report adapter;
+current review work remains in the canonical database. This code change does
+not configure an operator's private report mount or change production workers.
+Vercel deploys the frontend; a separately running administrator API must use the
+updated code to receive these backend changes. Unconfigured historical reports
+remain unavailable without blocking canonical review decisions.

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deterministicDecision, evidenceFor } from './source-review-identity.mjs'
+import { deterministicDecision, evidenceFor } from '../../server/product/source-review-identity.mjs'
 
 function row(overrides = {}) {
   return {

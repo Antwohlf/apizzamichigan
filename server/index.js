@@ -3,14 +3,14 @@ require('dotenv').config()
 const express = require('express')
 const cookieParser = require('cookie-parser')
 const { createHash } = require('crypto')
-const { existsSync, readdirSync, readFileSync, statSync } = require('fs')
-const { join, resolve } = require('path')
+const { readFileSync } = require('fs')
+const { resolve } = require('path')
 const pg = require('pg')
 const { createClient } = require('@supabase/supabase-js')
 const { handleBugReport } = require('../api/_lib/bugReport')
 const { handleAutocomplete, handlePlaceDetails } = require('../api/_lib/places')
 const { getClientIp } = require('../api/_lib/request')
-const { applyLifecycleChange, normalizeLifecycleChange } = require('../scripts/lib/lifecycle-mutation.cjs')
+const { applyLifecycleChange, normalizeLifecycleChange } = require('./product/lifecycle-mutation.cjs')
 const {
   DEFAULT_SESSION_TTL_MS,
   createAdminSessionValue,
@@ -30,6 +30,8 @@ const {
   foodRuntimePublicationStatusResponse,
 } = require('../shared/food-runtime-publication-status.cjs')
 
+const { readFoodReviewArtifacts } = require('./integrations/food-review-artifacts.cjs')
+
 const app = express()
 // Note: 5000 is commonly hijacked by AirPlay Receiver on macOS.
 // Use 5050 by default to avoid the AirTunes 403 you observed.
@@ -42,8 +44,6 @@ const REVIEW_PHOTO_TABLE = 'review-photos'
 const FALLBACK_SUPABASE_URL = 'https://htahyiuvqmalfpbgiizx.supabase.co'
 const MAX_REVIEW_PHOTOS = 10
 const MAX_REVIEW_PHOTO_BYTES = 8 * 1024 * 1024
-const SOURCE_REVIEW_DIR = process.env.SOURCE_REVIEW_DIR || 'reports/source-review'
-const SOURCE_REVIEW_QUEUE_CSV = process.env.SOURCE_REVIEW_QUEUE_CSV || 'reports/source-review-queue.csv'
 const SOURCE_POLICY = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/source-policy.json'), 'utf8'))
 const SOURCE_PIPELINE = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/source-pipeline.json'), 'utf8'))
 const ENTITY_PROFILES = JSON.parse(readFileSync(resolve(__dirname, '..', 'config/entity-profiles.json'), 'utf8'))
@@ -53,36 +53,6 @@ const SOURCE_FRESHNESS_CASE = Object.entries(SOURCE_POLICY.sources || {})
   .join(' ')
 let reviewPhotosTableAvailable = true
 let sourceReviewDecisionHistorySchemaReady = false
-
-function normalizedSourceId(value) {
-  return String(value || '').trim().replace(/^osm:/i, '')
-}
-
-function latestOsmInputIds(entity) {
-  if (entity !== 'pizza' && entity !== 'taco') return { files: [], ids: new Set() }
-  const regions = SOURCE_PIPELINE.operational_regions || SOURCE_PIPELINE.regions || []
-  const ids = new Set()
-  const files = []
-  for (const region of regions) {
-    const key = typeof region === 'string' ? region : region?.key
-    if (!key) continue
-    const file = resolve(__dirname, '..', 'reports', 'osm', `${String(key).toLowerCase()}-${entity}.json`)
-    if (!existsSync(file)) continue
-    files.push(file)
-    try {
-      const payload = JSON.parse(readFileSync(file, 'utf8'))
-      const rows = Array.isArray(payload) ? payload : payload?.rows
-      if (!Array.isArray(rows)) continue
-      for (const row of rows) {
-        const id = normalizedSourceId(row?.id || row?.source_id)
-        if (id) ids.add(id)
-      }
-    } catch {
-      // A partial refresh cannot prove that a source row was observed.
-    }
-  }
-  return { files, ids }
-}
 
 const ADMIN_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD
 const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD || null
@@ -264,235 +234,6 @@ const sourceReviewReadinessSqlForAlias = sourceReviewReadinessSql
   .replace(/(?<![\w.])source_id\b/g, 'srq.source_id')
   .replace(/(?<![\w.])nearest_distance_m\b/g, 'srq.nearest_distance_m')
   .replace(/(?<![\w.])status\b/g, 'srq.status')
-
-function readSourceReviewReports(entity, inputDir = SOURCE_REVIEW_DIR) {
-  const absDir = resolve(process.cwd(), inputDir)
-  const result = {
-    available: existsSync(absDir),
-    inputDir,
-    totals: { inputRows: 0, matched: 0, ambiguous: 0, likelyNew: 0, accepted: 0 },
-    reports: [],
-    errors: [],
-  }
-
-  if (!result.available) return result
-
-  for (const file of readdirSync(absDir).filter(name => name.endsWith('-review.json')).sort()) {
-    try {
-      const report = JSON.parse(readFileSync(join(absDir, file), 'utf8'))
-      if (report.entity && report.entity !== entity) continue
-      const counts = report.counts || {}
-      const row = {
-        file,
-        source: report.source || '',
-        sourceLabel: report.source_label || report.source || '',
-        generatedAt: report.generated_at || null,
-        inputRows: normalizeCount(counts.inputRowsInspected),
-        matched: normalizeCount(counts.matchedExistingPlaces),
-        ambiguous: normalizeCount(counts.ambiguousReviewCandidates ?? report.ambiguous?.length),
-        likelyNew: normalizeCount(counts.likelyNewUnmatchedCandidates ?? report.likely_new?.length),
-        accepted: normalizeCount(counts.acceptedForPlaceSourcesImport),
-      }
-      result.reports.push(row)
-      result.totals.inputRows += row.inputRows
-      result.totals.matched += row.matched
-      result.totals.ambiguous += row.ambiguous
-      result.totals.likelyNew += row.likelyNew
-      result.totals.accepted += row.accepted
-    } catch (error) {
-      result.errors.push({ file, error: error?.message || 'Unable to read report' })
-    }
-  }
-
-  return result
-}
-
-function readSourceReviewQueueCsv(csvPath = SOURCE_REVIEW_QUEUE_CSV) {
-  const absPath = resolve(process.cwd(), csvPath)
-  if (!existsSync(absPath)) {
-    return { available: false, path: csvPath, reviewRows: 0, updatedAt: null }
-  }
-
-  const text = readFileSync(absPath, 'utf8').trim()
-  const lines = text ? text.split(/\r?\n/) : []
-  const stat = statSync(absPath)
-  return {
-    available: true,
-    path: csvPath,
-    reviewRows: Math.max(0, lines.length - 1),
-    updatedAt: stat.mtime.toISOString(),
-  }
-}
-
-function commandPartsToString(parts) {
-  return parts.map(part => {
-    const text = String(part)
-    return /\s/.test(text) ? JSON.stringify(text) : text
-  }).join(' ')
-}
-
-function externalFoodRuntimeCommand(parts) {
-  return `cd "\${FOOD_PIPELINE_WORKSPACE:?Set FOOD_PIPELINE_WORKSPACE to the private external runtime workspace}" && ${commandPartsToString(parts)}`
-}
-
-function fsqPortalSetupSteps({
-  portalInitSqlExists,
-  portalPythonDuckdbExists,
-  canExportViaPortal,
-  portalInitSqlPath,
-  portalInitSqlExamplePath,
-}) {
-  return [
-    {
-      id: 'copy_portal_sql',
-      status: portalInitSqlExists ? 'done' : 'needed',
-      title: 'Save the Places Portal DuckDB/Iceberg setup SQL',
-      detail: `Copy the Portal-provided setup snippet into ${portalInitSqlPath}; use ${portalInitSqlExamplePath} as the checklist and keep tokens out of git.`,
-    },
-    {
-      id: 'create_python_duckdb_venv',
-      status: portalPythonDuckdbExists ? 'done' : 'needed',
-      title: 'Create the ignored Python DuckDB environment',
-      detail: 'Run the setup command once on the machine that will export the bounded FSQ sample.',
-    },
-    {
-      id: 'run_portal_export',
-      status: canExportViaPortal ? 'ready' : 'blocked',
-      title: 'Export a bounded sample and run the read-only adapter report',
-      detail: 'After the token, SQL setup, and Python environment are present, run the Places Portal export command.',
-    },
-  ]
-}
-
-function readFsqSampleReadiness(entity) {
-  const sampleFromEnv = process.env.FSQ_OS_PLACES_SAMPLE || ''
-  const defaultSample = entity === 'taco'
-    ? 'data/source-samples/fsq-os-places-taco-sample.json'
-    : 'data/source-samples/fsq-os-places-pizza-sample.json'
-  const samplePath = sampleFromEnv || defaultSample
-  const sampleExists = Boolean(samplePath && existsSync(resolve(process.cwd(), samplePath)))
-  const portalInitSqlPath = 'scripts/.fsq-portal-init.sql'
-  const portalInitSqlExamplePath = 'scripts/ops/fsq-portal-init.example.sql'
-  const portalInitSqlExists = existsSync(resolve(process.cwd(), portalInitSqlPath))
-  const portalPythonDuckdbExists = existsSync(resolve(process.cwd(), 'scripts/.fsq-venv/bin/python'))
-  const tokens = ['FSQ_PLACES_TOKEN', 'HF_TOKEN', 'HUGGINGFACE_HUB_TOKEN'].map(name => ({
-    name,
-    present: Boolean(process.env[name]),
-  }))
-  const hasPortalToken = tokens.some(token => token.name === 'FSQ_PLACES_TOKEN' && token.present)
-  const hasHfToken = tokens.some(token => ['HF_TOKEN', 'HUGGINGFACE_HUB_TOKEN'].includes(token.name) && token.present)
-  const canExportViaPortal = hasPortalToken && portalInitSqlExists && portalPythonDuckdbExists
-  const reviewOutput = entity === 'taco'
-    ? 'reports/source-review/fsq-os-places-taco-review.json'
-    : 'reports/source-review/fsq-os-places-review.json'
-  const adapterCommand = [
-    'node',
-    'scripts/ops/source-input-sample-report.mjs',
-    '--source',
-    'fsq_os_places',
-    '--input',
-    samplePath || '<exported-fsq-sample.json>',
-    '--entity',
-    entity,
-    '--max-distance-m',
-    '100',
-    '--limit',
-    '5000',
-    '--sample',
-    '25',
-    '--review-output',
-    reviewOutput,
-  ]
-  const exportCommand = [
-    'node',
-    'scripts/ops/export-fsq-hf-sample.mjs',
-    '--query',
-    entity === 'taco' ? 'taco' : 'pizza',
-    '--length',
-    '100',
-    '--pages',
-    '1',
-    '--output',
-    samplePath || defaultSample,
-    '--entity',
-    entity,
-    '--review-output',
-    reviewOutput,
-    '--run-report',
-  ]
-  const portalExportCommand = [
-    'scripts/.fsq-venv/bin/python',
-    'scripts/ops/export-fsq-portal-duckdb-sample.py',
-    '--init-sql-file',
-    portalInitSqlPath,
-    '--query',
-    entity === 'taco' ? 'taco' : 'pizza',
-    '--limit',
-    '100',
-    '--output',
-    samplePath || defaultSample,
-    '--entity',
-    entity,
-    '--review-output',
-    reviewOutput,
-    '--run-report',
-  ]
-  const portalSetupCommand = [
-    'sh',
-    '-lc',
-    'python3 -m venv scripts/.fsq-venv && scripts/.fsq-venv/bin/python -m pip install --upgrade pip duckdb pyiceberg pyarrow',
-  ]
-
-  const state = sampleExists
-    ? 'sample_ready'
-    : hasHfToken
-      ? 'hf_export_ready'
-      : hasPortalToken
-        ? canExportViaPortal
-          ? 'portal_export_ready'
-          : 'portal_setup_needed'
-      : 'blocked_missing_sample_or_token'
-  const recommendedAction = sampleExists
-    ? 'run_adapter_report'
-    : hasHfToken
-      ? 'export_hf_sample_and_run_report'
-      : hasPortalToken
-        ? canExportViaPortal
-          ? 'export_places_portal_sample_then_run_report'
-          : 'save_places_portal_init_sql_then_export'
-        : 'provide_fsq_sample_or_token'
-  const missing = []
-  if (!sampleExists) missing.push(`FSQ sample file: ${samplePath}`)
-  if (!sampleExists && hasPortalToken && !portalPythonDuckdbExists) missing.push('Places Portal Python DuckDB venv: scripts/.fsq-venv/bin/python')
-  if (!sampleExists && hasPortalToken && !portalInitSqlExists) missing.push(`Places Portal DuckDB setup SQL: ${portalInitSqlPath}`)
-  if (!sampleExists && !hasHfToken && !hasPortalToken) missing.push('FSQ sample file, Hugging Face token, or Places Portal token')
-
-  return {
-    source: 'fsq_os_places',
-    state,
-    recommendedAction,
-    samplePath,
-    sampleExists,
-    portalInitSqlPath,
-    portalInitSqlExamplePath,
-    portalInitSqlExists,
-    portalPythonDuckdbExists,
-    canExportViaPortal,
-    tokenStatus: tokens,
-    missing,
-    adapterCommand: externalFoodRuntimeCommand(adapterCommand),
-    exportCommand: externalFoodRuntimeCommand(exportCommand),
-    portalExportCommand: externalFoodRuntimeCommand(portalExportCommand),
-    portalSetupCommand: externalFoodRuntimeCommand(portalSetupCommand),
-    portalSetupSteps: fsqPortalSetupSteps({
-      portalInitSqlExists,
-      portalPythonDuckdbExists,
-      canExportViaPortal,
-      portalInitSqlPath,
-      portalInitSqlExamplePath,
-    }),
-  }
-}
 
 async function readLocalSourceProvenance(entity) {
   const client = new pg.Client(localPostgresConfig())
@@ -2171,12 +1912,9 @@ app.get('/api/admin/source-provenance', requireAdminAuth, async (req, res) => {
   const entity = req.query?.entity === 'taco' ? 'taco' : 'pizza'
 
   try {
-    const [database, reviewArtifacts, reviewQueueCsv, fsqSample] = await Promise.all([
-      readLocalSourceProvenance(entity),
-      Promise.resolve(readSourceReviewReports(entity)),
-      Promise.resolve(readSourceReviewQueueCsv()),
-      Promise.resolve(readFsqSampleReadiness(entity)),
-    ])
+    res.set('Cache-Control', 'no-store')
+    const database = await readLocalSourceProvenance(entity)
+    const reviewArtifacts = readFoodReviewArtifacts(process.env.FOOD_PIPELINE_REPORT_ROOT || '', entity)
 
     return res.json({
       data: {
@@ -2186,8 +1924,7 @@ app.get('/api/admin/source-provenance', requireAdminAuth, async (req, res) => {
         syncPolicy: 'Source evidence stays local until a public/admin provenance feature requires a Supabase table.',
         database,
         reviewArtifacts,
-        reviewQueueCsv,
-        fsqSample,
+        sourceOperations: { owner: 'external-runtime', documentation: 'https://github.com/Antwohlf/map-data-aggregation-enhancement-pipeline/blob/main/docs/FOOD_PRODUCTION_RUNTIME.md' },
       },
     })
   } catch (error) {
@@ -3392,7 +3129,7 @@ app.get('/api/admin/source-review-queue/:id/ai-assessment', requireAdminAuth, as
         nearest_operator_wikidata: nearest.operator_wikidata,
         nearest_osm_tags: nearest.osm_tags,
       }
-      const identity = await import('../scripts/lib/source-review-identity.mjs')
+      const identity = await import('./product/source-review-identity.mjs')
       const evidence = identity.evidenceFor(reviewRow)
       const deterministic = identity.deterministicDecision(reviewRow, evidence)
       return {
@@ -3702,7 +3439,6 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
         )
       `
       if (kind === 'stale') {
-        const latestOsmInputs = latestOsmInputIds(entity)
         const where = `
           latest_source.retrieved_at < NOW() - make_interval(days => CASE latest_source.source
             WHEN 'osm' THEN 30 WHEN 'official_website' THEN 30 WHEN 'all_the_places' THEN 90
@@ -3710,7 +3446,7 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
           AND lower(coalesce(p.status, '')) NOT LIKE 'closed%'
           AND COALESCE(p.lifecycle_status, '') NOT IN ('closed', 'replaced', 'demolished')
         `
-        const [total, rows, observationRows] = await Promise.all([
+        const [total, rows] = await Promise.all([
           client.query(`${latestSourceSql} SELECT COUNT(*)::int AS total FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id WHERE latest_source.entity_type = $1 AND ${where}`, [entity]),
           client.query(`${latestSourceSql}
             SELECT p.id AS place_id, p.name, p.state, p.status, latest_source.source,
@@ -3722,37 +3458,19 @@ app.get('/api/admin/lifecycle-candidates', requireAdminAuth, async (req, res) =>
             ORDER BY latest_source.retrieved_at NULLS FIRST
             LIMIT $2
           `, [entity, limit]),
-          client.query(`${latestSourceSql}
-            SELECT latest_source.source, latest_source.source_id
-            FROM latest_source JOIN ${tableName} p ON p.id = latest_source.place_id
-            WHERE latest_source.entity_type = $1 AND ${where}
-          `, [entity]),
         ])
-        const observationCounts = { observed: 0, unobserved: 0, unavailable: 0 }
-        for (const row of observationRows.rows) {
-          if (row.source !== 'osm' || !latestOsmInputs.files.length) observationCounts.unavailable += 1
-          else if (latestOsmInputs.ids.has(normalizedSourceId(row.source_id))) observationCounts.observed += 1
-          else observationCounts.unobserved += 1
-        }
-        const enrichedRows = rows.rows.map(row => {
-          if (row.source !== 'osm' || !latestOsmInputs.files.length) {
-            return { ...row, latest_input_observation: 'not_available' }
-          }
-          return {
-            ...row,
-            latest_input_observation: latestOsmInputs.ids.has(normalizedSourceId(row.source_id))
-              ? 'observed_in_latest_input'
-              : 'unobserved_in_latest_input',
-          }
-        })
+        // A stale source record is not evidence of absence in a later refresh.
+        // The external runtime owns raw OSM inputs and partial tile manifests.
         return {
           entity,
           kind,
           available: true,
           total: Number(total.rows[0]?.total || 0),
-          latest_input_files: latestOsmInputs.files.map(file => file.replace(`${resolve(__dirname, '..')}/`, '')),
-          latest_input_observation_counts: observationCounts,
-          rows: enrichedRows,
+          latest_input_observation_counts: {
+            observed: 0, unobserved: 0, unavailable: Number(total.rows[0]?.total || 0),
+          },
+          latest_input_observation_detail: 'Current source-observation evidence is not available here. Stale evidence does not establish a closure or absence from OSM.',
+          rows: rows.rows.map(row => ({ ...row, latest_input_observation: 'not_available' })),
         }
       }
 
