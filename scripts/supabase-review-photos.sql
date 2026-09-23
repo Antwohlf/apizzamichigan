@@ -51,6 +51,13 @@ begin
   end if;
 end $$;
 
+-- Keep Data API access explicit even when this table is created after the
+-- project's default privileges stop granting access automatically.
+revoke all on table public."review-photos" from public, anon, authenticated;
+grant select (id, place_id, storage_path, sort_order, created_at, entity_type)
+  on public."review-photos" to anon, authenticated;
+grant select, insert, update, delete on table public."review-photos" to service_role;
+
 create index if not exists review_photos_place_order_idx
   on public."review-photos" (place_id, sort_order, created_at);
 
