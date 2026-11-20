@@ -41,6 +41,7 @@ import { normalizeRating } from './lib/ratings'
 import { isLegacyPublicSchema, markLegacyPublicSchema } from './lib/publicSchemaCapabilities'
 import { shouldForceIndividualMarkers } from './map/viewport'
 import { readExpiringBrowserCache, writeExpiringBrowserCache } from './lib/expiringBrowserCache'
+import { loadMapSummary, isMissingMapSummaryError, summaryStateCounts } from './lib/mapSummary'
 
 export { normalizeLifecycleStatus }
 
@@ -410,6 +411,27 @@ export async function fetchStateCounts(table, {
   onProgress,
   progressEveryPages = 1,
 } = {}) {
+  // All ordinary map counts and the statistics panel share one compact read.
+  // Country-splitting of legacy EU records still needs their public addresses;
+  // that small reviewed-only path retains the existing query below.
+  const needsEuropeAddresses = splitEuropeByCountry && (
+    !Array.isArray(includeStates) || !includeStates.length || includeStates.includes('EU')
+  )
+  if (!needsEuropeAddresses) {
+    try {
+      const summary = await loadMapSummary(table)
+      const counts = summaryStateCounts(summary, {
+        includeStates, includeStatuses, caseInsensitiveStatuses,
+        requireRating, minimumRating, excludeHistorical,
+      })
+      onProgress?.(counts)
+      return counts
+    } catch (error) {
+      // Permit staggered frontend/database deployments, but never turn an
+      // ordinary timeout into dozens of extra queries against a busy database.
+      if (!isMissingMapSummaryError(error)) throw error
+    }
+  }
   // Primary markets are a bounded list of explicit regions. Ask PostgREST for
   // exact head counts instead of downloading every matching row just to build
   // aggregate markers. Broad all-market hydration still uses the paginated
@@ -1229,6 +1251,16 @@ const buildRegionStatesFromCounts = (counts, existing = {}) => {
   return next
 }
 
+export const mergeLoadedRegionPlaces = (regions, previous = { arrays: [], places: [] }) => {
+  const arrays = Object.values(regions)
+    .filter(region => region.status === 'loaded')
+    .map(region => region.places)
+  if (arrays.length === previous.arrays.length && arrays.every((rows, index) => rows === previous.arrays[index])) {
+    return previous
+  }
+  return { arrays, places: dedupeSearchRows(arrays.flat()) }
+}
+
 const REVIEW_PHOTO_BUCKET = 'review-photos'
 const REVIEW_PHOTO_TABLE = 'review-photos'
 let reviewPhotosTableAvailable = true
@@ -1872,11 +1904,10 @@ function SiteContainer({ themeKey }) {
 
   // Keep a normalized local set available as a graceful search fallback when
   // the remote lookup is temporarily unavailable.
+  const loadedPlacesCacheRef = React.useRef({ arrays: [], places: [] })
   const allLoadedPlaces = useMemo(() => {
-    const loadedPlaces = Object.values(regionStates)
-      .filter(r => r.status === 'loaded')
-      .flatMap(r => r.places)
-    return dedupeSearchRows(loadedPlaces)
+    loadedPlacesCacheRef.current = mergeLoadedRegionPlaces(regionStates, loadedPlacesCacheRef.current)
+    return loadedPlacesCacheRef.current.places
   }, [regionStates])
 
   const allLoadedPlacesRef = React.useRef(allLoadedPlaces)

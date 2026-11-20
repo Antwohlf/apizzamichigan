@@ -5,6 +5,19 @@ branch to https://www.apizzamichigan.com, including TacoBoutMichigan at `/tacos`
 Source branches can still produce Vercel previews. The separate data pipeline
 has its own repository and runtime; a website deployment does not restart it.
 
+## Map summary dependency
+
+Apply `supabase/migrations/20261120182202_public_map_summary.sql` before deploying
+the map performance changes to a new database. It adds covering indexes and the
+`public_map_summary` RPC, which shares one grouped response between map counts
+and statistics. The function runs with the caller's existing permissions and RLS.
+The client caches the summary for 15 minutes and falls back to the old count
+queries only when the function is missing, not when a request times out.
+
+After building the indexes on an existing database, ordinary `VACUUM (ANALYZE)`
+on `public.pizza_places` and `public.taco_places` refreshes planner statistics
+and enables efficient index-only reads. This is maintenance, not a data rewrite.
+
 ## GitHub Pages is a separate target
 
 `gh-pages` contains already-built static assets and remains the source for the

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { readSupabase } from '../lib/supabaseRead'
+import { isMissingMapSummaryError, loadMapSummary, summaryStats } from '../lib/mapSummary'
 
 function StatRow({ label, value, loading, compact = false }) {
   if (compact) {
@@ -22,7 +23,7 @@ function StatRow({ label, value, loading, compact = false }) {
   )
 }
 
-async function fetchStats(table, states = []) {
+async function fetchLegacyStats(table, states = []) {
   const stateScope = Array.isArray(states) && states.length ? states : null
   const buildUnvisitedQuery = () => {
     let query = supabase
@@ -64,21 +65,35 @@ async function fetchStats(table, states = []) {
   }
 }
 
+async function fetchStats(table, states, force) {
+  try {
+    return summaryStats(await loadMapSummary(table, { force }), states)
+  } catch (error) {
+    // During rollout only an absent RPC may use the old direct-table queries.
+    // Retrying expensive scans after a timeout would compound database load.
+    if (!isMissingMapSummaryError(error)) throw error
+    return fetchLegacyStats(table, states)
+  }
+}
+
 export function StatsPanel({ table = 'pizza_places', states = [], variant = 'default' }) {
   const stateScopeKey = Array.isArray(states) ? states.join(',') : ''
   const [stats, setStats] = useState({ tried: 0, unvisited: 0, average: '—' })
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [retryToken, setRetryToken] = useState(0)
+  const lastRetryToken = useRef(0)
 
   useEffect(() => {
     let isMounted = true
+    const force = retryToken !== lastRetryToken.current
+    lastRetryToken.current = retryToken
 
     async function loadStats() {
       setLoading(true)
       setFailed(false)
       try {
-        const nextStats = await fetchStats(table, stateScopeKey ? stateScopeKey.split(',') : [])
+        const nextStats = await fetchStats(table, stateScopeKey ? stateScopeKey.split(',') : [], force)
         if (!isMounted) return
         setStats(nextStats)
       } catch (err) {
