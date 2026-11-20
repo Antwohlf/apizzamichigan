@@ -167,8 +167,11 @@ function SearchBar({ value, onChange, onKeyDown, onFocus, resultsId, activeDesce
         onChange={e => setLocalValue(e.target.value)}
         onFocus={onFocus}
         onKeyDown={event => {
-          if (event.key === 'Enter') {
+          if (event.nativeEvent.isComposing) return
+          if (event.key === 'Enter' && localValue !== value) {
+            event.preventDefault()
             onChange(localValue)
+            return
           }
           if (onKeyDown) onKeyDown(event)
         }}
@@ -258,7 +261,7 @@ export function MapControls({
   }
 
   const handleSearchKeyDown = (event) => {
-    if (!shouldShowResultPanel || !visibleResults.length) return
+    if (searchLoading || event.currentTarget.value !== searchQuery || !shouldShowResultPanel || !visibleResults.length) return
 
     if (event.key === 'ArrowDown') {
       event.preventDefault()

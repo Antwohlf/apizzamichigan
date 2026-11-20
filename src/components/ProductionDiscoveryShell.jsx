@@ -92,8 +92,9 @@ export default function ProductionDiscoveryShell({
   setView,
   mapLoading,
   mapError,
+  onMapRetry,
   mapNode,
-  mapControls,
+  renderMapControls,
   places,
   hasMapAggregates,
   searchActive,
@@ -117,21 +118,32 @@ export default function ProductionDiscoveryShell({
   scopeNotice,
   onSearchArea,
   frozenNode,
+  utilityPanel,
 }) {
   const [sortOpen, setSortOpen] = useState(false)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [mobilePanel, setMobilePanel] = useState('map')
   const [visibleLimit, setVisibleLimit] = useState(250)
   const suggestionCloseRef = useRef(null)
+  const searchRef = useRef(null)
+  const [focusSearch, setFocusSearch] = useState(false)
   const iconPath = isPizza ? '/pizza-icon.svg' : '/taco-icon.svg'
   const scopedPlaces = useMemo(() => sortProductionPlaces(places, sortMode), [places, sortMode])
   const visiblePlaces = scopedPlaces.slice(0, visibleLimit)
   const title = theme.brandName
 
   const handlePlaceSelect = place => {
-    onPlaceClick(place)
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     setMobilePanel('map')
+    onPlaceClick(place)
   }
+
+  useEffect(() => {
+    if (mobilePanel === 'list' && focusSearch) {
+      searchRef.current?.querySelector('input')?.focus()
+      setFocusSearch(false)
+    }
+  }, [mobilePanel, focusSearch])
 
   useEffect(() => {
     if (!suggestionOpen) return undefined
@@ -170,7 +182,10 @@ export default function ProductionDiscoveryShell({
     <div className={`production-discovery production-discovery--${entity}`}>
       <header className="production-discovery__topbar">
         <div className="production-discovery__mode-switch" aria-label="Content">
-          <button type="button" className={view === 'map' ? 'is-active' : ''} onClick={() => setView('map')}>
+          <button type="button" className={view === 'map' ? 'is-active' : ''} onClick={() => {
+            setMobilePanel('map')
+            setView('map')
+          }}>
             {isPizza ? 'Pizza Map' : 'Taco Map'}
           </button>
           <button
@@ -268,7 +283,7 @@ export default function ProductionDiscoveryShell({
                 Places
               </button>
             </div>
-            <div className="production-discovery__search">{mapControls}</div>
+            <div className="production-discovery__search" ref={searchRef}>{renderMapControls?.(handlePlaceSelect)}</div>
 
             <div className="production-discovery__toolbar">
               <button
@@ -379,12 +394,29 @@ export default function ProductionDiscoveryShell({
                 Show more places ({scopedPlaces.length - visiblePlaces.length} remaining)
               </button>
             ) : null}
+            {utilityPanel ? <div className="production-discovery__utility">{utilityPanel}</div> : null}
           </section>
 
           <section className="production-discovery__map" aria-label={`Map of ${entity} places`}>
-            {mapLoading ? <div className="production-discovery__status">Loading map…</div> : null}
-            {mapError ? <div className="production-discovery__status is-error">{mapError.message}</div> : null}
-            {!mapLoading && !mapError ? mapNode : null}
+            {mapNode}
+            {mapLoading ? <div className="production-discovery__status" role="status">Loading places… You can explore the map.</div> : null}
+            {mapError ? (
+              <div className="production-discovery__status is-error" role="status">
+                <span>Some places couldn’t load. Check your connection and try again.</span>
+                {onMapRetry ? <button type="button" onClick={onMapRetry}>Try again</button> : null}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="production-discovery__mobile-search"
+              onClick={() => {
+                setMobilePanel('list')
+                setFocusSearch(true)
+              }}
+            >
+              <Search size={18} aria-hidden="true" />
+              Search {entity === 'pizza' ? 'pizza' : 'tacos'}, places or cities
+            </button>
             {onSearchArea ? (
               <button type="button" className="production-discovery__search-area" onClick={onSearchArea}>
                 <Search size={15} aria-hidden="true" />

@@ -106,6 +106,29 @@ describe('MapControls search results', () => {
     state: 'MI',
   }))
 
+  test('Enter commits newly typed text without selecting a result from the previous search', () => {
+    const onPlaceClick = jest.fn()
+    const onSearchChange = jest.fn()
+    render(<MapControls searchQuery="pizza" filteredPlaces={places}
+      onSearchChange={onSearchChange} onPlaceClick={onPlaceClick} />)
+    const input = screen.getByRole('combobox', { name: 'Search places' })
+    fireEvent.change(input, { target: { value: 'Ann Arbor' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSearchChange).toHaveBeenCalledWith('Ann Arbor')
+    expect(onPlaceClick).not.toHaveBeenCalled()
+  })
+
+  test('Enter waits for current search results to finish loading', () => {
+    const onPlaceClick = jest.fn()
+    const props = { searchQuery: 'pizza', filteredPlaces: places, onSearchChange: jest.fn(), onPlaceClick }
+    const { rerender } = render(<MapControls {...props} searchLoading />)
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search places' }), { key: 'Enter' })
+    expect(onPlaceClick).not.toHaveBeenCalled()
+    rerender(<MapControls {...props} />)
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search places' }), { key: 'Enter' })
+    expect(onPlaceClick).toHaveBeenCalledWith(places[0])
+  })
+
   test('shows distinct brand or operator identity without repeating the place name', () => {
     expect(placeIdentity({
       name: 'Downtown Pizza',

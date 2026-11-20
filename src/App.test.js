@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import App, {
   compareSearchResults,
   fetchPlacesForState,
@@ -131,6 +131,36 @@ describe('App routing themes', () => {
 })
 
 describe('state map loading migration compatibility', () => {
+  test('loads counts concurrently with a bounded queue and preserves out-of-order results', async () => {
+    const pending = []
+    const originalFrom = supabase.from
+    supabase.from = jest.fn(() => {
+      let state
+      const query = {
+        select: () => query,
+        in: (_, states) => { state = states[0]; return query },
+        then: (resolve, reject) => new Promise(done => pending.push({ state, done })).then(resolve, reject),
+      }
+      return query
+    })
+    const onProgress = jest.fn()
+    try {
+      const result = fetchStateCounts('pizza_places', { includeStates: ['MI', 'OH', 'IN', 'IL', 'WI'], onProgress })
+      await waitFor(() => expect(pending).toHaveLength(4))
+      expect(supabase.from).toHaveBeenCalledTimes(4)
+      pending[2].done({ count: 3, error: null })
+      await waitFor(() => expect(pending).toHaveLength(5))
+      expect(onProgress).toHaveBeenCalledWith({ IN: 3 })
+      pending[4].done({ count: 5, error: null })
+      pending[0].done({ count: 1, error: null })
+      pending[3].done({ count: 4, error: null })
+      pending[1].done({ count: 2, error: null })
+      await expect(result).resolves.toEqual({ MI: 1, OH: 2, IN: 3, IL: 4, WI: 5 })
+    } finally {
+      supabase.from = originalFrom
+    }
+  })
+
   test('only applies a minimum rating when one was explicitly requested', () => {
     expect(shouldApplyMinimumRating(null)).toBe(false)
     expect(shouldApplyMinimumRating(undefined)).toBe(false)

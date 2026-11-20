@@ -417,6 +417,9 @@ export async function fetchStateCounts(table, {
   const canUseHeadCounts = Array.isArray(includeStates)
     && includeStates.length > 0
     && includeStates.every(state => !String(state || '').startsWith('EU'))
+    // Reviewed places form a small result set; one paginated read is cheaper
+    // than a separate count request for every state.
+    && !(requireRating && Array.isArray(includeStatuses) && includeStatuses.length > 0)
 
   const applyCountFilters = (query, applyHistoricalFilter) => {
     let nextQuery = query
@@ -444,24 +447,41 @@ export async function fetchStateCounts(table, {
 
   const fetchHeadCounts = async applyHistoricalFilter => {
     const counts = {}
-    let stateIndex = 0
-    for (const state of includeStates) {
-      const { count, error } = await readSupabase(() => {
-        let query = supabase
-          .from(table)
-          .select('state', { count: 'exact', head: true })
-          .in('state', [state])
-        query = applyCountFilters(query, applyHistoricalFilter)
-        return query
-      })
-      if (error) throw error
-      const numericCount = Number.isFinite(Number(count)) ? Number(count) : 0
-      if (numericCount > 0) counts[state] = numericCount
-      stateIndex += 1
-      if (typeof onProgress === 'function' && stateIndex % progressEveryPages === 0) {
-        onProgress({ ...counts })
+    let nextStateIndex = 0
+    let completed = 0
+    let failed = false
+    const worker = async () => {
+      while (!failed && nextStateIndex < includeStates.length) {
+        const state = includeStates[nextStateIndex++]
+        try {
+          const { count, error } = await readSupabase(() => {
+            let query = supabase
+              .from(table)
+              .select('state', { count: 'exact', head: true })
+              .in('state', [state])
+            query = applyCountFilters(query, applyHistoricalFilter)
+            return query
+          })
+          if (error) throw error
+          const numericCount = Number.isFinite(Number(count)) ? Number(count) : 0
+          counts[state] = numericCount
+          completed += 1
+          if (typeof onProgress === 'function' && completed % progressEveryPages === 0) {
+            onProgress({ ...counts })
+          }
+        } catch (error) {
+          failed = true
+          throw error
+        }
       }
     }
+    // Bound the requests instead of making a phone wait through 50 serial
+    // round trips. Drain workers before legacy-schema fallback can begin.
+    const workers = await Promise.allSettled(
+      Array.from({ length: Math.min(4, includeStates.length) }, worker),
+    )
+    const failure = workers.find(result => result.status === 'rejected')
+    if (failure) throw failure.reason
     if (typeof onProgress === 'function') onProgress({ ...counts })
     return counts
   }
@@ -1388,6 +1408,7 @@ function SiteContainer({ themeKey }) {
   const [view, setView] = useState('map')
   const [mapLoading, setMapLoading] = useState(true)
   const [mapError, setMapError] = useState(null)
+  const [mapRetryToken, setMapRetryToken] = useState(0)
   const [showClusterCounts, setShowClusterCounts] = useState(true)
   const [showAnthonysVisits, setShowAnthonysVisits] = useState(false)
   const [showAnthonysPicks, setShowAnthonysPicks] = useState(initialPublicQuery.anthonysPicks)
@@ -1439,7 +1460,7 @@ function SiteContainer({ themeKey }) {
   ), [theme])
   const { open: openMapPopup } = useMapPopup()
   const { selectedPlace } = useSelectedPlace()
-  const { open: openLoading, close: closeLoading, setVariant: setLoadingVariant } = useGlobalLoading()
+  const { setVariant: setLoadingVariant } = useGlobalLoading()
 
   const handleFilterChange = useCallback(next => setFilters(next), [])
 
@@ -1609,13 +1630,13 @@ function SiteContainer({ themeKey }) {
     })
   }, [entity.entity])
 
-  // Initial load: prioritize Michigan + nearby states, then progressively hydrate the rest
+  // Keep the map interactive while primary-market counts arrive.
   useEffect(() => {
     let isMounted = true
 
     async function initialLoad() {
       setMapLoading(true)
-      openLoading(theme.copy.loading || 'Loading map…')
+      setMapError(null)
       const table = entityTable
       try {
         const scopeKey = initialStates.length ? initialStates.join(',') : 'all'
@@ -1633,15 +1654,21 @@ function SiteContainer({ themeKey }) {
         }
 
         if (cachedRegionCounts && cachedAnthonyCounts) {
-          setRegionStates(buildRegionStatesFromCounts(cachedRegionCounts))
+          setRegionStates(previous => buildRegionStatesFromCounts(cachedRegionCounts, previous))
           setMapError(null)
           setMapLoading(false)
-          closeLoading()
         } else {
           const [priorityCounts, priorityAnthonyCounts] = await Promise.all([
             cachedRegionCounts
               ? Promise.resolve(cachedRegionCounts)
-              : fetchStateCounts(table, { includeStates: initialStates, excludeHistorical: !showHistorical }),
+              : fetchStateCounts(table, {
+                includeStates: initialStates,
+                excludeHistorical: !showHistorical,
+                progressEveryPages: 4,
+                onProgress: counts => {
+                  if (isMounted) setRegionStates(previous => buildRegionStatesFromCounts(counts, previous))
+                },
+              }),
             cachedAnthonyCounts
               ? Promise.resolve(cachedAnthonyCounts)
               : fetchStateCounts(table, {
@@ -1654,7 +1681,7 @@ function SiteContainer({ themeKey }) {
           ])
           if (!isMounted) return
 
-          setRegionStates(buildRegionStatesFromCounts(priorityCounts))
+          setRegionStates(previous => buildRegionStatesFromCounts(priorityCounts, previous))
           setAnthonysCountsByState(priorityAnthonyCounts)
           REGION_COUNTS_CACHE.set(regionCountsKey, priorityCounts)
           ANTHONY_COUNTS_CACHE.set(regionCountsKey, priorityAnthonyCounts)
@@ -1662,7 +1689,6 @@ function SiteContainer({ themeKey }) {
           writePersistedMapCounts(`${regionCountsKey}:reviewed`, priorityAnthonyCounts)
           setMapError(null)
           setMapLoading(false)
-          closeLoading()
         }
 
       } catch (error) {
@@ -1670,16 +1696,14 @@ function SiteContainer({ themeKey }) {
         console.error('[App] Failed to load region counts:', error)
         setMapError(error)
         setMapLoading(false)
-        closeLoading()
       }
     }
 
     initialLoad()
     return () => {
       isMounted = false
-      closeLoading()
     }
-  }, [themeKey, entityTable, theme.copy.loading, initialStates, openLoading, closeLoading, showHistorical])
+  }, [themeKey, entityTable, initialStates, showHistorical, mapRetryToken])
 
   // The default map only needs the configured primary states. Loading every
   // market is explicit because this aggregate query scans the public table.
@@ -1855,6 +1879,11 @@ function SiteContainer({ themeKey }) {
     return dedupeSearchRows(loadedPlaces)
   }, [regionStates])
 
+  const allLoadedPlacesRef = React.useRef(allLoadedPlaces)
+  useEffect(() => {
+    allLoadedPlacesRef.current = allLoadedPlaces
+  }, [allLoadedPlaces])
+
   useEffect(() => {
     let isMounted = true
     const requestId = searchRequestIdRef.current + 1
@@ -1899,6 +1928,10 @@ function SiteContainer({ themeKey }) {
         const rankedRows = rankSearchRows(rows, searchQuery)
           .slice(0, SEARCH_RESULT_LIMIT)
 
+        // A photo lookup must not delay usable search results on a phone.
+        setSearchPlaces(normalizePlaceData(rankedRows, {}, defaultPlaceType))
+        setSearchLoading(false)
+
         let photoMap = {}
         const placeIds = rankedRows.slice(0, SEARCH_PHOTO_LIMIT).map(p => p.id).filter(Boolean)
         if (placeIds.length) {
@@ -1913,7 +1946,7 @@ function SiteContainer({ themeKey }) {
         setSearchPlaces(normalizePlaceData(rankedRows, photoMap, defaultPlaceType))
       } catch (err) {
         if (!isCurrentRequest()) return
-        const fallbackRows = rankSearchRows(allLoadedPlaces, searchQuery)
+        const fallbackRows = rankSearchRows(allLoadedPlacesRef.current, searchQuery)
           .slice(0, SEARCH_RESULT_LIMIT)
         if (fallbackRows.length) {
           setSearchPlaces(normalizePlaceData(fallbackRows, {}, defaultPlaceType))
@@ -1934,7 +1967,7 @@ function SiteContainer({ themeKey }) {
       isMounted = false
       window.clearTimeout(debounceTimer)
     }
-  }, [searchQuery, searchRetryToken, themeKey, entity.defaultPlaceType, entityTable, normalizePlaceData, showAllMarkets, publicScopeStates, allLoadedPlaces])
+  }, [searchQuery, searchRetryToken, themeKey, entity.defaultPlaceType, entityTable, normalizePlaceData, showAllMarkets, publicScopeStates])
 
   // Handle Near Me toggle
   const handleNearMeToggle = useCallback(() => {
@@ -2202,7 +2235,7 @@ function SiteContainer({ themeKey }) {
     />
   )
 
-  const mapControls = (
+  const renderMapControls = onPlaceSelect => (
     <MapControls
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
@@ -2217,7 +2250,7 @@ function SiteContainer({ themeKey }) {
       onNearMeToggle={handleNearMeToggle}
       onRadiusChange={setNearMeRadius}
       filteredPlaces={mapVisiblePlaces}
-      onPlaceClick={handlePlaceClick}
+      onPlaceClick={onPlaceSelect}
       showAllMarkets={showAllMarkets}
       onAllMarketsToggle={setShowAllMarkets}
     />
@@ -2262,8 +2295,9 @@ function SiteContainer({ themeKey }) {
         setView={setView}
         mapLoading={mapLoading}
         mapError={mapError ? new Error(`${theme.copy.errorPrefix}: ${mapError.message}`) : null}
+        onMapRetry={() => setMapRetryToken(value => value + 1)}
         mapNode={mapNode}
-        mapControls={mapControls}
+        renderMapControls={renderMapControls}
         places={mapVisiblePlaces}
         hasMapAggregates={filteredDisplayAggregates.some(aggregate => aggregate.count > 0)}
         searchActive={Boolean(searchQuery.trim()) || nearMeActive}
@@ -2298,8 +2332,8 @@ function SiteContainer({ themeKey }) {
           setMapMoved(false)
         } : null}
         frozenNode={frozenNode}
+        utilityPanel={<BugReportFab />}
       />
-      <BugReportFab />
     </div>
   )
 }

@@ -26,4 +26,12 @@ describe('Supabase read retry policy', () => {
     await expect(readSupabase(query, { retries: 2, delayMs: 0 })).resolves.toBe(result)
     expect(query).toHaveBeenCalledTimes(1)
   })
+
+  test('retries a failed HEAD count using its HTTP status when the body is empty', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ error: { message: '' }, status: 500, count: null })
+      .mockResolvedValueOnce({ error: null, status: 200, count: 125 })
+    await expect(readSupabase(query, { retries: 1, delayMs: 0 })).resolves.toEqual({ error: null, status: 200, count: 125 })
+    expect(query).toHaveBeenCalledTimes(2)
+  })
 })

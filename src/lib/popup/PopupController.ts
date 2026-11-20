@@ -65,6 +65,11 @@ export class PopupController {
   private popup: any
   private hideTimer: ReturnType<typeof setTimeout> | null = null
   private visibilityTimers: number[] = []
+  private visibilityFrame: number | null = null
+  private stopWatchingInteraction: (() => void) | null = null
+  private visibilitySuppressed = false
+  private mobileLayer: HTMLElement | null = null
+  private stopWatchingLayout: (() => void) | null = null
   private isTouch: boolean =
     typeof window !== 'undefined' && typeof matchMedia === 'function'
       ? matchMedia('(pointer: coarse)').matches
@@ -128,13 +133,52 @@ export class PopupController {
         .setLatLng([target.lat, target.lng])
         .setContent(this.container)
         .addTo(this.map)
+      this.watchPopupLayout()
     } else if (isMapboxMap(this.map) && this.popup) {
       this.popup.setLngLat([target.lng, target.lat]).setDOMContent(this.container).addTo(this.map)
     }
   }
 
+  private watchPopupLayout() {
+    if (typeof window.matchMedia !== 'function') return
+    this.stopWatchingLayout?.()
+    const query = window.matchMedia('(max-width: 820px), (max-width: 980px) and (max-height: 500px) and (pointer: coarse)')
+    const update = () => {
+      const shell = this.popup.getElement?.() as HTMLElement | undefined
+      const mapElement = this.map.getContainer?.() as HTMLElement | undefined
+      if (!shell || !mapElement) return
+      if (query.matches && this.mode === 'expanded') {
+        if (!this.mobileLayer) {
+          this.mobileLayer = document.createElement('div')
+          this.mobileLayer.className = 'marker-popup-mobile-layer'
+          mapElement.appendChild(this.mobileLayer)
+        }
+        // Leaflet's transformed map pane makes a fixed child move with the map.
+        // Keep the mobile sheet outside that pane, anchored to the map viewport.
+        this.mobileLayer.appendChild(shell)
+        shell.classList.add('marker-popup-shell--mobile')
+      } else {
+        shell.classList.remove('marker-popup-shell--mobile')
+        if (this.mobileLayer) {
+          this.popup.getPane?.()?.appendChild(shell)
+          this.mobileLayer.remove()
+          this.mobileLayer = null
+          this.popup.update?.()
+          if (this.mode === 'expanded') this.scheduleVisibilityCheck(0)
+        }
+      }
+    }
+    if (typeof query.addEventListener === 'function') query.addEventListener('change', update)
+    else query.addListener?.(update)
+    this.stopWatchingLayout = () => {
+      if (typeof query.removeEventListener === 'function') query.removeEventListener('change', update)
+      else query.removeListener?.(update)
+    }
+    update()
+  }
+
   private keepExpandedPopupVisible() {
-    if (!isLeafletMap(this.map) || typeof window === 'undefined') return
+    if (this.mode !== 'expanded' || this.mobileLayer || this.visibilitySuppressed || !isLeafletMap(this.map) || typeof window === 'undefined') return
     const mapElement = this.map.getContainer?.()
     const popupElement = (
       this.container?.querySelector('.popup-card[data-mode="expanded"]') ||
@@ -143,6 +187,7 @@ export class PopupController {
     if (!mapElement || !popupElement || typeof this.map.panBy !== 'function') return
 
     const mapRect = mapElement.getBoundingClientRect()
+    if (mapRect.width <= 0 || mapRect.height <= 0) return
     const popupRect = popupElement.getBoundingClientRect()
     const isSmallScreen = window.matchMedia?.('(max-width: 480px)').matches
     const offset = popupVisibilityPanOffset({
@@ -167,6 +212,30 @@ export class PopupController {
   private clearVisibilityTimers() {
     this.visibilityTimers.forEach(timer => window.clearTimeout(timer))
     this.visibilityTimers = []
+    if (this.visibilityFrame !== null) window.cancelAnimationFrame(this.visibilityFrame)
+    this.visibilityFrame = null
+    this.stopWatchingInteraction?.()
+    this.stopWatchingInteraction = null
+  }
+
+  private watchForMapInteraction() {
+    const mapElement = this.map.getContainer?.() as HTMLElement | undefined
+    const cancel = () => {
+      this.visibilitySuppressed = true
+      this.clearVisibilityTimers()
+    }
+    const onInput = (event: Event) => {
+      if (event.type === 'keydown' && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '-', '=', '_'].includes((event as KeyboardEvent).key)) return
+      cancel()
+    }
+    const events = ['pointerdown', 'mousedown', 'touchstart', 'wheel', 'keydown']
+    events.forEach(type => mapElement?.addEventListener(type, onInput, { capture: true, passive: true }))
+    // Unlike zoomstart/movestart, dragstart is not emitted by the search fly-to.
+    this.map.on?.('dragstart', cancel)
+    this.stopWatchingInteraction = () => {
+      events.forEach(type => mapElement?.removeEventListener(type, onInput, true))
+      this.map.off?.('dragstart', cancel)
+    }
   }
 
   private scheduleVisibilityCheck(delay: number) {
@@ -187,6 +256,7 @@ export class PopupController {
       this.hideTimer = null
     }
 
+    this.clearVisibilityTimers()
     this.mode = 'preview'
     this.mount(target)
     if (!this.container) return
@@ -201,6 +271,7 @@ export class PopupController {
     }
     this.clearVisibilityTimers()
     const prevTargetId = this.target?.id
+    if (this.mode !== 'expanded' || prevTargetId !== target.id) this.visibilitySuppressed = false
     this.mode = 'expanded'
     this.setExpandedState(true)
     this.mount(target)
@@ -210,8 +281,12 @@ export class PopupController {
 
     // React renders the popup content after Leaflet positions its shell. Wait
     // one frame so mobile controls cannot cover the expanded card.
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => this.keepExpandedPopupVisible())
+    if (!this.visibilitySuppressed && typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      this.watchForMapInteraction()
+      this.visibilityFrame = window.requestAnimationFrame(() => {
+        this.visibilityFrame = null
+        this.keepExpandedPopupVisible()
+      })
       // Leaflet may reposition the popup again after the first pan while the
       // marker layer settles. Recheck once after that layout pass.
       this.scheduleVisibilityCheck(180)
@@ -240,6 +315,8 @@ export class PopupController {
     const run = () => {
       this.mode = 'hidden'
       this.clearVisibilityTimers()
+      this.stopWatchingLayout?.()
+      this.stopWatchingLayout = null
       this.target = null
       this.setExpandedState(false)
       if (this.container) {
@@ -251,6 +328,8 @@ export class PopupController {
       } catch (err) {
         console.warn('[PopupController] failed to remove popup', err)
       }
+      this.mobileLayer?.remove()
+      this.mobileLayer = null
     }
 
     if (delayMs > 0) {

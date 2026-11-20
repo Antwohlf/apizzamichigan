@@ -35,6 +35,13 @@ import { entityConfig } from '../config/entityConfig'
 const DEFAULT_ZOOM = DEFAULT_MAP_ZOOM
 const MIN_MARKERS_ZOOM = MIN_INDIVIDUAL_MARKERS_ZOOM // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
 
+function hasUsableMapViewport(map) {
+  const container = map?.getContainer?.()
+  if (container && (!container.clientWidth || !container.clientHeight)) return false
+  const size = map?.getSize?.()
+  return !size || (Number.isFinite(size.x) && size.x > 0 && Number.isFinite(size.y) && size.y > 0)
+}
+
 const createClusterIcon = (site, showCounts) => (cluster) => {
   const count = cluster.getChildCount()
   const childMarkers = cluster.getAllChildMarkers()
@@ -156,14 +163,15 @@ const captureMapViewport = map => {
   if (!map || typeof map.getCenter !== 'function' || typeof map.getZoom !== 'function') return null
   const center = map.getCenter()
   const zoom = map.getZoom()
-  if (!center || typeof center.lat !== 'number' || typeof center.lng !== 'number' || typeof zoom !== 'number') {
+  if (!center || !Number.isFinite(center.lat) || !Number.isFinite(center.lng) || !Number.isFinite(zoom)) {
     return null
   }
   return { lat: center.lat, lng: center.lng, zoom }
 }
 
 const restoreMapViewport = (map, viewport) => {
-  if (!map || !viewport || typeof map.setView !== 'function') return
+  if (!map || !hasUsableMapViewport(map) || !viewport || typeof map.setView !== 'function') return
+  if (!Number.isFinite(viewport.lat) || !Number.isFinite(viewport.lng) || !Number.isFinite(viewport.zoom)) return
   map.setView([viewport.lat, viewport.lng], viewport.zoom, { animate: false })
 }
 
@@ -187,6 +195,7 @@ export function PlacesLayer({
   const { setSelectedPlace } = useSelectedPlace()
   const map = useMap()
   const [isMapStable, setIsMapStable] = useState(false)
+  const [mapVisible, setMapVisible] = useState(() => hasUsableMapViewport(map))
   const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM)
   const [replacementPlaces, setReplacementPlaces] = useState({})
   const [popupPhotos, setPopupPhotos] = useState({})
@@ -195,6 +204,13 @@ export function PlacesLayer({
   const activePlaceRef = useRef(null)
   const lastSearchFocusKeyRef = useRef('')
   const searchViewportRef = useRef(null)
+
+  useEffect(() => {
+    const updateVisibility = () => setMapVisible(hasUsableMapViewport(map))
+    map?.on?.('apizza:map-visibility', updateVisibility)
+    updateVisibility()
+    return () => map?.off?.('apizza:map-visibility', updateVisibility)
+  }, [map])
 
   // Track mount state and map stability for safe cleanup
   useEffect(() => {
@@ -229,6 +245,7 @@ export function PlacesLayer({
   const loadedRegionsRef = useRef(new Set())
   const stateAggregatesRef = useRef(stateAggregates)
   const onStateClickRef = useRef(onStateClick)
+  const scheduleRegionCheckRef = useRef(null)
 
   // Clear loaded regions cache when resetKey changes (filters, theme switch)
   useEffect(() => {
@@ -237,7 +254,13 @@ export function PlacesLayer({
 
   // Keep refs updated
   useEffect(() => {
+    const knownRegions = new Set(stateAggregatesRef.current.map(aggregate => aggregate.stateCode))
     stateAggregatesRef.current = stateAggregates
+    // Counts can arrive after the user has already zoomed into a city. Recheck
+    // newly available regions without requiring another pan or zoom gesture.
+    if (stateAggregates.some(aggregate => !knownRegions.has(aggregate.stateCode))) {
+      scheduleRegionCheckRef.current?.()
+    }
   }, [stateAggregates])
 
   useEffect(() => {
@@ -270,28 +293,26 @@ export function PlacesLayer({
 
           // Find visible region aggregates and trigger loading
           const aggregates = stateAggregatesRef.current || []
-          let loadedThisPass = false
+          let hasVisibleRegion = false
           aggregates.forEach(agg => {
-            // Skip if already loading or if we've already triggered this region
-            if (agg.isLoading || agg.regionStatus !== 'unloaded' || loadedRegionsRef.current.has(agg.stateCode)) return
-
             if (expandedBounds.contains([agg.lat, agg.lng])) {
+              hasVisibleRegion = true
+              // Skip if already loading or if we've already triggered this region.
+              if (agg.isLoading || agg.regionStatus !== 'unloaded' || loadedRegionsRef.current.has(agg.stateCode)) return
               loadedRegionsRef.current.add(agg.stateCode)
               onStateClickRef.current(agg.stateCode)
-              loadedThisPass = true
             }
           })
 
           // City-level zoom often excludes state centroids (e.g., Ann Arbor vs MI centroid).
           // If nothing matched bounds, load the nearest unloaded region to map center.
-          if (!loadedThisPass && typeof map.getCenter === 'function') {
+          if (!hasVisibleRegion && typeof map.getCenter === 'function') {
             const center = map.getCenter()
             if (!center) return
 
             let nearest = null
             let nearestDistance = Number.POSITIVE_INFINITY
             aggregates.forEach(agg => {
-              if (agg.isLoading || agg.regionStatus !== 'unloaded' || loadedRegionsRef.current.has(agg.stateCode)) return
               const dLat = agg.lat - center.lat
               const dLng = agg.lng - center.lng
               const distanceSquared = (dLat * dLat) + (dLng * dLng)
@@ -301,7 +322,9 @@ export function PlacesLayer({
               }
             })
 
-            if (nearest && nearestDistance <= 16) {
+            // A loaded nearest region already covers this city. Do not load
+            // successively farther states whenever another count batch arrives.
+            if (nearest && nearestDistance <= 16 && !nearest.isLoading && nearest.regionStatus === 'unloaded' && !loadedRegionsRef.current.has(nearest.stateCode)) {
               loadedRegionsRef.current.add(nearest.stateCode)
               onStateClickRef.current(nearest.stateCode)
             }
@@ -310,6 +333,7 @@ export function PlacesLayer({
       }, 150) // 150ms debounce
     }
 
+    scheduleRegionCheckRef.current = handleZoomOrMove
     map.on('zoomend', handleZoomOrMove)
     map.on('moveend', handleZoomOrMove)
 
@@ -317,6 +341,7 @@ export function PlacesLayer({
     const timeoutId = setTimeout(handleZoomOrMove, 500)
 
     return () => {
+      scheduleRegionCheckRef.current = null
       clearTimeout(debounceTimer)
       clearTimeout(timeoutId)
       if (map && typeof map.off === 'function') {
@@ -384,8 +409,8 @@ export function PlacesLayer({
 
   const flyToPlace = useCallback(
     (lat, lng, options = {}) => {
-      if (!map || typeof map.getMaxZoom !== 'function') return
-      if (typeof lat !== 'number' || typeof lng !== 'number') return
+      if (!map || !hasUsableMapViewport(map) || typeof map.getMaxZoom !== 'function') return
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
 
       try {
         const maxZoom = map.getMaxZoom() ?? FOCUSED_ZOOM
@@ -423,7 +448,7 @@ export function PlacesLayer({
 
   const handleClusterClick = useCallback((event) => {
     const cluster = event?.layer
-    if (!map || !cluster || typeof cluster.getBounds !== 'function' || typeof map.fitBounds !== 'function') return
+    if (!map || !hasUsableMapViewport(map) || !cluster || typeof cluster.getBounds !== 'function' || typeof map.fitBounds !== 'function') return
     const bounds = cluster.getBounds()
     if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return
 
@@ -467,8 +492,8 @@ export function PlacesLayer({
 
   // Fly to user location when Near Me is activated
   useEffect(() => {
-    if (!map || !flyToLocation) return
-    if (typeof flyToLocation.lat !== 'number' || typeof flyToLocation.lng !== 'number') return
+    if (!map || !mapVisible || !hasUsableMapViewport(map) || !flyToLocation) return
+    if (!Number.isFinite(flyToLocation.lat) || !Number.isFinite(flyToLocation.lng)) return
 
     try {
       map.flyTo([flyToLocation.lat, flyToLocation.lng], NEAR_ME_ZOOM, {
@@ -479,12 +504,15 @@ export function PlacesLayer({
     } catch (err) {
       console.warn('[PlacesLayer] flyToLocation error:', err)
     }
-  }, [map, flyToLocation])
+  }, [map, flyToLocation, mapVisible])
 
   // Search results arrive independently from the regional map data. Bring the
   // map to the committed result set once so the result list and map tell the
   // same story without refocusing on every render.
   useEffect(() => {
+    // A map remounted behind the Places panel starts at 0 x 0. Leaflet's fit
+    // and fly calculations cannot run until the resize controller measures it.
+    if (!map || !mapVisible || !hasUsableMapViewport(map)) return
     if (!searchFocusKey) {
       // Search navigation is temporary. Return to the context the user was
       // browsing before the result moved the map to another city or market.
@@ -532,8 +560,11 @@ export function PlacesLayer({
 
     const bounds = L.latLngBounds(navigation.places.map(place => [place.lat, place.lng]))
     if (!bounds.isValid() || typeof map.fitBounds !== 'function') return
-    map.fitBounds(bounds, searchFitOptions())
-  }, [map, places, searchFocusKey, flyToPlace])
+    const fitOptions = searchFitOptions()
+    const size = map.getSize?.()
+    if (size) fitOptions.padding = fitOptions.padding.map((padding, index) => Math.min(padding, (index === 0 ? size.x : size.y) / 4))
+    map.fitBounds(bounds, fitOptions)
+  }, [map, places, searchFocusKey, flyToPlace, mapVisible])
 
   useEffect(() => {
     const marker = openEntry?.id ? markerRefs.current.get(`${openEntry.type}:${openEntry.id}`) : null
@@ -546,7 +577,7 @@ export function PlacesLayer({
   }, [openEntry, registerFocusReturn])
 
   useEffect(() => {
-    if (!map) return
+    if (!map || !mapVisible || !hasUsableMapViewport(map)) return
 
     if (openEntry?.id) {
       const targetPlace = places.find(place => String(place.id) === String(openEntry.id))
@@ -572,7 +603,7 @@ export function PlacesLayer({
     }
 
     lastFocusedPlaceRef.current = null
-  }, [map, openEntry, places, flyToPlace])
+  }, [map, openEntry, places, flyToPlace, mapVisible])
 
   useEffect(() => {
     const key = openEntry?.id ? `${openEntry.type}:${openEntry.id}` : null
