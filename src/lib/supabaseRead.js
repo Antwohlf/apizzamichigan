@@ -22,7 +22,11 @@ export async function readSupabase(queryFactory, { retries = 2, delayMs = 250 } 
     if (result && !result.error) return result
     if (result && result.error) {
       lastError = result.error
-      if (!isTransientSupabaseReadError(result.error) || attempt === maxAttempts - 1) return result
+      // HEAD responses have no error body; the HTTP status still tells us
+      // whether a failed count request is eligible for a bounded retry.
+      const retryable = isTransientSupabaseReadError(result.error)
+        || /^5\d\d$/.test(String(result.status || ''))
+      if (!retryable || attempt === maxAttempts - 1) return result
     }
 
     if (attempt < maxAttempts - 1 && delayMs > 0) {

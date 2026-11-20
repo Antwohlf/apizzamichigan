@@ -4,6 +4,7 @@ import { supabase } from './supabaseClient'
 import { DEFAULT_THEME_KEY } from './themes/siteTheme'
 import { frozenTacosFallback } from './data/frozenTacos'
 import { entityConfigForTheme } from './config/entityConfig'
+import './FrozenPizzaDirectory.css'
 
 export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAULT_THEME_KEY }) {
   const [pizzas, setPizzas] = useState([])
@@ -77,6 +78,8 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
       let bVal = b[key] ?? ''
       if (typeof aVal === 'string') {
         aVal = aVal.toLowerCase()
+      }
+      if (typeof bVal === 'string') {
         bVal = bVal.toLowerCase()
       }
       if (aVal < bVal) return direction === 'asc' ? -1 : 1
@@ -89,7 +92,7 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
   const displayedPizzas = useMemo(() => {
     return sortedPizzas.filter(p =>
       (filters.styles.length === 0 || filters.styles.includes(p.Type)) &&
-      (filters.prices.length === 0 || filters.prices.includes(p.Price.toString()))
+      (filters.prices.length === 0 || filters.prices.includes(String(p.Price ?? '')))
     )
   }, [sortedPizzas, filters])
 
@@ -112,10 +115,13 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
 
   return (
     <div
+      className="frozen-directory"
       style={{
         width: '100%',
         height: '100%',
-        padding: '1rem 2rem 2.5rem',
+        '--frozen-directory-border': theme.palette.border,
+        '--frozen-directory-card': theme.palette.card,
+        '--frozen-directory-muted': theme.palette.mutedText,
         background: theme.palette.card,
         color: theme.palette.text,
         overflowY: 'auto',
@@ -125,7 +131,39 @@ export default function FrozenPizzaDirectory({ filters, theme, themeKey = DEFAUL
       <h2 style={{ color: theme.palette.accent, margin: '0 auto 1rem', textAlign: 'center' }}>
         {entityConfigForTheme(themeKey).frozenDirectoryTitle}
       </h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
+      <label className="frozen-directory__sort">
+        Sort by
+        <select
+          value={`${sortConfig.key}:${sortConfig.direction}`}
+          onChange={event => {
+            const [key, direction] = event.target.value.split(':')
+            setSortConfig({ key, direction })
+          }}
+        >
+          <option value="Brand:asc">Brand: A to Z</option>
+          <option value="Brand:desc">Brand: Z to A</option>
+          <option value="Type:asc">Type: A to Z</option>
+          <option value="Type:desc">Type: Z to A</option>
+          <option value="Price:asc">Price: low to high</option>
+          <option value="Price:desc">Price: high to low</option>
+          <option value="Rating:desc">Rating: highest first</option>
+          <option value="Rating:asc">Rating: lowest first</option>
+        </select>
+      </label>
+      <ul className="frozen-directory__cards">
+        {displayedPizzas.map((p, i) => (
+          <li className="frozen-directory__card" key={p.id ?? i}>
+            <h3>{p.Brand}</h3>
+            {p.Type ? <p className="frozen-directory__type">{p.Type}</p> : null}
+            <dl>
+              <div><dt>Price</dt><dd>{p.Price ?? 'Not listed'}</dd></div>
+              <div><dt>Rating</dt><dd>{p.Rating ?? 'Not rated'}</dd></div>
+            </dl>
+            {p.Notes ? <p className="frozen-directory__notes">{p.Notes}</p> : null}
+          </li>
+        ))}
+      </ul>
+      <table className="frozen-directory__table" style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
         <thead>
           <tr>
             {headers.map(h => {

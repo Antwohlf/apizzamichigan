@@ -11,6 +11,58 @@ import { MAP_TILE_ATTRIBUTION, MAP_TILE_MAX_ZOOM, MAP_TILE_URL } from './map/til
 
 const GLOBAL_VIEW = { center: [20, 0], zoom: 2 }
 
+export function MapSizeController() {
+  const map = useMap()
+
+  useEffect(() => {
+    const container = map.getContainer?.()
+    if (!container) return undefined
+
+    let frame = null
+    let lastSize = null
+    let disposed = false
+
+    const updateSize = () => {
+      frame = null
+      if (disposed) return
+      const { clientWidth: width, clientHeight: height } = container
+      if (!width || !height) {
+        // Keep Leaflet's last usable dimensions while the mobile Places panel is open.
+        lastSize = null
+        map.stop?.()
+        map.fire?.('apizza:map-visibility', { visible: false })
+        return
+      }
+      if (lastSize?.width === width && lastSize?.height === height) return
+      lastSize = { width, height }
+      // Leaflet's nonanimated pan preserves the current geographic center and popup.
+      map.invalidateSize({ animate: false, pan: true, debounceMoveend: true })
+      map.fire?.('apizza:map-visibility', { visible: true })
+    }
+
+    const scheduleUpdate = () => {
+      if (!disposed && frame === null) frame = window.requestAnimationFrame(updateSize)
+    }
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleUpdate) : null
+    observer?.observe(container)
+    window.addEventListener('resize', scheduleUpdate)
+    window.addEventListener('orientationchange', scheduleUpdate)
+    document.addEventListener('visibilitychange', scheduleUpdate)
+    scheduleUpdate()
+
+    return () => {
+      disposed = true
+      observer?.disconnect()
+      window.removeEventListener('resize', scheduleUpdate)
+      window.removeEventListener('orientationchange', scheduleUpdate)
+      document.removeEventListener('visibilitychange', scheduleUpdate)
+      if (frame !== null) window.cancelAnimationFrame(frame)
+    }
+  }, [map])
+
+  return null
+}
+
 function ScopeViewController({ showAllMarkets = false, primaryView }) {
   const map = useMap()
   const firstRender = useRef(true)
@@ -81,9 +133,11 @@ const Map = ({
     <MapContainer
       center={initialView.center}
       zoom={initialView.zoom}
+      trackResize={false}
       style={{ height: '100%', width: '100%', position: 'relative' }}
     >
       <TileLayer attribution={attribution} maxZoom={tileMaxZoom} url={tileUrl} />
+      <MapSizeController />
       <ViewportReporter onViewportChange={onViewportChange} />
       <PopupProviderBridge>
         <PlacesLayer

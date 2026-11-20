@@ -65,20 +65,25 @@ async function fetchStats(table, states = []) {
 }
 
 export function StatsPanel({ table = 'pizza_places', states = [], variant = 'default' }) {
+  const stateScopeKey = Array.isArray(states) ? states.join(',') : ''
   const [stats, setStats] = useState({ tried: 0, unvisited: 0, average: '—' })
   const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [retryToken, setRetryToken] = useState(0)
 
   useEffect(() => {
     let isMounted = true
 
     async function loadStats() {
       setLoading(true)
+      setFailed(false)
       try {
-        const nextStats = await fetchStats(table, states)
+        const nextStats = await fetchStats(table, stateScopeKey ? stateScopeKey.split(',') : [])
         if (!isMounted) return
         setStats(nextStats)
       } catch (err) {
         console.error('[StatsPanel] Failed to fetch stats:', err)
+        if (isMounted) setFailed(true)
       } finally {
         if (isMounted) {
           setLoading(false)
@@ -91,7 +96,14 @@ export function StatsPanel({ table = 'pizza_places', states = [], variant = 'def
     return () => {
       isMounted = false
     }
-  }, [table, states])
+  }, [table, stateScopeKey, retryToken])
+
+  if (failed) {
+    return <div className="stats-panel stats-panel--compact" role="status">
+      <span>Statistics are temporarily unavailable.</span>
+      <button type="button" onClick={() => setRetryToken(value => value + 1)}>Retry statistics</button>
+    </div>
+  }
 
   if (variant === 'compact') {
     return (
