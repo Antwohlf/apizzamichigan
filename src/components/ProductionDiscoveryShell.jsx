@@ -436,7 +436,9 @@ export default function ProductionDiscoveryShell({
             <button
               type="button"
               className="production-discovery__mobile-search"
-              onClick={() => {
+              onClick={event => {
+                // This launcher opens search; it must not also dismiss it as an outside click.
+                event.stopPropagation()
                 setMobilePanel('list')
                 setFocusSearch(true)
               }}

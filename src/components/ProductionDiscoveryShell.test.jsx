@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import ProductionDiscoveryShell, { sortProductionPlaces } from './ProductionDiscoveryShell'
 import { MapControls } from '../map/MapControls'
 import * as placeDisplay from '../lib/placeDisplay'
@@ -146,6 +147,82 @@ test('search selection shows the map and dismisses the phone keyboard', () => {
   expect(screen.getByRole('main')).toHaveAttribute('data-mobile-panel', 'map')
   expect(input).not.toHaveFocus()
 })
+
+// user-event v13 uses a separate DOM Testing Library instance here and requires explicit act.
+/* eslint-disable testing-library/no-unnecessary-act */
+test('a first card click keeps the search dropdown in place until selection', () => {
+  mockMobileLayout(true)
+  const onPlaceClick = jest.fn(() => {
+    expect(screen.getByRole('option', { name: /Test Pizza/ })).toBeInTheDocument()
+  })
+  render(<ProductionDiscoveryShell
+    {...shellProps}
+    places={[place]}
+    onPlaceClick={onPlaceClick}
+    renderMapControls={onSelect => <MapControls
+      searchQuery="Test"
+      onSearchChange={jest.fn()}
+      filteredPlaces={[place]}
+      onPlaceClick={onSelect}
+    />}
+  />)
+  act(() => userEvent.click(screen.getByRole('button', { name: 'Search pizza, places or cities' })))
+  const input = screen.getByRole('combobox', { name: 'Search places' })
+  expect(screen.getByRole('option', { name: /Test Pizza/ })).toBeInTheDocument()
+  const card = screen.getByRole('button', { name: 'Test Pizza' })
+  expect(input).toHaveFocus()
+  fireEvent.touchStart(card)
+  expect(screen.getByRole('option', { name: /Test Pizza/ })).toBeInTheDocument()
+  fireEvent.touchEnd(card)
+  const beforeClick = jest.fn(() => {
+    expect(screen.getByRole('option', { name: /Test Pizza/ })).toBeInTheDocument()
+    expect(onPlaceClick).not.toHaveBeenCalled()
+  })
+  card.addEventListener('mouseup', beforeClick)
+
+  act(() => userEvent.click(card))
+
+  expect(beforeClick).toHaveBeenCalledTimes(1)
+  expect(onPlaceClick).toHaveBeenCalledTimes(1)
+  expect(onPlaceClick).toHaveBeenCalledWith(place)
+  expect(input).not.toHaveFocus()
+  expect(screen.queryByRole('option', { name: /Test Pizza/ })).not.toBeInTheDocument()
+  expect(screen.getByRole('main')).toHaveAttribute('data-mobile-panel', 'map')
+})
+
+test('outside clicks and Escape still dismiss the search dropdown', () => {
+  const onPlaceClick = jest.fn()
+  render(<ProductionDiscoveryShell
+    {...shellProps}
+    onPlaceClick={onPlaceClick}
+    renderMapControls={onSelect => <MapControls
+      searchQuery="Test"
+      onSearchChange={jest.fn()}
+      filteredPlaces={[place]}
+      onPlaceClick={onSelect}
+    />}
+  />)
+  const input = screen.getByRole('combobox', { name: 'Search places' })
+  act(() => userEvent.click(input))
+  act(() => userEvent.click(screen.getByTestId('map')))
+  expect(screen.queryByRole('option', { name: /Test Pizza/ })).not.toBeInTheDocument()
+  expect(onPlaceClick).not.toHaveBeenCalled()
+
+  act(() => userEvent.click(input))
+  expect(screen.getByRole('option', { name: /Test Pizza/ })).toBeInTheDocument()
+  act(() => userEvent.keyboard('{esc}'))
+  expect(screen.queryByRole('option', { name: /Test Pizza/ })).not.toBeInTheDocument()
+})
+
+test.each(['{enter}', ' '])('result cards remain keyboard selectable with %s', key => {
+  const onPlaceClick = jest.fn()
+  render(<ProductionDiscoveryShell {...shellProps} places={[place]} onPlaceClick={onPlaceClick} />)
+  screen.getByRole('button', { name: 'Test Pizza' }).focus()
+  act(() => userEvent.keyboard(key))
+  expect(onPlaceClick).toHaveBeenCalledTimes(1)
+  expect(onPlaceClick).toHaveBeenCalledWith(place)
+})
+/* eslint-enable testing-library/no-unnecessary-act */
 
 test('keeps the map mounted while counts load or fail, with a retry action', () => {
   const retry = jest.fn()

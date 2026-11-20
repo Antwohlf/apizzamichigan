@@ -283,19 +283,18 @@ export function MapControls({
         setIsResultsOpen(false)
       }
     }
-    const handlePointerDown = (event) => {
+    const handleOutsideClick = (event) => {
       const target = event?.target
       if (target && typeof target.closest === 'function' && !target.closest('.map-controls')) {
         setIsResultsOpen(false)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('touchstart', handlePointerDown, { passive: true })
+    // Let the target activate before collapsing a dropdown that shifts nearby cards.
+    document.addEventListener('click', handleOutsideClick)
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('touchstart', handlePointerDown)
+      document.removeEventListener('click', handleOutsideClick)
     }
   }, [])
 
