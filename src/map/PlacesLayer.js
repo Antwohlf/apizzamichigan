@@ -800,12 +800,12 @@ export function PlacesLayer({
         if (!placeId || marker.getElement?.()?.matches(':hover')) return
         const related = event?.originalEvent?.relatedTarget
         if (related?.closest?.('.leaflet-marker-icon, .marker-popup')) return
-        if (!popup.isExpanded(placeId)) popup.hide(200)
+        if (!popup.isExpanded()) popup.hide(200)
       },
       focus: preview,
       blur: () => {
         const placeId = String(marker.options.place.id ?? '')
-        if (placeId && !popup.isExpanded(placeId)) popup.hide(120)
+        if (placeId && !popup.isExpanded()) popup.hide(120)
       },
     })
     return marker

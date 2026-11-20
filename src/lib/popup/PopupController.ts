@@ -249,7 +249,9 @@ export class PopupController {
 
   openPreview(target: PopupTarget, render: (node: HTMLElement) => void) {
     if (this.isTouch) return
-    if (this.mode === 'expanded' && this.target?.id === target.id) return
+    // A camera animation can move a neighboring marker under the pointer.
+    // Hover/focus is passive; only explicit selection may replace an open card.
+    if (this.mode === 'expanded') return
 
     if (this.hideTimer) {
       clearTimeout(this.hideTimer)
@@ -307,6 +309,9 @@ export class PopupController {
   }
 
   hide(delayMs = 0) {
+    // Delayed hides belong to preview mouseout/blur. An explicit close calls
+    // hide() immediately and must still dismiss the selected place normally.
+    if (delayMs > 0 && this.mode === 'expanded') return
     if (this.hideTimer) {
       clearTimeout(this.hideTimer)
       this.hideTimer = null
@@ -339,8 +344,8 @@ export class PopupController {
     }
   }
 
-  isExpanded(id: string) {
-    return this.mode === 'expanded' && this.target?.id === id
+  isExpanded(id?: string) {
+    return this.mode === 'expanded' && (id === undefined || this.target?.id === id)
   }
 
   isPreview(id: string) {
