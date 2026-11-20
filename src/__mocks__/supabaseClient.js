@@ -88,6 +88,7 @@ const supabaseFrom = (...args) => {
 module.exports = {
   supabase: {
     from: supabaseFrom,
+    rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Summary RPC is not installed in legacy-schema fixture' } }),
   },
   __mockFrom: mockFrom,
   __setMockTable: (table, rows) => {

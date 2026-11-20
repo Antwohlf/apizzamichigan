@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
-import { Marker, useMap } from 'react-leaflet'
-import MarkerClusterGroup from 'react-leaflet-cluster'
-import { getMarkerIcon } from './getMarkerIcon'
+import { useMap } from 'react-leaflet'
+import { ManagedPlaceMarkers } from './ManagedPlaceMarkers'
 import { clusterStatusForMarkers } from './clusterStatus'
 import { useMapPopup } from './useMapPopup'
 import { usePopup } from '../context/PopupProvider'
@@ -21,7 +20,6 @@ import {
   CLUSTER_FIT_MAX_ZOOM,
   clusterFitOptions,
   clusterNavigation,
-  clusterRadiusForZoom,
   focusedPlaceZoom,
   isPlaceViewportFocused,
   captureLightboxViewport,
@@ -31,6 +29,7 @@ import {
 } from './viewport'
 import { saveMapReturnState } from './mapReturnState'
 import { entityConfig } from '../config/entityConfig'
+import { signalMapNavigation } from './navigationIntent'
 
 const DEFAULT_ZOOM = DEFAULT_MAP_ZOOM
 const MIN_MARKERS_ZOOM = MIN_INDIVIDUAL_MARKERS_ZOOM // Only show individual markers at this zoom or higher (changed from 6 to avoid boundary condition)
@@ -190,8 +189,11 @@ export function PlacesLayer({
   const markerRefs = useRef(new Map())
   const lastOpenKeyRef = useRef(null)
   const lastFocusedPlaceRef = useRef(null)
+  const focusedSelectionRef = useRef(null)
   const popup = usePopup()
   const { openEntry, open, close, registerFocusReturn } = useMapPopup()
+  const openEntryRef = useRef(openEntry)
+  useEffect(() => { openEntryRef.current = openEntry }, [openEntry])
   const { setSelectedPlace } = useSelectedPlace()
   const map = useMap()
   const [isMapStable, setIsMapStable] = useState(false)
@@ -451,6 +453,7 @@ export function PlacesLayer({
     if (!map || !hasUsableMapViewport(map) || !cluster || typeof cluster.getBounds !== 'function' || typeof map.fitBounds !== 'function') return
     const bounds = cluster.getBounds()
     if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return
+    signalMapNavigation(map)
 
     const southwest = typeof bounds.getSouthWest === 'function' ? bounds.getSouthWest() : null
     const northeast = typeof bounds.getNorthEast === 'function' ? bounds.getNorthEast() : null
@@ -494,6 +497,7 @@ export function PlacesLayer({
   useEffect(() => {
     if (!map || !mapVisible || !hasUsableMapViewport(map) || !flyToLocation) return
     if (!Number.isFinite(flyToLocation.lat) || !Number.isFinite(flyToLocation.lng)) return
+    signalMapNavigation(map)
 
     try {
       map.flyTo([flyToLocation.lat, flyToLocation.lng], NEAR_ME_ZOOM, {
@@ -539,6 +543,7 @@ export function PlacesLayer({
       typeof place.lng === 'number' && Number.isFinite(place.lng)
     ))
     if (!validPlaces.length) return
+    signalMapNavigation(map)
 
     if (!lastSearchFocusKeyRef.current && !searchViewportRef.current) {
       searchViewportRef.current = captureMapViewport(map)
@@ -583,6 +588,11 @@ export function PlacesLayer({
       const targetPlace = places.find(place => String(place.id) === String(openEntry.id))
       if (targetPlace && typeof targetPlace.lat === 'number' && typeof targetPlace.lng === 'number') {
         const coords = [targetPlace.lat, targetPlace.lng]
+        // Focus once for each explicit opening. Data/count batches and sort
+        // changes must not pull the camera back after a user has moved it.
+        if (focusedSelectionRef.current === openEntry) return
+        focusedSelectionRef.current = openEntry
+        signalMapNavigation(map)
         const alreadyFocused =
           lastFocusedPlaceRef.current &&
           lastFocusedPlaceRef.current.id === targetPlace.id &&
@@ -603,6 +613,7 @@ export function PlacesLayer({
     }
 
     lastFocusedPlaceRef.current = null
+    focusedSelectionRef.current = null
   }, [map, openEntry, places, flyToPlace, mapVisible])
 
   useEffect(() => {
@@ -746,106 +757,61 @@ export function PlacesLayer({
     [popup, setSelectedPlace]
   )
 
-  const getMarkerKey = useCallback(
-    (place, idx) => `${site}:${place.id ? place.id : idx}`,
-    [site]
-  )
+  const createMarker = useCallback((initialPlace, markerKey, icon) => {
+    const marker = L.marker([initialPlace.lat, initialPlace.lng], {
+      title: initialPlace.name || `${site} place`,
+      icon,
+      status: initialPlace.status || 'unvisited',
+      place: initialPlace,
+    })
+    const preview = () => {
+      const place = marker.options.place
+      if (place.id === null || place.id === undefined) return
+      const placeId = String(place.id)
+      popup.openPreview({ id: placeId, lat: place.lat, lng: place.lng, type: site }, node =>
+        renderPreview(node, {
+          ...place,
+          id: placeId,
+          type: site,
+          href: `${entity.placeRoute}/${encodeURIComponent(placeId)}`,
+        })
+      )
+    }
+    marker.on({
+      add: () => {
+        // Bulk insertion may finish after the selected-place effect. Preserve
+        // keyboard focus return when its marker first enters the viewport.
+        const selection = openEntryRef.current
+        if (selection?.type !== site || String(selection?.id) !== String(marker.options.place.id)) return
+        const element = marker.getElement?.()
+        if (element) registerFocusReturn(element)
+      },
+      click: event => {
+        const place = marker.options.place
+        if (place.id === null || place.id === undefined) return
+        const node = marker.getElement?.() || event?.target?.getElement?.()
+        node?.focus?.()
+        lastFocusedPlaceRef.current = { id: place.id, lat: place.lat, lng: place.lng }
+        open(site, String(place.id), node)
+      },
+      mouseover: preview,
+      mouseout: event => {
+        const placeId = String(marker.options.place.id ?? '')
+        if (!placeId || marker.getElement?.()?.matches(':hover')) return
+        const related = event?.originalEvent?.relatedTarget
+        if (related?.closest?.('.leaflet-marker-icon, .marker-popup')) return
+        if (!popup.isExpanded()) popup.hide(200)
+      },
+      focus: preview,
+      blur: () => {
+        const placeId = String(marker.options.place.id ?? '')
+        if (placeId && !popup.isExpanded()) popup.hide(120)
+      },
+    })
+    return marker
+  }, [site, popup, open, entity.placeRoute, registerFocusReturn])
 
-  const buildHref = useCallback(
-    placeId => {
-      const encodedId = encodeURIComponent(placeId)
-      return `${entity.placeRoute}/${encodedId}`
-    },
-    [entity.placeRoute]
-  )
-
-  const markers = useMemo(
-    () =>
-      places.map((place, idx) => {
-        const placeId = place.id ? String(place.id) : null
-        const lat = typeof place.lat === 'number' ? place.lat : null
-        const lng = typeof place.lng === 'number' ? place.lng : null
-        if (lat === null || lng === null) return null
-        const markerKey = getMarkerKey(place, idx)
-
-        const status = place.status || 'unvisited'
-
-        return (
-          <Marker
-            key={markerKey}
-            position={[lat, lng]}
-            title={place.name || `${site} place`}
-            icon={getMarkerIcon(site, status, place.lifecycleStatus || place.lifecycle_status)}
-            eventHandlers={{
-              click: event => {
-                if (!placeId) return
-                const markerInstance = markerRefs.current.get(markerKey)
-                const node = markerInstance?.getElement?.() || event?.target?.getElement?.()
-                if (node) {
-                  node.focus?.()
-                }
-                lastFocusedPlaceRef.current = { id: place.id, lat, lng }
-                open(site, placeId, node)
-              },
-              mouseover: event => {
-                if (!placeId || lat === null || lng === null) return
-                const target = { id: placeId, lat, lng, type: site }
-                const href = buildHref(placeId)
-                popup.openPreview(target, node =>
-                  renderPreview(node, { ...place, id: placeId, type: site, href })
-                )
-              },
-              mouseout: event => {
-                if (!placeId) return
-                const markerInstance = markerRefs.current.get(markerKey)
-                const markerNode = markerInstance?.getElement?.()
-                if (markerNode && markerNode.matches(':hover')) {
-                  return
-                }
-                const related = event?.originalEvent?.relatedTarget
-                if (related && typeof related.closest === 'function') {
-                  const stillOnMarker = related.closest('.leaflet-marker-icon')
-                  const overPopup = related.closest('.marker-popup')
-                  if (stillOnMarker || overPopup) {
-                    return
-                  }
-                }
-                if (popup.isExpanded(placeId)) return
-                popup.hide(200)
-              },
-              focus: () => {
-                if (!placeId || lat === null || lng === null) return
-                const target = { id: placeId, lat, lng, type: site }
-                const href = buildHref(placeId)
-                popup.openPreview(target, node =>
-                  renderPreview(node, { ...place, id: placeId, type: site, href })
-                )
-              },
-              blur: () => {
-                if (!placeId) return
-                if (popup.isExpanded(placeId)) return
-                popup.hide(120)
-              },
-            }}
-            ref={instance => {
-              if (instance) {
-                instance.options.status = status
-                markerRefs.current.set(markerKey, instance)
-                if (place.id) {
-                  markerRefs.current.set(`${site}:${place.id}`, instance)
-                }
-              } else {
-                markerRefs.current.delete(markerKey)
-                if (place.id) {
-                  markerRefs.current.delete(`${site}:${place.id}`)
-                }
-              }
-            }}
-          />
-        )
-      }),
-    [places, site, popup, open, buildHref, getMarkerKey]
-  )
+  const clusterIcon = useMemo(() => createClusterIcon(site, showClusterCounts), [site, showClusterCounts])
 
   useEffect(() => {
     if (!openEntry.id) return
@@ -867,33 +833,16 @@ export function PlacesLayer({
   return (
     <>
       <MapClickCloser close={close} />
-      {showIndividualMarkers && (
-        forceIndividualMarkers ? markers : (
-          <MarkerClusterGroup
-            key={`cluster-${site}-${showClusterCounts}`}
-            // Keep the visible marker set stable while the map moves. Chunked
-            // insertion makes places appear in waves, which is especially
-            // distracting on dense city views.
-            chunkedLoading={false}
-            removeOutsideVisibleBounds={false}
-            animateAddingMarkers={false}
-            maxClusterRadius={clusterRadiusForZoom}
-            // Keep clusters spatially stable while zooming. The default
-            // animation makes dense pizza areas appear to jump apart.
-            animate={false}
-            // Keep dense locations in normal map space. Spiderfying makes a
-            // place cluster jump away from its real geography at max zoom.
-            spiderfyOnMaxZoom={false}
-            disableClusteringAtZoom={15}
-            zoomToBoundsOnClick={false}
-            onClick={handleClusterClick}
-            showCoverageOnHover={false}
-            iconCreateFunction={createClusterIcon(site, showClusterCounts)}
-          >
-            {markers}
-          </MarkerClusterGroup>
-        )
-      )}
+      <ManagedPlaceMarkers
+        site={site}
+        places={places}
+        markerRefs={markerRefs}
+        createMarker={createMarker}
+        visible={showIndividualMarkers && mapVisible}
+        forceIndividualMarkers={forceIndividualMarkers}
+        iconCreateFunction={clusterIcon}
+        onClusterClick={handleClusterClick}
+      />
       {showStateAggregates && (
         <StateAggregateLayer
           aggregates={stateAggregates}

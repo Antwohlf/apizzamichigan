@@ -31,6 +31,9 @@ import { publicPlaceLegacySelectForTable } from './lib/publicPlaceFields'
 import { normalizePizzaStyle } from './data/pizzaStyles'
 
 jest.mock('./supabaseClient')
+// Map behavior is covered with real Leaflet in ManagedPlaceMarkers.test.js.
+// This routing suite uses the repository's lightweight Leaflet mock.
+jest.mock('leaflet.markercluster', () => ({}))
 const mockFetchTacoPlaces = jest.fn(() => Promise.resolve({ data: [], error: null }))
 jest.mock('./lib/supabase-tacos', () => ({
   fetchTacoPlaces: (...args) => mockFetchTacoPlaces(...args),

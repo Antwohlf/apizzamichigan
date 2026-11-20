@@ -146,6 +146,52 @@ describe('popup visibility after map interaction', () => {
     expect(controller.isExpanded(target.id)).toBe(true)
   })
 
+  test('a neighboring marker hover cannot replace an expanded selection during camera movement', () => {
+    const renderNeighborPreview = jest.fn()
+    controller.expand(target, renderCard)
+    fireMapEvent('movestart')
+    controller.openPreview({ ...target, id: 'neighbor' }, renderNeighborPreview)
+    jest.advanceTimersByTime(1200)
+
+    expect(renderNeighborPreview).not.toHaveBeenCalled()
+    expect(controller.isExpanded()).toBe(true)
+    expect(controller.isExpanded(target.id)).toBe(true)
+    expect(controller.isExpanded('neighbor')).toBe(false)
+    expect(mapElement.querySelector('.popup-card')).toHaveTextContent('Selected place')
+  })
+
+  test.each([120, 200])('passive marker blur/mouseout hide at %d ms cannot dismiss an expanded card', delay => {
+    controller.expand(target, renderCard)
+    controller.hide(delay)
+    jest.advanceTimersByTime(1200)
+    expect(controller.isExpanded(target.id)).toBe(true)
+    expect(mapElement.querySelector('.popup-card')).not.toBeNull()
+  })
+
+  test('expanding a selection cancels a pending preview hide', () => {
+    controller.openPreview({ ...target, id: 'neighbor' }, node => { node.textContent = 'Neighbor preview' })
+    controller.hide(200)
+    controller.expand(target, renderCard)
+    jest.advanceTimersByTime(1200)
+    expect(controller.isExpanded(target.id)).toBe(true)
+    expect(mapElement.querySelector('.popup-card')).toHaveTextContent('Selected place')
+  })
+
+  test('explicit selection replaces the card and explicit close restores normal previews', () => {
+    controller.expand(target, renderCard)
+    controller.expand({ ...target, id: 'neighbor' }, node => { node.textContent = 'Explicit neighbor selection' })
+    expect(controller.isExpanded('neighbor')).toBe(true)
+    expect(controller.isExpanded(target.id)).toBe(false)
+    expect(mapElement).toHaveTextContent('Explicit neighbor selection')
+
+    controller.hide()
+    expect(controller.isExpanded()).toBe(false)
+    expect(mapElement.querySelector('.marker-popup')).toBeNull()
+    controller.openPreview(target, node => { node.textContent = 'Normal preview' })
+    expect(controller.isPreview(target.id)).toBe(true)
+    expect(mapElement).toHaveTextContent('Normal preview')
+  })
+
   test.each(['pointerdown', 'mousedown', 'touchstart', 'wheel'])('%s cancels remaining corrective pans', eventType => {
     controller.expand(target, renderCard)
     jest.advanceTimersByTime(16)

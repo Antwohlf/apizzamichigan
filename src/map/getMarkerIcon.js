@@ -3,10 +3,14 @@ import L from 'leaflet'
 import { isHistoricalLifecycle } from '../lib/lifecycle'
 import { markerAssetFor, markerAssetsFor } from './markerAssets'
 
+const icons = new Map()
+
 export function getMarkerIcon(site, status = 'unvisited', lifecycleStatus = null) {
   const safeStatus = status && markerAssetsFor(site)[status] ? status : 'unvisited'
   const iconUrl = markerAssetFor(site, safeStatus)
   const historical = isHistoricalLifecycle(lifecycleStatus)
+  const key = `${site}:${safeStatus}:${historical}`
+  if (icons.has(key)) return icons.get(key)
 
   const options = {
     iconUrl,
@@ -20,5 +24,7 @@ export function getMarkerIcon(site, status = 'unvisited', lifecycleStatus = null
     options.className = `leaflet-marker-icon taco-marker${safeStatus === 'golden' ? ' taco-marker--golden' : ''}${historical ? ' place-marker--historical' : ''}`
   }
 
-  return L.icon(options)
+  const icon = L.icon(options)
+  icons.set(key, icon)
+  return icon
 }

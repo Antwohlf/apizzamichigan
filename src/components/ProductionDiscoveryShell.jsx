@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownUp,
   ArrowUpRight,
@@ -47,11 +47,34 @@ const SORT_OPTIONS = [
   { value: 'price', label: 'Lowest price' },
 ]
 
-function ResultCard({ place, selected, onSelect, iconPath, picksLabel, isPickForPlace }) {
+// Match the CSS that switches between the map and list, including phone landscape.
+const MOBILE_LAYOUT_QUERY = '(max-width: 820px), (max-width: 980px) and (max-height: 500px) and (pointer: coarse)'
+
+function useMobileLayout() {
+  const [mobileLayout] = useState(() => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(MOBILE_LAYOUT_QUERY)
+    : null)
+  const [isMobile, setIsMobile] = useState(() => Boolean(mobileLayout?.matches))
+
+  useEffect(() => {
+    if (!mobileLayout) return undefined
+    const update = () => setIsMobile(mobileLayout.matches)
+    update()
+    if (mobileLayout.addEventListener) {
+      mobileLayout.addEventListener('change', update)
+      return () => mobileLayout.removeEventListener('change', update)
+    }
+    mobileLayout.addListener?.(update)
+    return () => mobileLayout.removeListener?.(update)
+  }, [mobileLayout])
+
+  return isMobile
+}
+
+const ResultCard = React.memo(function ResultCard({ place, selected, onSelect, iconPath, picksLabel, isPick }) {
   const rating = placeRating(place)
   const price = placePrice(place)
   const address = placeLocation(place)
-  const isPick = isPickForPlace ? isPickForPlace(place) : rating !== null && rating >= 8
 
   return (
     <button
@@ -83,7 +106,7 @@ function ResultCard({ place, selected, onSelect, iconPath, picksLabel, isPickFor
       <ArrowUpRight className="production-result__arrow" size={16} aria-hidden="true" />
     </button>
   )
-}
+})
 
 export default function ProductionDiscoveryShell({
   theme,
@@ -123,20 +146,24 @@ export default function ProductionDiscoveryShell({
   const [sortOpen, setSortOpen] = useState(false)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [mobilePanel, setMobilePanel] = useState('map')
+  const isMobile = useMobileLayout()
+  const showResultsList = !isMobile || mobilePanel === 'list'
   const [visibleLimit, setVisibleLimit] = useState(250)
   const suggestionCloseRef = useRef(null)
   const searchRef = useRef(null)
   const [focusSearch, setFocusSearch] = useState(false)
   const iconPath = isPizza ? '/pizza-icon.svg' : '/taco-icon.svg'
-  const scopedPlaces = useMemo(() => sortProductionPlaces(places, sortMode), [places, sortMode])
-  const visiblePlaces = scopedPlaces.slice(0, visibleLimit)
+  const scopedPlaces = useMemo(() => showResultsList
+    ? sortProductionPlaces(places, sortMode)
+    : (Array.isArray(places) ? places : []), [places, sortMode, showResultsList])
+  const visiblePlaces = showResultsList ? scopedPlaces.slice(0, visibleLimit) : []
   const title = theme.brandName
 
-  const handlePlaceSelect = place => {
+  const handlePlaceSelect = useCallback(place => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     setMobilePanel('map')
     onPlaceClick(place)
-  }
+  }, [onPlaceClick])
 
   useEffect(() => {
     if (mobilePanel === 'list' && focusSearch) {
@@ -353,7 +380,7 @@ export default function ProductionDiscoveryShell({
             {statsPanel}
             {scopeNotice ? <div className="production-discovery__scope-note">{scopeNotice}</div> : null}
 
-            <div className={`production-discovery__list${visiblePlaces.length ? '' : ' is-empty'}`}>
+            {showResultsList ? <div className={`production-discovery__list${visiblePlaces.length ? '' : ' is-empty'}`}>
               {visiblePlaces.length ? visiblePlaces.map(place => (
                 <ResultCard
                   key={place.id}
@@ -362,7 +389,7 @@ export default function ProductionDiscoveryShell({
                   onSelect={handlePlaceSelect}
                   iconPath={iconPath}
                   picksLabel={picksLabel}
-                  isPickForPlace={isPickForPlace}
+                  isPick={isPickForPlace ? Boolean(isPickForPlace(place)) : (placeRating(place) ?? -1) >= 8}
                 />
               )) : (
                 <div className="production-discovery__empty">
@@ -384,8 +411,8 @@ export default function ProductionDiscoveryShell({
                   ) : null}
                 </div>
               )}
-            </div>
-            {visiblePlaces.length < scopedPlaces.length ? (
+            </div> : null}
+            {showResultsList && visiblePlaces.length < scopedPlaces.length ? (
               <button
                 type="button"
                 className="production-discovery__show-more"

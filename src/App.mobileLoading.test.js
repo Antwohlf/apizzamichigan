@@ -3,7 +3,10 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import App from './App'
 
 const mockFrom = jest.fn()
-jest.mock('./supabaseClient', () => ({ supabase: { from: (...args) => mockFrom(...args) } }))
+jest.mock('./supabaseClient', () => ({ supabase: {
+  from: (...args) => mockFrom(...args),
+  rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST202' } }),
+} }))
 jest.mock('./components/ProductionDiscoveryShell', () => {
   const React = require('react')
   const actual = jest.requireActual('./components/ProductionDiscoveryShell')

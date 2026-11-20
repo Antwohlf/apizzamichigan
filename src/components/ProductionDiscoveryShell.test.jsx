@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import ProductionDiscoveryShell, { sortProductionPlaces } from './ProductionDiscoveryShell'
 import { MapControls } from '../map/MapControls'
+import * as placeDisplay from '../lib/placeDisplay'
 
 const place = { id: 'test-pizza', name: 'Test Pizza', lat: 42, lng: -83 }
 const shellProps = {
@@ -13,6 +14,115 @@ const shellProps = {
   picksLabel: "Anthony's Picks",
   mapNode: <div data-testid="map">Interactive map</div>,
 }
+
+const originalMatchMedia = window.matchMedia
+function mockMobileLayout(matches) {
+  const listeners = new Set()
+  const media = {
+    matches,
+    addEventListener: jest.fn((event, listener) => listeners.add(listener)),
+    removeEventListener: jest.fn((event, listener) => listeners.delete(listener)),
+  }
+  window.matchMedia = jest.fn(() => media)
+  return {
+    media,
+    change(nextMatches) {
+      act(() => {
+        media.matches = nextMatches
+        listeners.forEach(listener => listener({ matches: nextMatches }))
+      })
+    },
+  }
+}
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia
+  jest.restoreAllMocks()
+})
+
+test('skips hidden mobile cards from the first render and keeps map and search state mounted', () => {
+  mockMobileLayout(true)
+  const isPickForPlace = jest.fn(() => false)
+  const props = {
+    ...shellProps,
+    places: [place],
+    isPickForPlace,
+    renderMapControls: () => <input aria-label="Preserved search" defaultValue="Ann Arbor" />,
+  }
+  const { rerender } = render(<ProductionDiscoveryShell {...props} />)
+  const map = screen.getByTestId('map')
+  const input = screen.getByRole('textbox', { name: 'Preserved search' })
+  expect(screen.queryAllByText(/^(Test Pizza|Second Pizza)$/)).toHaveLength(0)
+  expect(isPickForPlace).not.toHaveBeenCalled()
+  fireEvent.change(input, { target: { value: 'Detroit' } })
+
+  // A newly loaded region should not perform hidden result-card work either.
+  rerender(<ProductionDiscoveryShell {...props} places={[place, { ...place, id: 'second', name: 'Second Pizza' }]} />)
+  expect(isPickForPlace).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'View places' }))
+  expect(screen.queryAllByText(/^(Test Pizza|Second Pizza)$/)).toHaveLength(2)
+  expect(screen.getByTestId('map')).toBe(map)
+  expect(screen.getByRole('textbox', { name: 'Preserved search' })).toBe(input)
+  expect(input).toHaveValue('Detroit')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Map', exact: true }))
+  expect(screen.queryAllByText(/^(Test Pizza|Second Pizza)$/)).toHaveLength(0)
+  expect(screen.getByTestId('map')).toBe(map)
+  fireEvent.click(screen.getByRole('button', { name: 'Search pizza, places or cities' }))
+  expect(screen.queryAllByText(/^(Test Pizza|Second Pizza)$/)).toHaveLength(2)
+  expect(input).toHaveFocus()
+})
+
+test('updates card visibility at the CSS breakpoint and cleans up the rotation listener', () => {
+  const { media, change } = mockMobileLayout(false)
+  const { unmount } = render(<ProductionDiscoveryShell {...shellProps} places={[place]} />)
+  const map = screen.getByTestId('map')
+  expect(window.matchMedia).toHaveBeenCalledWith('(max-width: 820px), (max-width: 980px) and (max-height: 500px) and (pointer: coarse)')
+  expect(screen.queryAllByText('Test Pizza')).toHaveLength(1)
+  change(true)
+  expect(screen.queryAllByText('Test Pizza')).toHaveLength(0)
+  change(false)
+  expect(screen.queryAllByText('Test Pizza')).toHaveLength(1)
+  expect(screen.getByTestId('map')).toBe(map)
+  fireEvent.click(screen.getByRole('button', { name: 'View places' }))
+  change(true)
+  expect(screen.queryAllByText('Test Pizza')).toHaveLength(1)
+  unmount()
+  expect(media.removeEventListener).toHaveBeenCalledWith('change', media.addEventListener.mock.calls[0][1])
+})
+
+test('retains show-more progress across mobile map/list switching', () => {
+  mockMobileLayout(true)
+  const places = Array.from({ length: 260 }, (_, index) => ({ ...place, id: `place-${index}`, name: `Pizza ${index}` }))
+  render(<ProductionDiscoveryShell {...shellProps} places={places} />)
+  expect(screen.queryByRole('button', { name: /Show more places/ })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'View places' }))
+  expect(screen.queryAllByText(/^Pizza \d+$/)).toHaveLength(250)
+  fireEvent.click(screen.getByRole('button', { name: 'Show more places (10 remaining)' }))
+  expect(screen.queryAllByText(/^Pizza \d+$/)).toHaveLength(260)
+  fireEvent.click(screen.getByRole('button', { name: 'Map', exact: true }))
+  expect(screen.queryAllByText(/^Pizza \d+$/)).toHaveLength(0)
+  fireEvent.click(screen.getByRole('button', { name: 'View places' }))
+  expect(screen.queryAllByText(/^Pizza \d+$/)).toHaveLength(260)
+})
+
+test('memoized cards ignore a new pick predicate when its computed result is unchanged', () => {
+  mockMobileLayout(false)
+  const location = jest.spyOn(placeDisplay, 'placeLocation')
+  const onPlaceClick = jest.fn()
+  const props = { ...shellProps, places: [place], onPlaceClick }
+  const { rerender } = render(<ProductionDiscoveryShell {...props} isPickForPlace={() => true} />)
+  expect(location).toHaveBeenCalledTimes(1)
+  expect(screen.getByText('Pick')).toBeInTheDocument()
+  location.mockClear()
+  rerender(<ProductionDiscoveryShell {...props} isPickForPlace={() => true} scopeNotice="Map moved" />)
+  expect(location).not.toHaveBeenCalled()
+  rerender(<ProductionDiscoveryShell {...props} isPickForPlace={() => false} />)
+  expect(location).toHaveBeenCalledTimes(1)
+  expect(screen.queryByText('Pick')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Test Pizza' }))
+  expect(onPlaceClick).toHaveBeenCalledWith(place)
+})
 
 test('search selection shows the map and dismisses the phone keyboard', () => {
   const onPlaceClick = jest.fn()
