@@ -18,6 +18,13 @@ After building the indexes on an existing database, ordinary `VACUUM (ANALYZE)`
 on `public.pizza_places` and `public.taco_places` refreshes planner statistics
 and enables efficient index-only reads. This is maintenance, not a data rewrite.
 
+Apply `20261120183935_public_map_search_indexes.sql` as well to complete the
+trigram index coverage for the existing public search filters. Search combines
+`ILIKE` conditions with `OR`; ordinary btree indexes on state, status, and price
+cannot support those substring matches, and missing contact-field indexes force
+a full-table scan even when name and address already have trigram indexes.
+The added indexes preserve the existing search results, sorting, and permissions.
+
 ## GitHub Pages is a separate target
 
 `gh-pages` contains already-built static assets and remains the source for the
