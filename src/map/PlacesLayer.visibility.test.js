@@ -4,7 +4,7 @@ import L from 'leaflet/dist/leaflet-src'
 import { MapSizeController } from '../map'
 import { PlacesLayer } from './PlacesLayer'
 
-const mockPopup = { hide: jest.fn() }
+const mockPopup = { hide: jest.fn(), expand: jest.fn() }
 const mockPopupState = { openEntry: {}, open: jest.fn(), close: jest.fn(), registerFocusReturn: jest.fn() }
 const mockSelectedPlace = { setSelectedPlace: jest.fn() }
 let mockMap
@@ -35,6 +35,7 @@ describe('search navigation after a map mounts behind the Places panel', () => {
 
   beforeEach(() => {
     jest.useFakeTimers()
+    mockPopupState.openEntry = {}
     global.ResizeObserver = jest.fn(callback => {
       observer = { notify: callback, observe: jest.fn(), disconnect: jest.fn() }
       return observer
@@ -93,5 +94,31 @@ describe('search navigation after a map mounts behind the Places panel', () => {
     expect(mockMap.fitBounds).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ padding: [25, 20] }))
     expect(Number.isFinite(mockMap.getZoom())).toBe(true)
     expect(mockMap.getBounds().isValid()).toBe(true)
+  })
+
+  test('does not refocus an open place when new data arrives after a user pan', () => {
+    dimensions = { width: 390, height: 560 }
+    mockMap.invalidateSize()
+    mockMap.setView([42.28, -83.74], 13)
+    const selected = { ...firstPlace, photos: [{ publicUrl: 'test-photo' }] }
+    mockPopupState.openEntry = { type: 'pizza', id: firstPlace.id }
+    const layer = places => <PlacesLayer site="pizza" places={places} />
+    const { rerender } = render(layer([selected]))
+    advance(100)
+    mockMap.setView([42.6, -83.3], 12)
+    mockMap.flyTo.mockClear()
+    const pannedCenter = mockMap.getCenter()
+
+    rerender(layer([{ ...selected }, nearbyPlace]))
+    advance(300)
+
+    expect(mockMap.flyTo).not.toHaveBeenCalled()
+    expect(mockMap.getCenter()).toEqual(pannedCenter)
+    expect(mockPopup.expand).toHaveBeenCalled()
+
+    // A fresh explicit selection, even of the same place, still owns focus.
+    mockPopupState.openEntry = { type: 'pizza', id: firstPlace.id }
+    rerender(layer([selected, nearbyPlace]))
+    expect(mockMap.flyTo).toHaveBeenCalledTimes(1)
   })
 })

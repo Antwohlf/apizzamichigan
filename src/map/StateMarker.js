@@ -3,6 +3,7 @@ import L from 'leaflet'
 import { Marker, useMap } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import { markerAssetFor } from './markerAssets'
+import { beginMapNavigation } from './navigationIntent'
 
 const STATE_ZOOM = 7
 const STATE_FIT_MAX_ZOOM = 10
@@ -109,6 +110,7 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
   const handleClick = () => {
     // Don't trigger click if already loading
     if (isLoading) return
+    const navigation = beginMapNavigation(map)
 
     // Fly to the state while its places load. The resolved place set then
     // refits the map to the actual distribution instead of leaving the user
@@ -122,6 +124,7 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
     // Load the state's places
     if (onStateClick) {
       Promise.resolve().then(() => onStateClick(stateCode)).then(places => {
+        if (!navigation.isCurrent()) return
         if (!map || !Array.isArray(places) || !places.length || typeof map.fitBounds !== 'function') return
         const coordinates = statePlaceCoordinates(places)
         if (!coordinates.length) return
@@ -133,7 +136,9 @@ export function StateMarker({ aggregate, site, onStateClick, showCounts = true }
           animate: true,
           duration: 0.7,
         })
-      }).catch(() => {})
+      }).catch(() => {}).finally(() => navigation.dispose())
+    } else {
+      navigation.dispose()
     }
   }
 

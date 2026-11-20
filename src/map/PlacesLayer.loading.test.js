@@ -9,6 +9,7 @@ let mockMap
 
 jest.mock('react-leaflet', () => ({ useMap: () => mockMap, Marker: () => null }))
 jest.mock('react-leaflet-cluster', () => ({ __esModule: true, default: ({ children }) => children }))
+jest.mock('./ManagedPlaceMarkers', () => ({ ManagedPlaceMarkers: () => null }))
 jest.mock('./useMapPopup', () => ({ useMapPopup: () => mockPopupState }))
 jest.mock('../context/PopupProvider', () => ({ usePopup: () => mockPopup }))
 jest.mock('../store/selectedPlace', () => ({ useSelectedPlace: () => mockSelectedPlace }))
